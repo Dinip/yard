@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./registry": "./src/registry.ts"
+    "./registry": "./src/registry.ts",
+    "./test/fake-provider": "./test/fake-provider.ts"
   },
   "scripts": {
     "gen": "bun scripts/gen-rust.ts",

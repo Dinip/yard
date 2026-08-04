@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AppProvidersRouteImport } from './routes/_app/providers'
+import { Route as AppAdminProvidersRouteImport } from './routes/_app/admin.providers'
 import { Route as AppAdminUsersRouteImport } from './routes/_app/admin.users'
 import { Route as AppDevicesIndexRouteImport } from './routes/_app/devices.index'
 import { Route as AppDevicesDeviceIdRouteImport } from './routes/_app/devices.$deviceId'
@@ -36,6 +37,11 @@ const AppProvidersRoute = AppProvidersRouteImport.update({
   path: '/providers',
   getParentRoute: () => AppRoute,
 } as any)
+const AppAdminProvidersRoute = AppAdminProvidersRouteImport.update({
+  id: '/admin/providers',
+  path: '/admin/providers',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppAdminUsersRoute = AppAdminUsersRouteImport.update({
   id: '/admin/users',
   path: '/admin/users',
@@ -56,6 +62,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/providers': typeof AppProvidersRoute
+  '/admin/providers': typeof AppAdminProvidersRoute
   '/admin/users': typeof AppAdminUsersRoute
   '/devices/$deviceId': typeof AppDevicesDeviceIdRoute
   '/devices/': typeof AppDevicesIndexRoute
@@ -64,6 +71,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/providers': typeof AppProvidersRoute
+  '/admin/providers': typeof AppAdminProvidersRoute
   '/admin/users': typeof AppAdminUsersRoute
   '/devices/$deviceId': typeof AppDevicesDeviceIdRoute
   '/devices': typeof AppDevicesIndexRoute
@@ -74,6 +82,7 @@ export interface FileRoutesById {
   '/_app': typeof AppRouteWithChildren
   '/login': typeof LoginRoute
   '/_app/providers': typeof AppProvidersRoute
+  '/_app/admin/providers': typeof AppAdminProvidersRoute
   '/_app/admin/users': typeof AppAdminUsersRoute
   '/_app/devices/$deviceId': typeof AppDevicesDeviceIdRoute
   '/_app/devices/': typeof AppDevicesIndexRoute
@@ -84,6 +93,7 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/providers'
+    | '/admin/providers'
     | '/admin/users'
     | '/devices/$deviceId'
     | '/devices/'
@@ -92,6 +102,7 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/providers'
+    | '/admin/providers'
     | '/admin/users'
     | '/devices/$deviceId'
     | '/devices'
@@ -101,6 +112,7 @@ export interface FileRouteTypes {
     | '/_app'
     | '/login'
     | '/_app/providers'
+    | '/_app/admin/providers'
     | '/_app/admin/users'
     | '/_app/devices/$deviceId'
     | '/_app/devices/'
@@ -142,6 +154,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppProvidersRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/admin/providers': {
+      id: '/_app/admin/providers'
+      path: '/admin/providers'
+      fullPath: '/admin/providers'
+      preLoaderRoute: typeof AppAdminProvidersRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/admin/users': {
       id: '/_app/admin/users'
       path: '/admin/users'
@@ -168,6 +187,7 @@ declare module '@tanstack/react-router' {
 
 interface AppRouteChildren {
   AppProvidersRoute: typeof AppProvidersRoute
+  AppAdminProvidersRoute: typeof AppAdminProvidersRoute
   AppAdminUsersRoute: typeof AppAdminUsersRoute
   AppDevicesDeviceIdRoute: typeof AppDevicesDeviceIdRoute
   AppDevicesIndexRoute: typeof AppDevicesIndexRoute
@@ -175,6 +195,7 @@ interface AppRouteChildren {
 
 const AppRouteChildren: AppRouteChildren = {
   AppProvidersRoute: AppProvidersRoute,
+  AppAdminProvidersRoute: AppAdminProvidersRoute,
   AppAdminUsersRoute: AppAdminUsersRoute,
   AppDevicesDeviceIdRoute: AppDevicesDeviceIdRoute,
   AppDevicesIndexRoute: AppDevicesIndexRoute,

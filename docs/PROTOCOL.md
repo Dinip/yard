@@ -1,6 +1,4 @@
-# Protocol — phase 2
-
-> **Status: not yet built.** Design contract; update as the code lands.
+# Protocol
 
 `packages/protocol` is the **single source of truth** for every message on the
 control and session planes: zod schemas in TypeScript, with a codegen step that
@@ -9,80 +7,167 @@ emits the Rust mirror.
 ```
 packages/protocol/
 ├── src/
-│   ├── control.ts     provider ↔ coordinator envelopes
-│   ├── session.ts     browser ↔ provider envelopes
+│   ├── common.ts        DeviceSnapshot, Display, Battery, AppInfo, enums
+│   ├── control.ts       provider ↔ coordinator
+│   ├── session.ts       browser ↔ provider
+│   ├── token.ts         session-token claims, JWKS path
+│   ├── registry.ts      named() — gives a schema a Rust type name
 │   └── index.ts
 ├── scripts/gen-rust.ts
-└── test/fake-provider.ts
+└── test/
+    ├── fixtures.ts      canonical messages, parsed by both languages
+    ├── protocol.test.ts
+    └── fake-provider.ts a provider with no hardware
 ```
+
+## Codegen
 
 ```bash
-bun run protocol:gen   # → packages/provider/crates/farm-protocol/src/generated.rs
+bun run protocol:gen     # → packages/provider/crates/farm-protocol/src/generated.rs
+bun run protocol:check   # tests + regen + diff, as CI runs it
 ```
 
-The generated file is serde structs plus a tagged enum. **It is committed**, and
-CI runs:
+Only schemas wrapped in `named("Foo", …)` become Rust types. An unregistered
+nested object is a **hard error**, not a guess — the generator refuses rather
+than inventing a name that would later collide.
 
-```bash
-bun run protocol:gen && git diff --exit-code
-```
+The emitter walks zod v4's internals rather than going via JSON Schema, because
+JSON Schema erases discriminated-union tags — the entire shape of this protocol.
+Output is piped through `rustfmt`, so `cargo fmt --check` and the drift check
+cannot demand different bytes from each other.
 
-so a schema change that wasn't regenerated fails the build. This makes
-impossible the exact failure mode `stf-ios-provider`'s README warns about: a
-stale protobuf copy that encodes cleanly and delivers nothing.
+### The drift guard
+
+`generated.rs` is **committed**, and CI runs `protocol:gen && git diff
+--exit-code`. A schema change that wasn't regenerated fails the build. This
+makes impossible the exact failure `stf-ios-provider`'s README warns about: a
+stale copy of the wire contract that encodes cleanly and delivers nothing.
+
+### Cross-language fixtures
+
+`test/fixtures.ts` holds canonical messages. `bun test packages/protocol`
+asserts zod parses them and writes `crates/farm-protocol/tests/fixtures.json`;
+`cargo test -p farm-protocol` reads it back and asserts serde re-encodes it
+unchanged. A change that breaks one language but not the other fails a test.
+
+This caught a real bug during development: `.optional()` and `.nullable()` were
+both mapped to `skip_serializing_if`, so `{"clipboard": {"text": null}}` — which
+means *the clipboard is empty* — serialized as an absent field, i.e. *no
+clipboard report at all*. They are now distinct:
+
+| zod | Rust | On the wire |
+|---|---|---|
+| `.optional()` | `Option<T>` + `skip_serializing_if` | key may be absent |
+| `.nullable()` | `Option<T>` + `default` | key always present, may be `null` |
 
 ## Encoding
 
-**JSON for control messages.** They are low-rate and being able to read them in
-a log or a browser devtools frame inspector is worth more than the bytes.
+**JSON for control messages.** They are low-rate, and reading them in a log is
+worth more than the bytes.
 
 **Binary framing for video access units only** — `[type byte][AU]`, where the
 type byte is `0 = key`, `1 = delta`, `2 = key-with-reset`. This is the framing
-`stf-ios-provider/src/frontend/hevc-screen.js` already speaks, documented in
-that directory's `INTEGRATION.md`.
+`stf-ios-provider/src/frontend/hevc-screen.js` already speaks; see that
+directory's `INTEGRATION.md`.
 
-## Control plane (provider → coordinator, outbound WSS)
+## Control plane — provider ↔ coordinator ✅ built
 
-`/api/providers/connect`, bearer-authenticated with a `providerToken`.
+`GET /api/providers/connect`, upgraded to WSS, `Authorization: Bearer <pft_…>`.
+Authentication happens **before** the upgrade, so a bad credential is a 401
+rather than a socket that closes immediately — much easier to read in a provider
+log.
 
-State machine: `hello` → reconcile that provider's device rows → heartbeat loop
-→ event ingest → command dispatch with per-command timeouts.
+State machine: `hello` → reconcile inventory → heartbeat loop → event ingest →
+command dispatch.
 
-Planned message families:
+### provider → coordinator (`ProviderMessage`)
 
-| Direction | Messages |
+| Message | Effect |
 |---|---|
-| provider → coordinator | `hello` (id, version, publicBaseUrl, hostname), `heartbeat`, `device.present`, `device.absent`, `device.state`, `device.display`, `device.battery`, `command.result`, `install.progress` |
-| coordinator → provider | `session.authorize` (deviceId, reservationId), `session.revoke`, `device.reboot`, `device.rotate`, `device.launch`, `device.uninstall`, `device.apps`, `device.adb.expose` |
+| `hello` | Version + id check, provider row updated, **whole inventory reconciled** |
+| `heartbeat` | Refreshes `lastSeenAt` and rearms the timeout |
+| `device.upsert` | Full snapshot upserted (hotplug) |
+| `device.removed` | Device → `absent` |
+| `device.status` / `.display` / `.battery` | Targeted field updates |
+| `command.result` | Settles the correlated pending command |
+| `install.finished` | Written to `auditLog` — the file is already deleted |
 
-A provider's devices flip to `absent` when its socket drops — that is the
-coordinator's job, not a timeout on the provider side.
+### coordinator → provider (`CoordinatorMessage`)
 
-## Session plane (browser → provider, direct WSS)
+`hello.ack` (carries the heartbeat interval and JWKS URL), `hello.reject`,
+`ping`, and `command` — whose `payload` is one of:
+
+`session.authorize` · `session.revoke` · `device.reboot` · `device.rotate` ·
+`device.apps` · `device.launch` · `device.uninstall` · `device.adb.expose` ·
+`device.adb.unexpose` · `device.restart`
+
+Every command is correlated by id and bounded by a 15s timeout — a provider that
+accepts a command and never answers must not wedge the caller.
+
+### Reconcile, don't patch
+
+`hello` carries the provider's **entire** device list, and anything the database
+still has for that provider which the provider no longer reports becomes
+`absent`. A provider that crashed mid-change therefore cannot leave a stale row
+behind. The same stance drives the `stream` subscription (below).
+
+### Failure semantics
+
+| Event | Result |
+|---|---|
+| Socket drops | Provider → `offline`, its devices → `absent`, its active reservations released |
+| Heartbeat missed 3× | Treated as a drop — otherwise a half-open TCP connection keeps devices looking `ready` forever |
+| Provider offline | `device.reserve` fails `PRECONDITION_FAILED` rather than handing out an unreachable device |
+| Unparseable message | Socket rejected and closed; the two sides disagree about the contract |
+
+## Session tokens ✅ built
+
+Ed25519 (`EdDSA`) JWTs signed by the coordinator, published at
+`/.well-known/farm-jwks.json`, verified by each provider against its cached copy.
+
+```json
+{ "deviceId": "…", "userId": "…", "reservationId": "…", "providerId": "…",
+  "iss": "<PUBLIC_URL>", "aud": "farm-provider", "exp": "≈60s" }
+```
+
+`device.sessionToken` issues one only to the holder of the device's active
+reservation, and returns the `wss://…/s/<deviceId>` URL alongside. The short
+`exp` is a **backstop**: revocation is a `session.revoke` push, which is instant
+and does not wait for a token to age out.
+
+## Session plane — browser ↔ provider (schemas ready, provider is phase 3)
 
 `wss://<publicBaseUrl>/s/<deviceId>?token=<jwt>`
 
-The provider verifies the coordinator-signed Ed25519 JWT locally against the
-JWKS it cached at startup, and checks the token's `reservationId` against the
-one the coordinator last authorized for that device.
-
 | Direction | Messages |
 |---|---|
-| provider → browser | `{type:"codec"}` handshake (codec string + description), binary AU frames, `clipboard`, `install.progress`, `error` |
-| browser → provider | `touch` (down/move/up), `key`, `text`, `clipboard.get`/`set`, `rotate`, `keyframe` request |
+| browser → provider (`ClientMessage`) | `pointer.down/move/up`, `key`, `text`, `clipboard.get/set`, `rotate`, `keyframe`, `pong` |
+| provider → browser (`ServerMessage`) | `codec` handshake, `display`, `clipboard`, `install.progress`, `install.result`, `session.closed`, `error`, `ping` |
 
-## Artifact plane (browser → provider, HTTPS)
+Pointer coordinates are **normalised 0..1, not pixels**: the browser needs no
+knowledge of the true resolution, and a mid-session rotation cannot
+desynchronise an in-flight event.
 
-Same port, same token.
+`pointer.*` is deliberately three messages rather than one `tap`. The provider's
+`Pointer` state machine needs down/move/up to distinguish a drag from a tap — the
+regression `stf-ios-provider/src/control.rs` documents at length.
 
-- `POST /s/:deviceId/install` — streams the APK/IPA to the scratch dir,
-  installs, deletes, reports progress over the session WebSocket
-- `GET /s/:deviceId/screenshot.png`
-- `GET /s/:deviceId/mjpeg` — `multipart/x-mixed-replace` fallback, ~3 fps cap
+## Artifact plane — browser → provider (phase 3)
 
-## Fake provider
+Same port, same token. `POST /s/:deviceId/install`,
+`GET /s/:deviceId/screenshot.png`, `GET /s/:deviceId/mjpeg`.
 
-`packages/protocol/test/fake-provider.ts` speaks the control plane and registers
-synthetic devices. It lets the coordinator and the whole web UI be developed and
-regression-tested **with no hardware attached**, and is the thing to validate the
-gateway against before any Rust is written.
+## Fake provider ✅ built
+
+`packages/protocol/test/fake-provider.ts` speaks the whole control plane with no
+hardware. It is both the integration-test harness and a dev tool:
+
+```bash
+bun packages/protocol/test/fake-provider.ts --token pft_… --id lab-1 --devices 4
+```
+
+Register a provider and issue a token under `/admin/providers` first. It reports
+four synthetic devices with realistic identifiers, geometry and codecs, answers
+commands with plausible data, and exposes `received[]` for assertions.
+`packages/coordinator/test/gateway.test.ts` drives it over a real socket against
+a real database.

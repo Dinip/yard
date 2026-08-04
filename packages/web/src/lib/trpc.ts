@@ -1,6 +1,6 @@
 import type { AppRouter } from "@farm/coordinator/router";
 import { QueryClient } from "@tanstack/react-query";
-import { createTRPCClient, httpBatchLink } from "@trpc/client";
+import { createTRPCClient, httpBatchLink, httpSubscriptionLink, splitLink } from "@trpc/client";
 import { createTRPCOptionsProxy } from "@trpc/tanstack-react-query";
 
 export const queryClient = new QueryClient({
@@ -19,9 +19,20 @@ export const queryClient = new QueryClient({
 
 export const trpcClient = createTRPCClient<AppRouter>({
   links: [
-    httpBatchLink({
-      url: "/api/trpc",
-      fetch: (url, opts) => fetch(url, { ...opts, credentials: "include" }),
+    splitLink({
+      // Subscriptions ride SSE, which cannot be batched and must stay open.
+      // Everything else batches over a single POST.
+      condition: (op) => op.type === "subscription",
+      true: httpSubscriptionLink({
+        url: "/api/trpc",
+        // EventSource cannot set headers, but the app is single-origin (Vite
+        // proxies /api in dev, Caddy in prod) so the session cookie rides along.
+        eventSourceOptions: { withCredentials: true },
+      }),
+      false: httpBatchLink({
+        url: "/api/trpc",
+        fetch: (url, opts) => fetch(url, { ...opts, credentials: "include" }),
+      }),
     }),
   ],
 });

@@ -35,9 +35,14 @@ export function AppShell({ children }: { children: ReactNode }) {
             Providers
           </NavLink>
           {me?.isAdmin && (
-            <NavLink to="/admin/users" icon={<Shield className="size-4" />}>
-              Admin
-            </NavLink>
+            <>
+              <NavLink to="/admin/providers" icon={<Server className="size-4" />}>
+                Manage
+              </NavLink>
+              <NavLink to="/admin/users" icon={<Shield className="size-4" />}>
+                Users
+              </NavLink>
+            </>
           )}
 
           <div className="flex-1" />

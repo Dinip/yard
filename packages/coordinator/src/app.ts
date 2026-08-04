@@ -1,9 +1,12 @@
+import { JWKS_PATH } from "@farm/protocol";
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { auth } from "./auth.ts";
 import { env } from "./env.ts";
+import { gatewayRoutes } from "./gateway/route.ts";
+import { jwks } from "./lib/session-token.ts";
 import { createContext } from "./trpc/init.ts";
 import { appRouter } from "./trpc/router.ts";
 
@@ -25,6 +28,20 @@ app.use(
 );
 
 app.get("/health", (c) => c.json({ ok: true, name: env.APP_NAME }));
+
+/**
+ * Public key for session tokens. Every provider fetches this once at startup
+ * and caches it, which is what lets a provider keep serving an authorized
+ * session while the coordinator is down.
+ */
+app.get(JWKS_PATH, (c) => {
+  c.header("Cache-Control", "public, max-age=300");
+  return c.json(jwks);
+});
+
+// Mounted before the CORS-scoped /api/* handlers below because a WebSocket
+// upgrade must not be answered with a preflight.
+app.route("/", gatewayRoutes);
 
 app.on(["GET", "POST"], "/api/auth/*", (c) => auth.handler(c.req.raw));
 

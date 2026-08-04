@@ -30,26 +30,45 @@ bun --env-file=.env packages/coordinator/src/cli/grant-admin.ts you@example.com
 
 Sign out and back in — role changes are masked by the 60s session cookie cache.
 
+## Running against synthetic devices
+
+No hardware is needed to develop or test anything above the provider. Sign in as
+an admin, go to **Manage → Add provider**, create one (id `lab-1`, any HTTPS base
+URL), issue it a token, then:
+
+```bash
+bun packages/protocol/test/fake-provider.ts --token pft_… --id lab-1 --devices 4
+```
+
+Four synthetic devices appear in the UI immediately, with realistic identifiers,
+geometry and codecs. They reserve, answer commands, and vanish when you stop the
+process. This is also what `packages/coordinator/test/gateway.test.ts` drives.
+
 ## Everyday commands
 
 ```bash
 bun run check          # biome lint + format check
 bun run check:fix      # …and fix
 bun run typecheck      # every package
-bun test --env-file=.env packages/coordinator/test
+bun test --env-file=.env packages/protocol packages/coordinator/test
 
 bun run db:generate    # after editing packages/db/src/schema/ — writes SQL
 bun run db:migrate
 bun run db:studio      # drizzle studio
 ```
 
-For phases 3+:
+Rust and the wire contract:
 
 ```bash
-cargo clippy --workspace -- -D warnings
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --check
-bun run protocol:gen && git diff --exit-code   # protocol drift check
+bun run protocol:check    # tests + regen + diff, as CI runs it
 ```
+
+`protocol:check` is the drift guard: `generated.rs` is committed, so a zod schema
+edit that wasn't regenerated fails here rather than shipping to a provider as a
+silent no-op.
 
 ## Full stack in Docker
 

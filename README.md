@@ -14,7 +14,9 @@ directly. The coordinator is never on the data path.
 
 ## Status
 
-Phase 1 of 6 complete: auth, data model, app plane, and the local stack.
+Phases 1–2 of 6 complete: auth, data model, app plane, the wire protocol, and
+the provider control plane. The whole system runs today against synthetic
+devices via the fake provider — no hardware needed.
 **[docs/PROGRESS.md](docs/PROGRESS.md) is the live status board** — read it first.
 
 ## Quick start

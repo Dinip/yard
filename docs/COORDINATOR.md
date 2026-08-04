@@ -5,16 +5,21 @@ Hono app on Bun. The app plane and the control plane; never the data plane.
 ```
 src/
 ├── index.ts            Bun.serve entrypoint + signal handling
-├── app.ts              Hono routes: /health, /api/auth/*, /api/trpc/*
+├── app.ts              Hono routes: /health, JWKS, gateway, auth, tRPC
 ├── env.ts              t3-env + zod, validated at boot — misconfig fails fast
 ├── auth.ts             better-auth instance
 ├── db.ts               shared pool + drizzle client
-├── lib/audit.ts        audit-row helper (never throws into the caller)
 ├── cli/grant-admin.ts  first-admin bootstrap
+├── lib/
+│   ├── audit.ts        audit-row helper (never throws into the caller)
+│   ├── events.ts       device-change broadcast, coalesced
+│   ├── provider-token.ts  generate/hash machine credentials
+│   └── session-token.ts   Ed25519 signer + published JWKS
+├── gateway/            provider control plane (see below)
 └── trpc/
     ├── init.ts         context + public/protected/admin procedures
     ├── router.ts       root router
-    └── routers/        user · device · provider · admin
+    └── routers/        user · device · provider · admin · stream
 ```
 
 ## Environment
@@ -68,22 +73,49 @@ v11, fetch adapter, mounted at `/api/trpc`. Three procedure levels in
 |---|---|---|
 | `user` | `me`, `capabilities` | ✅ |
 | `device` | `list`, `get`, `reserve`, `renew`, `release`, `myReservations` | ✅ |
-| `device` | `sessionToken`, `apps`, `launch`, `uninstall`, `reboot`, `rotate`, `adbExpose` | phase 2–4 |
-| `provider` | `list` | ✅ |
-| `provider` | `tokens.create`/`revoke`, `restartDevice` | phase 2 |
+| `device` | `sessionToken`, `apps`, `launch`, `uninstall`, `reboot`, `rotate`, `adbExpose`, `adbUnexpose` | ✅ |
+| `provider` | `list`, `create`, `update`, `remove`, `restartDevice` | ✅ |
+| `provider` | `tokens.list`/`create`/`revoke` | ✅ |
 | `admin` | `users`, `forceRelease`, `audit` | ✅ |
-| `stream` | `subscribe` — live device-list updates | phase 2 |
+| `stream` | `devices` — live inventory updates over SSE | ✅ |
 
-Until `stream` lands the SPA polls `device.list` every 5s. That is a known
-placeholder, marked in the code.
+`stream.devices` yields a **revision counter, not device data**. Clients respond
+by invalidating `device.list`, so what they render always came from one
+consistent read. That costs an extra round trip per change and removes an entire
+class of "the UI drifted from the database" bugs. The SPA falls back to 5s
+polling when the stream is not connected, and labels which mode it is in.
+
+## The provider gateway
+
+`GET /api/providers/connect`, upgraded to a WebSocket. Wire details are in
+[PROTOCOL.md](./PROTOCOL.md); what matters here is the code shape.
+
+```
+src/gateway/
+├── route.ts      Hono upgrade + pre-upgrade bearer auth
+├── handler.ts    GatewaySession — the state machine
+└── registry.ts   ProviderConnection + the live-socket registry
+```
+
+`GatewaySession` takes `send` and `close` as constructor arguments rather than
+holding a WebSocket, so the entire state machine is exercisable without a real
+socket. `ProviderConnection.command()` correlates a request with its
+`command.result` and bounds it with a 15s timeout — a provider that accepts a
+command and never answers must not wedge a tRPC caller.
+
+Bun needs the socket handlers at the server level, so `gatewayWebSocket` is
+passed to `Bun.serve({ websocket })` in `src/index.ts`. Omitting it makes every
+upgrade silently fail.
+
+### The registry is in-memory
+
+`providers` maps provider id → live connection, per coordinator process. Two
+coordinator instances would each be blind to the other's providers. Since
+providers dial *out*, this is not a transparent scale-out — it needs Postgres
+`LISTEN`/`NOTIFY` or a bus first. Same applies to `lib/events.ts`.
 
 ## Not yet built
 
-- `/api/providers/connect` — the provider gateway WebSocket and its
-  control-plane state machine (hello → reconcile → heartbeat → events →
-  commands). Phase 2.
-- `/.well-known/farm-jwks.json` — Ed25519 public key for session tokens.
-  Phase 2.
 - The reservation reaper — expires lapsed reservations and pushes
   `session.revoke` to the owning provider. Phase 6.
 
@@ -105,6 +137,11 @@ docker compose -f docker-compose.dev.yml up -d
 bun test --env-file=.env packages/coordinator/test
 ```
 
-The suite runs tRPC routers through `createCaller` against a real Postgres — the
-reservation guarantees are a database property, so testing them against a mock
-would test nothing.
+`reservation.test.ts` runs tRPC routers through `createCaller` against a real
+Postgres — the reservation guarantees are a database property, so testing them
+against a mock would test nothing.
+
+`gateway.test.ts` goes further: it boots the real Hono app on a port and drives
+it with the fake provider over a real WebSocket. The state machine's whole job is
+coordinating an app, a socket and a database, so mocking any of the three would
+test nothing either.

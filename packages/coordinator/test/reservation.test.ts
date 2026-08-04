@@ -6,21 +6,19 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { device, provider, reservation, user } from "@farm/db";
 import { eq, inArray } from "drizzle-orm";
-import { db, pool } from "../src/db.ts";
-import { appRouter } from "../src/trpc/router.ts";
+import { db } from "../src/db.ts";
+import {
+  caller as callerFor,
+  closePoolOnExit,
+  stubProviderConnection,
+  testUser,
+} from "./helpers.ts";
+
+closePoolOnExit();
 
 const PROVIDER_ID = "test-provider";
 const DEVICE_ID = "test-device-0001";
 const USERS = ["test-user-a", "test-user-b", "test-user-c"];
-
-function callerFor(userId: string, role = "user") {
-  return appRouter.createCaller({
-    db,
-    req: new Request("http://test.local"),
-    session: { id: `sess-${userId}`, userId } as never,
-    user: { id: userId, role, banned: false } as never,
-  });
-}
 
 beforeAll(async () => {
   await cleanup();
@@ -37,21 +35,15 @@ beforeAll(async () => {
     name: "Test iPhone",
     status: "ready",
   });
-  await db.insert(user).values(
-    USERS.map((id) => ({
-      id,
-      name: id,
-      email: `${id}@test.local`,
-      emailVerified: true,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    })),
-  );
+  await db.insert(user).values(USERS.map(testUser));
+
+  // reserve() refuses a device whose provider is offline, and these tests are
+  // about the database's exclusivity guarantee, not the control plane.
+  stubProviderConnection(PROVIDER_ID);
 });
 
 afterAll(async () => {
   await cleanup();
-  await pool.end();
 });
 
 async function cleanup() {

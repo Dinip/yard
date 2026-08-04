@@ -5,6 +5,7 @@ import { useMemo, useState } from "react";
 import { DeviceCard } from "@/components/device-card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useDeviceStream } from "@/hooks/use-device-stream";
 import { trpc } from "@/lib/trpc";
 
 export const Route = createFileRoute("/_app/devices/")({
@@ -16,10 +17,10 @@ export const Route = createFileRoute("/_app/devices/")({
 const PLATFORMS = ["all", "ios", "android"] as const;
 
 function DevicesPage() {
+  const { connected, pollInterval } = useDeviceStream();
   const { data: devices, isLoading } = useQuery({
     ...trpc.device.list.queryOptions(),
-    // Until the live `stream` subscription lands (phase 2), poll.
-    refetchInterval: 5_000,
+    refetchInterval: pollInterval,
   });
   const [q, setQ] = useState("");
   const [platform, setPlatform] = useState<(typeof PLATFORMS)[number]>("all");
@@ -42,6 +43,7 @@ function DevicesPage() {
         <span className="text-muted-foreground text-sm">
           {filtered.length} of {devices?.length ?? 0}
         </span>
+        <LiveIndicator connected={connected} />
         <div className="flex-1" />
         <div className="flex rounded-md border p-0.5">
           {PLATFORMS.map((p) => (
@@ -97,5 +99,20 @@ function EmptyState({ hasAny }: { hasAny: boolean }) {
           : "Devices appear here once a provider connects and reports its inventory. Create a provider token under Providers to get started."}
       </p>
     </div>
+  );
+}
+
+/** Distinguishes "nothing is changing" from "we stopped hearing about changes". */
+function LiveIndicator({ connected }: { connected: boolean }) {
+  return (
+    <span
+      className="flex items-center gap-1.5 text-muted-foreground text-xs"
+      title={connected ? "Receiving live updates" : "Live stream unavailable — polling every 5s"}
+    >
+      <span
+        className={`size-1.5 rounded-full ${connected ? "animate-pulse bg-success" : "bg-muted-foreground"}`}
+      />
+      {connected ? "live" : "polling"}
+    </span>
   );
 }

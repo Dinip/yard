@@ -31,8 +31,8 @@ is wrong — that is the specific failure of STF this project exists to fix.
 packages/db/           drizzle schema, migrations, client
 packages/coordinator/  Hono + tRPC + better-auth + provider gateway
 packages/web/          TanStack Router SPA + shadcn
-packages/protocol/     zod schemas + Rust codegen        (phase 2, not built)
-packages/provider/     cargo workspace: iOS + Android    (phase 3–4, not built)
+packages/protocol/     zod schemas + Rust codegen + fake provider
+packages/provider/     cargo workspace: farm-protocol crate (backends: phase 3–4)
 ```
 
 Reference sources live **outside** this repo as siblings: `../stf`,
@@ -42,17 +42,20 @@ from them, never import from them. See [REFERENCES.md](docs/REFERENCES.md).
 ## Commands
 
 ```bash
-bun run check:fix                                  # biome lint + format
-bun run typecheck                                  # all packages
-bun test --env-file=.env packages/coordinator/test # needs dev Postgres
-bun run db:generate && bun run db:migrate          # after schema edits
+bun run check:fix                                    # biome lint + format
+bun run typecheck                                    # all packages
+bun test --env-file=.env packages/protocol packages/coordinator/test
+bun run db:generate && bun run db:migrate            # after schema edits
+bun run protocol:check                               # wire-contract drift guard
+cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings
 ```
 
 Run `check:fix` and `typecheck` before committing. Tests need
 `docker compose -f docker-compose.dev.yml up -d`.
 
-Phases 3+: `cargo clippy --workspace -- -D warnings`, `cargo fmt --check`, and
-`bun run protocol:gen && git diff --exit-code`.
+**No hardware needed** to work on anything above the provider — run
+`packages/protocol/test/fake-provider.ts` against a dev coordinator. See
+docs/DEVELOPMENT.md.
 
 ## Working agreements
 
@@ -65,6 +68,9 @@ Phases 3+: `cargo clippy --workspace -- -D warnings`, `cargo fmt --check`, and
 - **Don't touch `device/media.rs` when it's ported.** Its RTP/keyframe-recovery
   behaviour is hard-won; every comment in it marks a field failure.
 - **Comments explain why, not what**, and match the density of surrounding code.
+- **Never hand-edit `generated.rs`.** Edit the zod schema and run
+  `protocol:gen`. Every nested object needs `named("Foo", …)` or the generator
+  errors rather than guessing a type name.
 - **The product name lives in `APP_NAME`.** Never hardcode "Device Farm" in a
   user-visible string. See [RENAMING.md](docs/RENAMING.md).
 
@@ -84,6 +90,14 @@ Phases 3+: `cargo clippy --workspace -- -D warnings`, `cargo fmt --check`, and
   context from any non-loopback origin.
 - **There is no artifact storage anywhere.** Uploads stream to the provider, get
   installed, and are deleted. The only trace is an `auditLog` row.
+- **Reconcile, don't patch.** `hello` carries a provider's whole inventory and
+  anything missing becomes `absent`; `stream.devices` sends a revision counter,
+  not device data, and clients refetch. Both exist so a dropped or reordered
+  message can never leave two sides permanently disagreeing.
+- **`.optional()` and `.nullable()` are different on the wire** — absent vs.
+  present-and-null. The Rust emitter maps them differently on purpose.
+- **The provider registry and event broadcast are in-memory**, so exactly one
+  coordinator instance is supported today.
 
 ## Git
 
