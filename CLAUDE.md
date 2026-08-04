@@ -32,7 +32,8 @@ packages/db/           drizzle schema, migrations, client
 packages/coordinator/  Hono + tRPC + better-auth + provider gateway
 packages/web/          TanStack Router SPA + shadcn
 packages/protocol/     zod schemas + Rust codegen + fake provider
-packages/provider/     cargo workspace: farm-protocol crate (backends: phase 3–4)
+packages/provider/     cargo workspace: farm-protocol, provider-core,
+                       backend-mock, farm-provider (ios: 3b, android: 4)
 ```
 
 Reference sources live **outside** this repo as siblings: `../stf`,
@@ -53,9 +54,12 @@ cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings
 Run `check:fix` and `typecheck` before committing. Tests need
 `docker compose -f docker-compose.dev.yml up -d`.
 
-**No hardware needed** to work on anything above the provider — run
-`packages/protocol/test/fake-provider.ts` against a dev coordinator. See
-docs/DEVELOPMENT.md.
+**No hardware needed**, at either layer:
+- `packages/protocol/test/fake-provider.ts` — a TS provider, for coordinator/UI work.
+- `backend: mock` in provider.yaml — a synthetic device inside the real Rust
+  provider, for provider work.
+
+See docs/DEVELOPMENT.md.
 
 ## Working agreements
 
@@ -98,6 +102,14 @@ docs/DEVELOPMENT.md.
   present-and-null. The Rust emitter maps them differently on purpose.
 - **The provider registry and event broadcast are in-memory**, so exactly one
   coordinator instance is supported today.
+- **A session-plane request must pass two checks**: the JWT verifies against the
+  cached JWKS *and* its `reservationId` is the one the coordinator last
+  authorized. A signed, unexpired token for a revoked reservation is refused.
+- **JWT leeway is 5s on purpose.** The library default of 60 doubled a ~60s
+  token's lifetime; there is a regression test.
+- **Pointer coordinates are normalised 0..1, never pixels**, and down/move/up
+  are never collapsed into a `tap` — the backend needs them to tell a drag from
+  a tap.
 
 ## Git
 

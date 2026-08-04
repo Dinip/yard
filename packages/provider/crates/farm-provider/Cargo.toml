@@ -1,0 +1,22 @@
+[package]
+name = "farm-provider"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Device provider: one process per host, supervising every attached device"
+
+[[bin]]
+name = "farm-provider"
+path = "src/main.rs"
+
+[dependencies]
+farm-protocol.workspace = true
+provider-core.workspace = true
+backend-mock.workspace = true
+
+tokio.workspace = true
+clap.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true

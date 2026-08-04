@@ -1,0 +1,15 @@
+[package]
+name = "backend-mock"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Synthetic device backend — lets the provider run and be tested with no hardware attached"
+
+[dependencies]
+farm-protocol.workspace = true
+provider-core.workspace = true
+
+tokio.workspace = true
+async-trait.workspace = true
+tracing.workspace = true

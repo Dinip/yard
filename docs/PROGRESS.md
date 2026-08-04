@@ -71,17 +71,63 @@ an `expiresAt` and the client renews, but nothing sweeps lapsed ones yet.
 
 ---
 
-## Phase 3 — Provider core + iOS ⬜
+## Phase 3a — provider-core ✅
+
+Everything a provider does that is not device-specific. Verifiable with no
+hardware, which is why it was split from the iOS port.
+
+*Done when: a provider registers with the coordinator, appears in the UI,
+reserves, and serves a session-plane connection with a valid token.* — **met**
+
+| Item | State | Where |
+|---|---|---|
+| Cargo workspace + `farm-provider` binary | ✅ | `packages/provider/crates/` |
+| One YAML config, multi-device, token precedence | ✅ | `provider-core/src/config.rs` |
+| `DeviceBackend` trait — the seam for iOS/Android | ✅ | `provider-core/src/backend.rs` |
+| Codec-agnostic access-unit fan-out | ✅ | `provider-core/src/video.rs` |
+| Control-plane client, reconnect with backoff | ✅ | `provider-core/src/control.rs` |
+| Session registry (replaces `group.rs`) | ✅ | `provider-core/src/session.rs` |
+| JWKS fetch + session-token verification | ✅ | `provider-core/src/auth.rs` |
+| Session plane (WS) + artifact plane (HTTP upload/screenshot) | ✅ | `provider-core/src/server.rs` |
+| Device supervision + command routing | ✅ | `provider-core/src/supervisor.rs` |
+| Mock backend — the whole provider with no hardware | ✅ | `backend-mock/` |
+| Dockerfile, compose wiring | ✅ | `packages/provider/Dockerfile` |
+| 49 Rust tests incl. in-process session-plane suite | ✅ | `provider-core/tests/` |
+
+**Verified end-to-end** against the real coordinator: the Rust provider
+registers and reconciles inventory (stale TS fake-provider devices correctly
+went `absent`); reserve → session token → WS handshake delivers `hev1.1.6.L93.B0`
++ display geometry, then key and delta frames; input, clipboard round-trip,
+screenshot and a 3 MB upload all work; the staged file is deleted; the install
+lands in the coordinator's audit log with its sha256; a token for the wrong
+device gets 403, garbage gets 401, and after release the same valid token gets
+403 while the live socket receives `session.closed`.
+
+**Failure drill:** killing the coordinator left the provider running and the
+session plane serving 200s; it backed off 1s → 2s → 4s and re-registered
+automatically when the coordinator returned.
+
+**Two real bugs the tests caught**, both now regression-tested:
+- `jsonwebtoken`'s default 60s leeway silently doubled the lifetime of a ~60s
+  session token. Leeway is now 5s.
+- `.optional()` vs `.nullable()` in the Rust emitter (see phase 2a).
+
+---
+
+## Phase 3b — iOS backend ⬜ *(needs hardware)*
 
 | Item | State |
 |---|---|
-| Cargo workspace under `packages/provider` | ⬜ |
-| Port `device/`, `control.rs`, `screen_ws.rs`, `health.rs` from `stf-ios-provider` | ⬜ |
-| Delete `bus.rs`, `wire.rs`, `group.rs`, `provider.sh`, zeromq + prost deps | ⬜ |
-| `provider-core`: control client, session server (JWT), device actor, supervisor | ⬜ |
-| One YAML config, multi-device in one process | ⬜ |
+| Port `device/mod.rs`, `device/media.rs`, `device/hid.rs`, `control.rs` | ⬜ |
+| Implement `DeviceBackend` over them | ⬜ |
+| Delete `bus.rs`, `wire.rs`, `group.rs`, `provider.rs`, `provider.sh` | ⬜ |
+| Drop the `zeromq` / `prost` / `protox` dependencies | ⬜ |
 
-*Done when: an iPhone appears, reserves, streams and takes touch input end-to-end.*
+*Done when: an iPhone appears, reserves, streams and takes touch input
+end-to-end.*
+
+> `device/media.rs` carries hard-won RTP/keyframe-recovery behaviour. Port it
+> verbatim; every comment in it marks a field failure.
 
 ---
 

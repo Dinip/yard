@@ -5,8 +5,64 @@ members = ["packages/provider/crates/*"]
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.85"
 license = "MIT"
 
 [workspace.dependencies]
+farm-protocol = { path = "packages/provider/crates/farm-protocol" }
+provider-core = { path = "packages/provider/crates/provider-core" }
+backend-mock = { path = "packages/provider/crates/backend-mock" }
+
+tokio = { version = "1.53", features = [
+  "rt-multi-thread",
+  "macros",
+  "sync",
+  "time",
+  "net",
+  "io-util",
+  "fs",
+  "signal",
+] }
+tokio-util = { version = "0.7", features = ["rt", "io"] }
+futures = "0.3"
+async-trait = "0.1"
+
+# Session + artifact planes. `ws` for video/input, `multipart` for APK/IPA
+# uploads that must stream to disk rather than buffer in memory.
+axum = { version = "0.8", features = ["ws", "multipart", "macros"] }
+tower-http = { version = "0.6", features = ["cors", "trace", "limit"] }
+
+# Control plane: one outbound WSS to the coordinator.
+tokio-tungstenite = { version = "0.30", features = ["rustls-tls-native-roots"] }
+# `rustls-native-certs` rather than bundled webpki roots: an on-prem farm often
+# terminates TLS with a private CA, and the OS trust store is where that lives.
+# The runtime image must therefore include `ca-certificates`.
+reqwest = { version = "0.13", default-features = false, features = [
+  "rustls",
+  "rustls-native-certs",
+  "json",
+] }
+
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# serde_yaml is deprecated upstream; _ng is the maintained fork.
+serde_yaml_ng = "0.10"
+
+jsonwebtoken = { version = "11", default-features = false, features = ["rust_crypto"] }
+base64 = "0.23"
+sha2 = "0.11"
+uuid = { version = "1", features = ["v4"] }
+bytes = "1"
+rand = "0.10"
+
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1"
+thiserror = "2"
+clap = { version = "4", features = ["derive", "env"] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true

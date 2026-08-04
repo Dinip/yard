@@ -1,0 +1,58 @@
+# farm-provider configuration.
+#
+#   farm-provider --config provider.yaml
+#   farm-provider --config provider.yaml --check   # validate and exit
+#
+# One process supervises every device on this host. Replaces
+# stf-ios-provider's one-container-per-device model.
+
+# Must match the provider registered under /admin/providers in the coordinator.
+id: lab-1
+name: Lab 1
+
+coordinator_url: https://farm.example.com
+
+# The URL the BROWSER uses to reach this provider directly, for video and
+# uploads. The coordinator never connects to it — providers dial out.
+#
+# Must be HTTPS anywhere but localhost: WebCodecs refuses to run outside a
+# secure context, and the failure looks like a blank screen with no error.
+public_base_url: https://lab-1.example.com
+
+# Where the session and artifact planes listen. Put a TLS terminator in front.
+bind: 0.0.0.0:7100
+
+# Staged uploads land here and are deleted after every install, successful or
+# not. A tmpfs is a good choice — nothing here is meant to survive.
+scratch_dir: /var/lib/farm/scratch
+max_upload_mb: 2048
+
+# Prefer FARM_PROVIDER_TOKEN or token_file over an inline token.
+# Precedence: env var > token_file > token.
+#   token: pft_...
+#   token_file: /run/secrets/farm-provider-token
+
+devices:
+  # Synthetic devices. No hardware required — this is how the provider is
+  # developed and tested, and how you can exercise the whole UI end to end.
+  - udid: mock-ios-1
+    backend: mock
+    name: Mock iPhone
+    options:
+      platform: ios
+
+  - udid: mock-android-1
+    backend: mock
+    name: Mock Pixel
+    options:
+      platform: android
+
+  # Real devices, once their backends exist:
+  #
+  # - udid: 00008120-000C1D2E3F401234   # iOS 17.4+; phase 3b
+  #   backend: ios
+  #   name: iPhone 15 Pro
+  #
+  # - udid: R5CT10ABCDE                 # adb serial; phase 4
+  #   backend: android
+  #   name: Pixel 8

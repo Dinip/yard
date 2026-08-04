@@ -14,9 +14,12 @@ directly. The coordinator is never on the data path.
 
 ## Status
 
-Phases 1–2 of 6 complete: auth, data model, app plane, the wire protocol, and
-the provider control plane. The whole system runs today against synthetic
-devices via the fake provider — no hardware needed.
+Phases 1, 2 and 3a complete: auth, data model, app plane, the wire protocol, the
+provider control plane, and the Rust provider's technology-independent half.
+
+The whole system runs today with **no hardware** — the Rust provider ships a
+mock backend that registers, reserves, streams synthetic video, and accepts
+input and uploads.
 **[docs/PROGRESS.md](docs/PROGRESS.md) is the live status board** — read it first.
 
 ## Quick start

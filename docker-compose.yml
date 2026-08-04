@@ -81,6 +81,8 @@ services:
     privileged: true
     environment:
       FARM_CONFIG: /etc/farm/provider.yaml
+      FARM_PROVIDER_TOKEN: ${FARM_PROVIDER_TOKEN:?issue one under /admin/providers}
+      FARM_LOG: ${FARM_LOG:-info}
     volumes:
       - ./packages/provider/provider.yaml:/etc/farm/provider.yaml:ro
       - /var/run/usbmuxd:/var/run/usbmuxd

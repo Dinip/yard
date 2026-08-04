@@ -14,6 +14,13 @@ pub const AU_KEY_RESET: u8 = 2;
 
 pub const PROTOCOL_VERSION: i64 = 1;
 
+/// Where the coordinator publishes the Ed25519 key session tokens are signed
+/// with. Each provider fetches this once at startup and caches it.
+pub const JWKS_PATH: &str = "/.well-known/farm-jwks.json";
+
+/// Session tokens must carry this audience; anything else is rejected.
+pub const SESSION_TOKEN_AUDIENCE: &str = "farm-provider";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Platform {
     #[serde(rename = "ios")]

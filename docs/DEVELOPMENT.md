@@ -44,6 +44,21 @@ Four synthetic devices appear in the UI immediately, with realistic identifiers,
 geometry and codecs. They reserve, answer commands, and vanish when you stop the
 process. This is also what `packages/coordinator/test/gateway.test.ts` drives.
 
+### …or the real Rust provider, with mock devices
+
+The TS fake provider exercises the coordinator. To exercise the **provider**
+itself — session plane, video fan-out, uploads, JWT verification — run the real
+binary with `backend: mock` devices:
+
+```bash
+cargo build --release -p farm-provider
+cp packages/provider/provider.example.yaml /tmp/provider.yaml   # then edit
+FARM_PROVIDER_TOKEN=pft_… ./target/release/farm-provider --config /tmp/provider.yaml
+```
+
+`--check` validates the config and exits. Still no hardware required: mock
+devices stream synthetic video and accept input, uploads and screenshots.
+
 ## Everyday commands
 
 ```bash
