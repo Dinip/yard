@@ -1,0 +1,29 @@
+{
+  "name": "@farm/coordinator",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./router": "./src/trpc/router.ts",
+    "./auth": "./src/auth.ts"
+  },
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "start": "bun src/index.ts",
+    "build": "bun build src/index.ts --target=bun --outdir dist",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@farm/db": "workspace:*",
+    "@t3-oss/env-core": "^0.13.11",
+    "@trpc/server": "^11.18.0",
+    "better-auth": "^1.6.25",
+    "drizzle-orm": "^0.45.2",
+    "hono": "^4.13.0",
+    "jose": "^6.2.8",
+    "zod": "^4.4.3"
+  }
+}

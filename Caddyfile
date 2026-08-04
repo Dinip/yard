@@ -1,0 +1,26 @@
+# TLS is not cosmetic here: WebCodecs requires a secure context from any
+# non-loopback origin, so HTTPS is a hard requirement for streaming.
+{$SITE_ADDRESS} {
+	encode zstd gzip
+
+	# Coordinator: auth, tRPC, provider gateway WebSocket, JWKS.
+	handle /api/* {
+		reverse_proxy coordinator:3000
+	}
+	handle /.well-known/farm-jwks.json {
+		reverse_proxy coordinator:3000
+	}
+
+	# Single-machine deploys can front providers here so the browser sees one
+	# origin. Traffic passes through Caddy but never through the coordinator.
+	# Multi-machine deploys skip this and let each provider advertise its own
+	# publicBaseUrl with its own terminator.
+	# handle /p/* {
+	# 	reverse_proxy provider:7100
+	# }
+
+	# Everything else is the SPA.
+	handle {
+		reverse_proxy web:80
+	}
+}

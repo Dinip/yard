@@ -1,0 +1,95 @@
+name: device-farm
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-farm}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-farm}
+      POSTGRES_DB: ${POSTGRES_DB:-farm}
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-farm} -d ${POSTGRES_DB:-farm}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+
+  coordinator:
+    build:
+      context: .
+      dockerfile: packages/coordinator/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgres://${POSTGRES_USER:-farm}:${POSTGRES_PASSWORD:-farm}@postgres:5432/${POSTGRES_DB:-farm}
+      PUBLIC_URL: ${PUBLIC_URL:?set PUBLIC_URL}
+      WEB_ORIGIN: ${WEB_ORIGIN:-${PUBLIC_URL}}
+      AUTH_SECRET: ${AUTH_SECRET:?set AUTH_SECRET}
+      MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID:-}
+      MICROSOFT_CLIENT_SECRET: ${MICROSOFT_CLIENT_SECRET:-}
+      MICROSOFT_TENANT_ID: ${MICROSOFT_TENANT_ID:-common}
+      ENABLE_EMAIL_PASSWORD: ${ENABLE_EMAIL_PASSWORD:-false}
+      SESSION_TOKEN_PRIVATE_KEY: ${SESSION_TOKEN_PRIVATE_KEY:-}
+      APP_NAME: ${APP_NAME:-Device Farm}
+    healthcheck:
+      test: ["CMD", "bun", "-e", "await fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  web:
+    build:
+      context: .
+      dockerfile: packages/web/Dockerfile
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - coordinator
+      - web
+    environment:
+      # Set to the public hostname for automatic HTTPS, or leave as :80 for local.
+      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+  # Needs host device access (usbmuxd for iOS, /dev/bus/usb for Android), so it
+  # is opt-in: `docker compose --profile provider up`.
+  provider:
+    profiles: ["provider"]
+    build:
+      context: .
+      dockerfile: packages/provider/Dockerfile
+    restart: unless-stopped
+    network_mode: host
+    privileged: true
+    environment:
+      FARM_CONFIG: /etc/farm/provider.yaml
+    volumes:
+      - ./packages/provider/provider.yaml:/etc/farm/provider.yaml:ro
+      - /var/run/usbmuxd:/var/run/usbmuxd
+      - /dev/bus/usb:/dev/bus/usb
+    tmpfs:
+      # Staged APK/IPA uploads only. Nothing here outlives an install.
+      - /var/lib/farm/scratch:size=4g
+
+volumes:
+  postgres-data:
+  caddy-data:
+  caddy-config:

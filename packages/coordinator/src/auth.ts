@@ -1,0 +1,57 @@
+import { schema } from "@farm/db";
+import { betterAuth } from "better-auth";
+import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { admin } from "better-auth/plugins";
+import { db } from "./db.ts";
+import { env } from "./env.ts";
+
+const microsoftConfigured = !!(env.MICROSOFT_CLIENT_ID && env.MICROSOFT_CLIENT_SECRET);
+
+export const auth = betterAuth({
+  appName: env.APP_NAME,
+  baseURL: env.PUBLIC_URL,
+  basePath: "/api/auth",
+  secret: env.AUTH_SECRET,
+  trustedOrigins: [env.PUBLIC_URL, ...env.WEB_ORIGIN],
+
+  database: drizzleAdapter(db, {
+    provider: "pg",
+    schema: {
+      user: schema.user,
+      session: schema.session,
+      account: schema.account,
+      verification: schema.verification,
+    },
+  }),
+
+  emailAndPassword: {
+    enabled: env.ENABLE_EMAIL_PASSWORD,
+    // No mail transport is wired up yet; verification would strand users.
+    requireEmailVerification: false,
+  },
+
+  socialProviders: microsoftConfigured
+    ? {
+        microsoft: {
+          clientId: env.MICROSOFT_CLIENT_ID!,
+          clientSecret: env.MICROSOFT_CLIENT_SECRET!,
+          tenantId: env.MICROSOFT_TENANT_ID,
+        },
+      }
+    : {},
+
+  session: {
+    expiresIn: 60 * 60 * 24 * 7,
+    updateAge: 60 * 60 * 24,
+    cookieCache: { enabled: true, maxAge: 60 },
+  },
+
+  plugins: [admin()],
+});
+
+export type AuthSession = typeof auth.$Infer.Session;
+
+export const authCapabilities = {
+  microsoft: microsoftConfigured,
+  emailPassword: env.ENABLE_EMAIL_PASSWORD,
+};

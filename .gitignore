@@ -1,0 +1,42 @@
+# dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# build output
+dist/
+build/
+out/
+target/
+*.tsbuildinfo
+
+# env
+.env
+.env.*
+!.env.example
+
+# logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# editors / os
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+
+# runtime scratch
+/scratch/
+/data/
+*.pem
+*.key
+!**/testdata/*.key
+
+# reference sources kept on disk outside this repo:
+#   ../stf ../stf-ios-provider ../idevice
+# they are intentionally NOT vendored here. See docs/REFERENCES.md

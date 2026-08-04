@@ -1,0 +1,25 @@
+# Development overlay: `docker compose -f docker-compose.dev.yml up`
+# Brings up only the stateful dependency. The coordinator and web run on the
+# host with `bun run dev` so both hot-reload.
+name: device-farm-dev
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: farm
+      POSTGRES_PASSWORD: farm
+      POSTGRES_DB: farm
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-dev-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U farm -d farm"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  postgres-dev-data:

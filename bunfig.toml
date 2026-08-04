@@ -1,0 +1,7 @@
+[install]
+# Workspace packages are linked, never fetched from the registry.
+linker = "hoisted"
+exact = false
+
+[install.lockfile]
+save = true
