@@ -16,7 +16,10 @@
     "db:generate": "bun run --filter '@farm/db' generate",
     "db:migrate": "bun run --filter '@farm/db' migrate",
     "db:studio": "bun run --filter '@farm/db' studio",
-    "build": "bun run --filter '*' build"
+    "build": "bun run --filter '*' build",
+    "protocol:gen": "bun packages/protocol/scripts/gen-rust.ts",
+    "protocol:check": "bun test packages/protocol && bun run protocol:gen && git diff --exit-code -- packages/provider/crates/farm-protocol",
+    "test": "bun test packages/protocol packages/coordinator/test"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.7",

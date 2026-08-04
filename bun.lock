@@ -37,6 +37,13 @@
         "drizzle-kit": "^0.31.10",
       },
     },
+    "packages/protocol": {
+      "name": "@farm/protocol",
+      "version": "0.0.0",
+      "dependencies": {
+        "zod": "^4.4.3",
+      },
+    },
     "packages/web": {
       "name": "@farm/web",
       "version": "0.0.0",
@@ -202,6 +209,8 @@
     "@farm/coordinator": ["@farm/coordinator@workspace:packages/coordinator"],
 
     "@farm/db": ["@farm/db@workspace:packages/db"],
+
+    "@farm/protocol": ["@farm/protocol@workspace:packages/protocol"],
 
     "@farm/web": ["@farm/web@workspace:packages/web"],
 

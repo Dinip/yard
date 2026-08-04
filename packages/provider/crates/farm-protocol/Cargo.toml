@@ -1,0 +1,10 @@
+[package]
+name = "farm-protocol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Generated Rust mirror of packages/protocol. Do not edit generated.rs by hand."
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
