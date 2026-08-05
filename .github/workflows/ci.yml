@@ -95,6 +95,9 @@ jobs:
   # used to do, and cross-building the Rust provider under emulation is slow
   # enough to dominate the whole pipeline.
   images:
+    # Without this the job name is every matrix value joined — dockerfile path,
+    # platform tag and runner included.
+    name: ${{ matrix.image.name }} (${{ matrix.platform.arch }})
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     needs: [typescript, rust, prepare]
     runs-on: ${{ matrix.platform.runner }}
@@ -150,6 +153,7 @@ jobs:
   # One manifest list per image, pointing at both architectures. Until this
   # runs the digests are pushed but unnamed, so nothing can pull them.
   manifest:
+    name: manifest (${{ matrix.image }})
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     needs: [images, prepare]
     runs-on: ubuntu-24.04
