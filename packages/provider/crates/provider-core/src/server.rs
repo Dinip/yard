@@ -64,6 +64,7 @@ pub fn router(state: ServerState) -> Router {
         .route("/health", get(health))
         .route("/s/{device_id}", get(session_ws))
         .route("/s/{device_id}/screenshot.png", get(screenshot))
+        .route("/s/{device_id}/mjpeg", get(mjpeg))
         .route(
             "/s/{device_id}/install",
             post(install).layer(DefaultBodyLimit::max(limit)),
@@ -395,6 +396,96 @@ async fn screenshot(
             .into_response(),
         Err(err) => (StatusCode::BAD_GATEWAY, err.to_string()).into_response(),
     }
+}
+
+/// Cadence of the fallback stream.
+///
+/// Deliberately slow. This path exists for browsers that cannot decode the real
+/// stream at all, and each frame is a full screen capture round-trip to the
+/// device — pushing it faster would cost the device more than it gains the
+/// viewer.
+const FALLBACK_INTERVAL: Duration = Duration::from_millis(333);
+
+/// The fallback video path: `multipart/x-mixed-replace`, one still per part.
+///
+/// Served when the browser cannot use WebCodecs — no hardware decoder for the
+/// stream, or a page that is not a secure context. It is honestly degraded and
+/// the UI says so.
+///
+/// **The parts are PNG, not JPEG**, despite the route's name. Both backends
+/// capture PNG, and converting would mean an image codec and a transcode in the
+/// provider — the one thing this project does not do anywhere. Browsers render
+/// whatever each part declares, so the type in the part header is what matters,
+/// not the path.
+async fn mjpeg(
+    State(state): State<ServerState>,
+    Path(device_id): Path<String>,
+    Query(query): Query<TokenQuery>,
+) -> Response {
+    let claims = match authorize(&state, &device_id, &query.token).await {
+        Ok(claims) => claims,
+        Err(response) => return response,
+    };
+    let Some(device) = state.supervisor.device(&device_id) else {
+        return (StatusCode::NOT_FOUND, "unknown device").into_response();
+    };
+
+    const BOUNDARY: &str = "farmframe";
+
+    let stream = async_stream::stream! {
+        let mut tick = tokio::time::interval(FALLBACK_INTERVAL);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+        loop {
+            tick.tick().await;
+
+            // Re-checked every frame, not just at the start: this request
+            // outlives its token by design, and a revoked reservation must stop
+            // seeing the screen immediately rather than when the socket
+            // happens to close.
+            if state
+                .supervisor
+                .sessions()
+                .check(&device_id, &claims.reservation_id)
+                .await
+                .is_err()
+            {
+                debug!(device = %device_id, "fallback stream ended: reservation revoked");
+                break;
+            }
+
+            match device.backend.screenshot().await {
+                Ok(png) => {
+                    let mut part = format!(
+                        "--{BOUNDARY}\r\nContent-Type: image/png\r\nContent-Length: {}\r\n\r\n",
+                        png.len()
+                    )
+                    .into_bytes();
+                    part.extend_from_slice(&png);
+                    part.extend_from_slice(b"\r\n");
+                    yield Ok::<_, std::io::Error>(part);
+                }
+                Err(err) => {
+                    // One failed capture is not the end of the stream — a
+                    // device mid-rotation refuses for a moment.
+                    debug!(device = %device_id, %err, "fallback capture failed");
+                }
+            }
+        }
+    };
+
+    (
+        StatusCode::OK,
+        [
+            (
+                header::CONTENT_TYPE,
+                format!("multipart/x-mixed-replace; boundary={BOUNDARY}"),
+            ),
+            (header::CACHE_CONTROL, "no-store".to_owned()),
+        ],
+        Body::from_stream(stream),
+    )
+        .into_response()
 }
 
 /// Deletes the staged upload however the install turns out.

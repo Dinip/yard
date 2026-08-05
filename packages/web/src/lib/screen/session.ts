@@ -138,6 +138,19 @@ export class DeviceSession {
   }
 }
 
+/**
+ * `GET /s/:deviceId/mjpeg` — the degraded fallback stream.
+ *
+ * A `multipart/x-mixed-replace` URL for an `<img>`, used only when the browser
+ * cannot decode the real stream. The token rides in the query string because an
+ * `<img>` cannot carry a header; the provider re-checks the reservation on every
+ * frame, so the URL outliving its token grants nothing.
+ */
+export async function fallbackStreamUrl(deviceId: string): Promise<string> {
+  const grant = await mintToken(deviceId);
+  return `${grant.providerBaseUrl}/s/${deviceId}/mjpeg?token=${encodeURIComponent(grant.token)}`;
+}
+
 /** `GET /s/:deviceId/screenshot.png` — a PNG straight from the device. */
 export async function fetchScreenshot(deviceId: string): Promise<Blob> {
   const grant = await mintToken(deviceId);

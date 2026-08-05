@@ -12,6 +12,7 @@ farm-protocol.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 futures.workspace = true
+async-stream.workspace = true
 async-trait.workspace = true
 
 axum.workspace = true

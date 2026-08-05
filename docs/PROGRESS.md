@@ -326,7 +326,7 @@ secure, and the UI says so plainly — that is the hook the fallback plugs into.
 | Reservation reaper + client-side renewal | ✅ | `coordinator/src/lib/reservations.ts`, `web/src/hooks/` |
 | Admin force-release UI | ✅ | `web/src/routes/_app/devices.$deviceId.tsx` |
 | Audit log UI | ✅ | `web/src/routes/_app/admin.audit.tsx` |
-| MJPEG fallback path (`unsupported` hook exists in the renderer) | ⬜ | — |
+| Degraded fallback stream | ✅ | `provider-core/src/server.rs`, `web/src/components/device-screen.tsx` |
 | Healthchecks, multi-arch CI images | ⬜ | — |
 | Docs finalised | ⬜ | — |
 
@@ -347,6 +347,16 @@ device nobody is watching.
 Also fixed: the app shell hardcoded "Device Farm" in its header, which
 [RENAMING.md](./RENAMING.md) exists to prevent. It reads `APP_NAME` through
 `user.capabilities` now, like the sign-in page always did.
+
+**The fallback stream** is `multipart/x-mixed-replace` at ~3fps, served from the
+same screenshot primitive both backends already have, for browsers with no
+usable hardware decoder or no secure context. Its parts are **PNG, not JPEG**,
+despite the `/mjpeg` path the protocol documents: both backends capture PNG and
+converting would mean an image codec and a transcode in the provider, which is
+the one thing this project does nowhere. The provider re-checks the reservation
+every frame, because this request outlives its token by design. The UI labels it
+rather than letting a jerky picture look like a slow farm, and `?fallback=1`
+forces it — an untestable fallback rots until the day it is needed.
 
 ---
 

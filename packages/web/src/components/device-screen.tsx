@@ -23,7 +23,7 @@ export function DeviceScreen({
   className?: string;
   interactive?: boolean;
 }) {
-  const { send, frameSize, display, state, unsupported, detail } = session;
+  const { send, frameSize, display, state, unsupported, fallbackUrl, detail } = session;
   const activePointers = useRef(new Set<number>());
 
   const at = useCallback((event: ReactPointerEvent<HTMLCanvasElement>) => {
@@ -107,7 +107,20 @@ export function DeviceScreen({
             interactive ? "touch-none" : "pointer-events-none",
           )}
         />
-        {state !== "open" || unsupported ? (
+        {/*
+          The fallback: still frames over multipart, ~3fps, no decode involved.
+          It sits above the canvas rather than replacing it so the input surface
+          underneath keeps working — a degraded picture is still a usable device.
+        */}
+        {unsupported && fallbackUrl && (
+          <img
+            src={fallbackUrl}
+            alt="Device screen (fallback stream)"
+            className="pointer-events-none absolute inset-0 h-full w-full rounded-md object-contain"
+          />
+        )}
+
+        {state !== "open" || (unsupported && !fallbackUrl) ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 rounded-md bg-black/70 text-center text-sm text-white">
             {unsupported ? (
               <>
@@ -125,6 +138,13 @@ export function DeviceScreen({
             )}
           </div>
         ) : null}
+
+        {/* Say so, rather than letting a jerky picture look like a slow farm. */}
+        {unsupported && fallbackUrl && (
+          <span className="absolute top-2 left-2 rounded bg-black/70 px-2 py-1 text-white text-xs">
+            Fallback stream — ~3 fps, no hardware decoder here
+          </span>
+        )}
       </div>
     </div>
   );

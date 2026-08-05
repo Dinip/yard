@@ -1,7 +1,7 @@
 import type { ClientMessage, Display } from "@farm/protocol";
 import { type RefObject, useCallback, useEffect, useRef, useState } from "react";
 import { isStreamSupported, ScreenRenderer } from "@/lib/screen/renderer";
-import { DeviceSession, type SessionState } from "@/lib/screen/session";
+import { DeviceSession, fallbackStreamUrl, type SessionState } from "@/lib/screen/session";
 
 export interface DeviceSessionApi {
   state: SessionState;
@@ -12,6 +12,12 @@ export interface DeviceSessionApi {
   frameSize: { width: number; height: number } | null;
   /** The browser cannot decode this stream: no WebCodecs, or an insecure origin. */
   unsupported: boolean;
+  /**
+   * Set alongside `unsupported`: a `multipart/x-mixed-replace` URL an `<img>`
+   * can show instead. Capped at ~3fps and no input latency budget at all, which
+   * is why it is a fallback and not a mode.
+   */
+  fallbackUrl: string | null;
   /**
    * Asks the device for its clipboard and resolves with the reply — `null`
    * meaning genuinely empty. A request/response rather than a piece of state:
@@ -24,6 +30,17 @@ export interface DeviceSessionApi {
 
 /** Long enough for a slow device, short enough to not look hung. */
 const CLIPBOARD_TIMEOUT = 5_000;
+
+/**
+ * `?fallback=1` forces the degraded path.
+ *
+ * Otherwise it is unreachable on any machine that can decode the stream, which
+ * is every machine a developer is likely to have — and an untestable fallback
+ * is one that quietly rots until the day someone actually needs it.
+ */
+function fallbackForced() {
+  return new URLSearchParams(window.location.search).get("fallback") === "1";
+}
 
 /**
  * Owns one viewer: the WebSocket, the decoder, and the canvas they feed.
@@ -42,6 +59,7 @@ export function useDeviceSession(
   const [display, setDisplay] = useState<Display | null>(null);
   const [frameSize, setFrameSize] = useState<{ width: number; height: number } | null>(null);
   const [unsupported, setUnsupported] = useState(false);
+  const [fallbackUrl, setFallbackUrl] = useState<string | null>(null);
 
   const sessionRef = useRef<DeviceSession | null>(null);
   const rendererRef = useRef<ScreenRenderer | null>(null);
@@ -98,9 +116,18 @@ export function useDeviceSession(
             // Check support before building anything: a decoder we cannot
             // configure should surface as the fallback path, not as an
             // exception during the first access unit.
-            isStreamSupported(message).then((ok) => {
-              if (disposed || !ok) {
-                setUnsupported(!ok);
+            isStreamSupported(message).then((supported) => {
+              if (disposed) return;
+              const ok = supported && !fallbackForced();
+              if (!ok) {
+                setUnsupported(true);
+                // Mint the fallback URL only once it is actually needed: it
+                // spends a session token, and most browsers never take this
+                // path.
+                fallbackStreamUrl(deviceId).then(
+                  (url) => !disposed && setFallbackUrl(url),
+                  (error) => console.warn("[screen] no fallback stream:", error),
+                );
                 return;
               }
               setUnsupported(false);
@@ -155,5 +182,5 @@ export function useDeviceSession(
     };
   }, [deviceId, enabled, canvasRef]);
 
-  return { state, detail, display, frameSize, unsupported, readClipboard, send };
+  return { state, detail, display, frameSize, unsupported, fallbackUrl, readClipboard, send };
 }
