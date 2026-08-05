@@ -12,6 +12,7 @@ license = "MIT"
 farm-protocol = { path = "packages/provider/crates/farm-protocol" }
 provider-core = { path = "packages/provider/crates/provider-core" }
 backend-ios = { path = "packages/provider/crates/backend-ios" }
+backend-android = { path = "packages/provider/crates/backend-android" }
 backend-mock = { path = "packages/provider/crates/backend-mock" }
 
 tokio = { version = "1.53", features = [

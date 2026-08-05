@@ -1,0 +1,19 @@
+[package]
+name = "backend-android"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Android device backend: the adb host protocol and scrcpy, spoken directly"
+
+[dependencies]
+provider-core.workspace = true
+farm-protocol.workspace = true
+
+tokio.workspace = true
+futures.workspace = true
+async-trait.workspace = true
+
+serde_json.workspace = true
+anyhow.workspace = true
+tracing.workspace = true

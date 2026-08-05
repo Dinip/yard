@@ -267,6 +267,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "backend-android"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "farm-protocol",
+ "futures",
+ "provider-core",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "backend-ios"
 version = "0.1.0"
 dependencies = [
