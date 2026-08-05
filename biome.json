@@ -12,7 +12,8 @@
       "!**/dist",
       "!**/target",
       "!**/routeTree.gen.ts",
-      "!**/drizzle"
+      "!**/drizzle",
+      "!**/fixtures.json"
     ]
   },
   "formatter": {

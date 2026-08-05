@@ -46,7 +46,9 @@ stale copy of the wire contract that encodes cleanly and delivers nothing.
 ### Cross-language fixtures
 
 `test/fixtures.ts` holds canonical messages. `bun test packages/protocol`
-asserts zod parses them and writes `crates/farm-protocol/tests/fixtures.json`;
+asserts zod parses them and writes `crates/farm-protocol/tests/fixtures.json`
+(a generated file, so biome ignores it — otherwise running the tests and running
+the formatter would each undo the other);
 `cargo test -p farm-protocol` reads it back and asserts serde re-encodes it
 unchanged. A change that breaks one language but not the other fails a test.
 
