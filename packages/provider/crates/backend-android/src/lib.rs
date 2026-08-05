@@ -742,11 +742,23 @@ pub fn parse_density(output: &str) -> Option<i64> {
         .find_map(|line| line.rsplit_once(": ")?.1.trim().parse().ok())
 }
 
+/// Battery charge as a fraction.
+///
+/// `dumpsys battery` reports `level` against `scale` — 0..100 on every device
+/// seen so far, but the scale is there precisely because that is not
+/// guaranteed. The protocol carries 0..1, and reporting the raw level instead
+/// renders as "9900%".
 pub fn parse_battery_level(dump: &str) -> Option<f64> {
-    dump.lines().find_map(|line| {
-        let (key, value) = line.split_once(':')?;
-        (key.trim() == "level").then(|| value.trim().parse::<f64>().ok())?
-    })
+    let field = |name: &str| -> Option<f64> {
+        dump.lines().find_map(|line| {
+            let (key, value) = line.split_once(':')?;
+            (key.trim() == name).then(|| value.trim().parse::<f64>().ok())?
+        })
+    };
+
+    let level = field("level")?;
+    let scale = field("scale").filter(|scale| *scale > 0.0).unwrap_or(100.0);
+    Some((level / scale).clamp(0.0, 1.0))
 }
 
 pub fn parse_battery_state(dump: &str) -> Option<String> {
@@ -846,7 +858,9 @@ mod tests {
         assert_eq!(parse_density("Physical density: 450\n"), Some(450));
 
         let dump = "Current Battery Service state:\n  level: 87\n  status: 2\n  scale: 100\n";
-        assert_eq!(parse_battery_level(dump), Some(87.0));
+        // A fraction, not a percentage: the protocol carries 0..1 and the UI
+        // multiplies. Reporting 87 here renders as "8700%".
+        assert_eq!(parse_battery_level(dump), Some(0.87));
         assert_eq!(parse_battery_state(dump).as_deref(), Some("charging"));
     }
 
@@ -858,6 +872,18 @@ mod tests {
         assert_eq!(listening_port("-1"), None);
         assert_eq!(listening_port(""), None);
         assert_eq!(listening_port("\n"), None);
+    }
+
+    #[test]
+    fn battery_honours_a_non_standard_scale() {
+        // The scale field exists because 0..100 is convention, not guarantee.
+        let dump = "  level: 128\n  scale: 255\n  status: 3\n";
+        let level = parse_battery_level(dump).unwrap();
+        assert!((level - 0.502).abs() < 0.001, "got {level}");
+
+        // A missing or nonsense scale must not divide by zero.
+        assert_eq!(parse_battery_level("  level: 50\n  scale: 0\n"), Some(0.5));
+        assert_eq!(parse_battery_level("  level: 50\n"), Some(0.5));
     }
 
     #[test]
