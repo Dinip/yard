@@ -600,6 +600,12 @@ impl DeviceBackend for IosBackend {
 
     /// The session plane sends an absolute angle; CoreDevice's orientation
     /// service only steps 90° at a time, so we walk there.
+    ///
+    /// The walk is relative and the angle absolute, which is only sound because
+    /// iOS reports no rotation at all (the SPS gives dimensions, not
+    /// orientation) — so the browser always asks for 90 and always means "one
+    /// step". If a rotation source ever appears here, this has to become a
+    /// delta, exactly as `backend-android`'s did.
     async fn rotate(&self, degrees: i64) -> BackendResult<()> {
         let steps = degrees.div_euclid(90).rem_euclid(4);
         let Some(input) = self.host.input().await else {

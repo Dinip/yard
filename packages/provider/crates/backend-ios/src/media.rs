@@ -371,6 +371,9 @@ async fn receive_video(
             if parameter_sets.observe(&nal) {
                 if let Some(size) = parameter_sets.dimensions {
                     geometry.set(size);
+                    // Live viewers re-shape from this. No rotation: the SPS
+                    // gives dimensions, never orientation.
+                    publisher.set_geometry(size.0, size.1, None);
                 }
             }
             if parameter_sets.is_complete() {

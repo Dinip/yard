@@ -121,6 +121,24 @@ export class ScreenRenderer {
     this.buildDecoder();
   }
 
+  /**
+   * Swap in new parameter sets mid-stream — what a rotation produces.
+   *
+   * Distinct from `configure` in what it leaves alone: the canvas keeps its
+   * last painted frame until the new keyframe lands, and `sawFirstFrame` stays
+   * set so the loader does not flash back over a picture that is already
+   * there. Rebuilding the whole renderer instead would drop both, and re-run
+   * `isStreamSupported` for a codec that is by definition still supported.
+   */
+  reconfigure(info: CodecInfo) {
+    this.config = configFor(info);
+    this.compensate = shouldCompensate(this.opts, info.codec);
+    // Nothing decoded against the old description can be referenced by the new
+    // stream, so hold everything until the provider's reset keyframe.
+    this.gotKey = false;
+    this.buildDecoder();
+  }
+
   private buildDecoder() {
     if (!this.config) return;
     closeQuietly(this.decoder);

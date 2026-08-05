@@ -111,6 +111,14 @@ export function useDeviceSession(
         switch (message.type) {
           case "codec": {
             setDisplay(message.display);
+            // A re-announcement mid-session is a rotation: same stream, new
+            // parameter sets. Swap them in place — tearing the renderer down
+            // would blank the canvas and re-ask a question already answered.
+            if (rendererRef.current) {
+              rendererRef.current.reconfigure(message);
+              requestKeyframe();
+              return;
+            }
             const canvas = canvasRef.current;
             if (!canvas) return;
             // Check support before building anything: a decoder we cannot

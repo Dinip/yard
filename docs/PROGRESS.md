@@ -361,6 +361,56 @@ forces it — an untestable fallback rots until the day it is needed.
 
 ---
 
+## Phase 7 — Rotation, end to end ✅
+
+The one real bug in the post-launch set: the device rotated and the picture did
+not. `ServerMessage::display` and `AuKind::KeyWithReset` were both designed for
+this case and **neither was ever emitted**, so the browser kept decoding
+new-geometry frames against a stale `avcC`/`hvcC`. It recovered only by
+accident — decoder-error resync, and the iOS crop detector.
+
+| Item | State | Where |
+|---|---|---|
+| Geometry watch channel alongside the codec one | ✅ | `provider-core/src/video.rs` |
+| `codec_watch()` — observe changes, not just the first | ✅ | `provider-core/src/video.rs` |
+| Session arms: re-announce codec + reset; push display | ✅ | `provider-core/src/server.rs` |
+| Android publishes geometry, with real rotation | ✅ | `backend-android/src/{lib,scrcpy}.rs` |
+| iOS publishes geometry from the SPS (rotation `None`) | ✅ | `backend-ios/src/media.rs` |
+| Mock publishes it on rotate — the whole path, no hardware | ✅ | `backend-mock/src/lib.rs` |
+| `ScreenRenderer.reconfigure` — swap config in place | ✅ | `web/src/lib/screen/renderer.ts` |
+| `case "codec"` reconfigures rather than rebuilding | ✅ | `web/src/hooks/use-device-session.ts` |
+
+**Two latent bugs fixed here, both invisible until rotation was reported:**
+
+- **`backend-android::rotate` took an absolute angle and walked it as relative
+  steps.** It worked only because `display.rotation` was always `None`, so the
+  UI always sent `90` → exactly one step. The moment rotation is reported,
+  rotating from 270 asks for `0` → zero steps → nothing happens. It now walks
+  `((target - current) / 90).rem_euclid(4)` against a `dumpsys window displays`
+  read, with a regression test. **iOS is deliberately left absolute** and
+  documented: it reports no rotation at all — the SPS gives dimensions, not
+  orientation — so the browser always asks for 90 and always means one step.
+- **A keyframe reset re-published unchanged geometry**, which would have made
+  every reset look like a rotation to a viewer. `set_geometry` and Android's
+  `Geometry` both use `send_if_modified`, so an unchanged value wakes nobody.
+
+Rotation costs a shell round-trip on Android, so announcing it lives in its own
+task rather than inside `pump_video` — the video loop must never block on the
+device to read the next packet.
+
+`reconfigure` exists rather than rebuilding the renderer because a rebuild drops
+the canvas and re-runs `isStreamSupported` for a codec that is by definition
+still supported: the picture would blank and the loader would flash back over a
+frame that is already painted.
+
+**Tests:** a mid-session `set_codec` produces a second `codec` message *and* an
+`AU_KEY_RESET` frame; `rotate(90)` on the mock swaps 1179×2556 → 2556×1179 on a
+live socket; the renderer holds deltas after `reconfigure` until the reset
+lands. **Not yet exercised on real hardware** — the mock path is verified, the
+Android and iOS confirmation is outstanding.
+
+---
+
 ## Open decisions
 
 - **Name.** The project is "Device Farm" as a placeholder. See

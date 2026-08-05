@@ -40,10 +40,25 @@ pub struct AccessUnit {
     pub is_key: bool,
 }
 
+/// What the stream currently looks like, geometrically.
+///
+/// Deliberately a plain struct rather than `farm_protocol::Display`: this module
+/// is protocol-free so that a backend can publish geometry without depending on
+/// the wire format. `server.rs` does the mapping.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VideoGeometry {
+    pub width: i64,
+    pub height: i64,
+    /// `None` where the backend cannot know — the iOS SPS gives dimensions but
+    /// no orientation.
+    pub rotation: Option<i64>,
+}
+
 /// The read side of a live video stream, as viewers see it.
 #[derive(Clone)]
 pub struct VideoHandle {
     codec: watch::Receiver<Option<CodecDescription>>,
+    geometry: watch::Receiver<Option<VideoGeometry>>,
     frames: broadcast::Sender<Arc<AccessUnit>>,
     keyframe: Arc<Notify>,
     streaming: Arc<AtomicBool>,
@@ -81,6 +96,20 @@ impl VideoHandle {
         .flatten()
     }
 
+    /// Watch the codec rather than awaiting it once.
+    ///
+    /// A rotation re-encodes at new dimensions, which means new parameter sets:
+    /// a viewer that keeps decoding against the old `avcC`/`hvcC` renders
+    /// garbage or nothing at all, so a live session has to follow this.
+    pub fn codec_watch(&self) -> watch::Receiver<Option<CodecDescription>> {
+        self.codec.clone()
+    }
+
+    /// Watch the stream's geometry. `None` until a backend publishes one.
+    pub fn geometry(&self) -> watch::Receiver<Option<VideoGeometry>> {
+        self.geometry.clone()
+    }
+
     /// Asks the device for an immediate IDR.
     ///
     /// Only the client can detect that its decoder lost reference state: on a
@@ -102,6 +131,7 @@ impl VideoHandle {
 #[derive(Clone)]
 pub struct VideoPublisher {
     codec: Arc<watch::Sender<Option<CodecDescription>>>,
+    geometry: Arc<watch::Sender<Option<VideoGeometry>>>,
     frames: broadcast::Sender<Arc<AccessUnit>>,
     keyframe: Arc<Notify>,
     streaming: Arc<AtomicBool>,
@@ -110,6 +140,28 @@ pub struct VideoPublisher {
 impl VideoPublisher {
     pub fn set_codec(&self, description: CodecDescription) {
         let _ = self.codec.send(Some(description));
+    }
+
+    /// Publishes the stream's geometry, so live viewers can re-shape.
+    ///
+    /// `send_if_modified` rather than `send`: backends call this from the same
+    /// place they already track geometry, which a keyframe reset re-visits with
+    /// unchanged numbers, and a viewer should not be told about a rotation that
+    /// did not happen.
+    pub fn set_geometry(&self, width: i64, height: i64, rotation: Option<i64>) {
+        let next = VideoGeometry {
+            width,
+            height,
+            rotation,
+        };
+        self.geometry.send_if_modified(|slot| {
+            if slot.as_ref() == Some(&next) {
+                false
+            } else {
+                *slot = Some(next);
+                true
+            }
+        });
     }
 
     /// Publishes one access unit. Returns the number of live viewers.
@@ -142,6 +194,7 @@ impl VideoPublisher {
 
 pub fn channel() -> (VideoHandle, VideoPublisher) {
     let (codec_tx, codec_rx) = watch::channel(None);
+    let (geometry_tx, geometry_rx) = watch::channel(None);
     let (frames, _) = broadcast::channel(BACKLOG);
     let keyframe = Arc::new(Notify::new());
     let streaming = Arc::new(AtomicBool::new(false));
@@ -149,12 +202,14 @@ pub fn channel() -> (VideoHandle, VideoPublisher) {
     (
         VideoHandle {
             codec: codec_rx,
+            geometry: geometry_rx,
             frames: frames.clone(),
             keyframe: keyframe.clone(),
             streaming: streaming.clone(),
         },
         VideoPublisher {
             codec: Arc::new(codec_tx),
+            geometry: Arc::new(geometry_tx),
             frames,
             keyframe,
             streaming,
@@ -238,6 +293,51 @@ mod tests {
                 .as_ref(),
             Some(&want)
         );
+    }
+
+    #[tokio::test]
+    async fn geometry_is_only_announced_when_it_actually_changes() {
+        let (handle, publisher) = channel();
+        let mut geometry = handle.geometry();
+        assert!(geometry.borrow_and_update().is_none());
+
+        publisher.set_geometry(1080, 2400, Some(0));
+        assert!(geometry.has_changed().unwrap());
+        assert_eq!(
+            geometry.borrow_and_update().unwrap(),
+            VideoGeometry {
+                width: 1080,
+                height: 2400,
+                rotation: Some(0),
+            }
+        );
+
+        // A keyframe reset re-publishes the same numbers; a viewer must not be
+        // told the display changed.
+        publisher.set_geometry(1080, 2400, Some(0));
+        assert!(!geometry.has_changed().unwrap());
+
+        publisher.set_geometry(2400, 1080, Some(90));
+        assert!(geometry.has_changed().unwrap());
+    }
+
+    #[tokio::test]
+    async fn a_codec_change_wakes_a_live_watcher() {
+        let (handle, publisher) = channel();
+        publisher.set_codec(CodecDescription {
+            codec: "avc1.640028".into(),
+            description: vec![1],
+        });
+
+        let mut codec = handle.codec_watch();
+        codec.borrow_and_update();
+
+        publisher.set_codec(CodecDescription {
+            codec: "avc1.640028".into(),
+            description: vec![2],
+        });
+        codec.changed().await.unwrap();
+        assert_eq!(codec.borrow().as_ref().unwrap().description, vec![2]);
     }
 
     #[tokio::test]

@@ -37,6 +37,9 @@ pub struct MockBackend {
     platform: Platform,
     name: String,
     video: VideoHandle,
+    /// Kept so a rotation can publish the new geometry, the same way a real
+    /// backend does when its encoder restarts.
+    publisher: VideoPublisher,
     /// Everything a test or a UI click can observe.
     pub state: Arc<MockState>,
 }
@@ -79,8 +82,12 @@ impl MockBackend {
             platform,
             name: name.into(),
             video,
+            publisher: publisher.clone(),
             state,
         });
+
+        let (width, height) = backend.panel_size();
+        publisher.set_geometry(width, height, Some(0));
 
         tokio::spawn(synthesize(publisher, platform));
         backend
@@ -88,6 +95,31 @@ impl MockBackend {
 
     pub fn video_handle(&self) -> VideoHandle {
         self.video.clone()
+    }
+
+    /// The write side, so a test can drive a mid-session codec change.
+    pub fn publisher(&self) -> VideoPublisher {
+        self.publisher.clone()
+    }
+
+    /// Unrotated panel dimensions.
+    fn panel_size(&self) -> (i64, i64) {
+        match self.platform {
+            Platform::Ios => (1179, 2556),
+            Platform::Android => (1080, 2400),
+        }
+    }
+
+    /// The dimensions a viewer sees at the current rotation.
+    fn stream_size(&self) -> (i64, i64) {
+        let (width, height) = self.panel_size();
+        // A rotated device really does report swapped dimensions; the popout
+        // window sizing depends on this being right.
+        if self.state.rotation.load(Ordering::Relaxed) % 180 == 0 {
+            (width, height)
+        } else {
+            (height, width)
+        }
     }
 }
 
@@ -141,17 +173,7 @@ impl DeviceBackend for MockBackend {
         }
 
         let rotation = self.state.rotation.load(Ordering::Relaxed);
-        let (width, height) = match self.platform {
-            Platform::Ios => (1179, 2556),
-            Platform::Android => (1080, 2400),
-        };
-        // A rotated device really does report swapped dimensions; the popout
-        // window sizing depends on this being right.
-        let (width, height) = if rotation % 180 == 0 {
-            (width, height)
-        } else {
-            (height, width)
-        };
+        let (width, height) = self.stream_size();
 
         Ok(DeviceInfo {
             id: self.id.clone(),
@@ -272,6 +294,12 @@ impl DeviceBackend for MockBackend {
         self.state
             .rotation
             .store(degrees.rem_euclid(360), Ordering::Relaxed);
+        // A real encoder restarts at the new dimensions and the session server
+        // pushes them to viewers; publishing here is what makes the whole
+        // rotation path exercisable with no hardware.
+        let (width, height) = self.stream_size();
+        self.publisher
+            .set_geometry(width, height, Some(self.state.rotation.load(Ordering::Relaxed)));
         Ok(())
     }
 

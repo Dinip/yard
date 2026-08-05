@@ -34,6 +34,7 @@ use crate::backend::{InputEvent, ProgressSink};
 use crate::config::Config;
 use crate::origins::WebOrigins;
 use crate::supervisor::Supervisor;
+use crate::video::VideoGeometry;
 
 /// How long a fresh viewer waits for the codec handshake before we give up.
 /// Bring-up is legitimately slow — tunnel, encoder spin-up, a locked screen.
@@ -199,16 +200,15 @@ async fn run_session(
         return Ok(());
     };
 
-    let display = device
-        .info()
-        .await
-        .and_then(|i| i.display)
-        .unwrap_or(Display {
-            width: 0,
-            height: 0,
-            scale: None,
-            rotation: None,
-        });
+    let mut geometry = video.geometry();
+    let mut codec_watch = video.codec_watch();
+    // Mark what we are about to send as seen, so the loop's watch arms fire on
+    // the *next* change rather than replaying the handshake immediately.
+    geometry.borrow_and_update();
+    codec_watch.borrow_and_update();
+
+    let geo = *geometry.borrow();
+    let display = current_display(&device, geo).await;
 
     let handshake = ServerMessage::Codec {
         codec: codec.codec.clone(),
@@ -256,6 +256,39 @@ async fn run_session(
                 }
                 Err(broadcast::error::RecvError::Closed) => break,
             },
+
+            // A rotation re-encodes at new dimensions, so the parameter sets
+            // change. The viewer must rebuild its decoder around them before it
+            // sees a frame of the new geometry, or it decodes new-shape frames
+            // against a stale avcC/hvcC and paints garbage.
+            changed = codec_watch.changed() => {
+                if changed.is_err() { break }
+                let Some(next) = codec_watch.borrow_and_update().clone() else { continue };
+                let geo = *geometry.borrow();
+                let display = current_display(&device, geo).await;
+                let msg = ServerMessage::Codec {
+                    codec: next.codec.clone(),
+                    description: Some(
+                        base64::engine::general_purpose::STANDARD.encode(&next.description),
+                    ),
+                    display,
+                };
+                sink.send(Message::Text(serde_json::to_string(&msg)?.into())).await?;
+                // The next key frame is promoted to KeyWithReset, which is what
+                // tells the browser to rebuild rather than keep decoding.
+                awaiting_keyframe = true;
+                video.request_keyframe();
+                debug!(device = %device_id, codec = %next.codec, "codec changed mid-session");
+            }
+
+            changed = geometry.changed() => {
+                if changed.is_err() { break }
+                let next = *geometry.borrow_and_update();
+                if let Some(next) = next {
+                    let msg = ServerMessage::Display { display: display_of(next) };
+                    sink.send(Message::Text(serde_json::to_string(&msg)?.into())).await?;
+                }
+            }
 
             revocation = revocations.recv() => {
                 if let Ok(event) = revocation {
@@ -308,6 +341,39 @@ async fn run_session(
     }
 
     Ok(())
+}
+
+fn display_of(geometry: VideoGeometry) -> Display {
+    Display {
+        width: geometry.width,
+        height: geometry.height,
+        scale: None,
+        rotation: geometry.rotation,
+    }
+}
+
+/// What to tell a viewer the screen looks like.
+///
+/// The stream's own geometry wins when the backend publishes one: it reports
+/// what is actually encoded, which is what the viewer is looking at. `info()`
+/// is the fallback, and it costs a round-trip to the device.
+async fn current_display(
+    device: &Arc<crate::supervisor::Device>,
+    geometry: Option<VideoGeometry>,
+) -> Display {
+    if let Some(geometry) = geometry {
+        return display_of(geometry);
+    }
+    device
+        .info()
+        .await
+        .and_then(|i| i.display)
+        .unwrap_or(Display {
+            width: 0,
+            height: 0,
+            scale: None,
+            rotation: None,
+        })
 }
 
 async fn handle_client_message(

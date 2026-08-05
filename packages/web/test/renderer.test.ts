@@ -155,6 +155,25 @@ describe("ScreenRenderer", () => {
     expect(decoders[0]?.chunks).toHaveLength(1);
   });
 
+  test("reconfigure swaps parameter sets and waits for the reset keyframe", () => {
+    const instance = renderer();
+    instance.decodeChunk(au(AU_KEY));
+    instance.decodeChunk(au(AU_DELTA));
+    expect(decoders).toHaveLength(1);
+
+    // What a rotation looks like: same codec, new SPS/PPS.
+    instance.reconfigure({ codec: "avc1.640028", description: btoa("\x01\x64\x00\x33") });
+    const config = decoders[1]?.config as { description: Uint8Array };
+    expect(Array.from(config.description)).toEqual([0x01, 0x64, 0x00, 0x33]);
+
+    // Deltas from the old geometry must not reach the new decoder.
+    instance.decodeChunk(au(AU_DELTA));
+    expect(decoders[1]?.chunks).toHaveLength(0);
+
+    instance.decodeChunk(au(AU_KEY_RESET));
+    expect(decoders[2]?.chunks.map((c) => c.type)).toEqual(["key"]);
+  });
+
   test("support probing is what drives the fallback", async () => {
     expect(await isStreamSupported({ codec: "avc1.640028" })).toBe(true);
     expect(await isStreamSupported({ codec: "unsupported.codec" })).toBe(false);
