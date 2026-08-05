@@ -137,11 +137,14 @@ jobs:
           cache-to: type=gha,mode=max,scope=${{ matrix.image.name }}-${{ matrix.platform.arch }}
 
       - name: Export the digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
         run: |
           mkdir -p /tmp/digests
-          # The filename is the digest; the file itself is empty. The manifest
-          # job only needs the names.
-          touch "/tmp/digests/${{ steps.build.outputs.digest }}"
+          # The filename is the digest with its `sha256:` prefix stripped, and
+          # the file itself is empty — the manifest job only needs the names.
+          # The prefix has to go: an artifact path may not contain a colon.
+          touch "/tmp/digests/${DIGEST#sha256:}"
 
       - uses: actions/upload-artifact@v7
         with:
@@ -185,7 +188,7 @@ jobs:
           docker buildx imagetools create \
             --tag "$IMAGE:latest" \
             --tag "$IMAGE:${{ github.sha }}" \
-            $(printf "$IMAGE@%s " *)
+            $(printf "$IMAGE@sha256:%s " *)
 
       - name: Show what was published
         env:
