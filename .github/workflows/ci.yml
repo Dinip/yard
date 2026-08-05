@@ -79,13 +79,24 @@ jobs:
       # `cargo fmt --check` and this cannot demand different bytes.
       - run: bun run protocol:check
 
+  # A repository name may contain capitals; a container reference may not.
+  # Computed once here rather than lowercased in both jobs below.
+  prepare:
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    outputs:
+      registry: ${{ steps.name.outputs.registry }}
+    steps:
+      - id: name
+        run: echo "registry=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
   # Built per architecture on its own native runner, then merged into one
   # manifest list. The alternative — one job with QEMU emulation — is what this
   # used to do, and cross-building the Rust provider under emulation is slow
   # enough to dominate the whole pipeline.
   images:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    needs: [typescript, rust]
+    needs: [typescript, rust, prepare]
     runs-on: ${{ matrix.platform.runner }}
     permissions:
       contents: read
@@ -118,7 +129,7 @@ jobs:
           platforms: ${{ matrix.platform.tag }}
           # Pushed without a tag: an arch-specific tag would be a lie the moment
           # the other architecture lands on it. The manifest job names them.
-          outputs: type=image,name=ghcr.io/${{ github.repository }}/${{ matrix.image.name }},push-by-digest=true,name-canonical=true,push=true
+          outputs: type=image,name=${{ needs.prepare.outputs.registry }}/${{ matrix.image.name }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=${{ matrix.image.name }}-${{ matrix.platform.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image.name }}-${{ matrix.platform.arch }}
 
@@ -140,7 +151,7 @@ jobs:
   # runs the digests are pushed but unnamed, so nothing can pull them.
   manifest:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    needs: [images]
+    needs: [images, prepare]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -165,7 +176,7 @@ jobs:
       - name: Create the manifest list
         working-directory: /tmp/digests
         env:
-          IMAGE: ghcr.io/${{ github.repository }}/${{ matrix.image }}
+          IMAGE: ${{ needs.prepare.outputs.registry }}/${{ matrix.image }}
         run: |
           docker buildx imagetools create \
             --tag "$IMAGE:latest" \
@@ -174,5 +185,5 @@ jobs:
 
       - name: Show what was published
         env:
-          IMAGE: ghcr.io/${{ github.repository }}/${{ matrix.image }}
+          IMAGE: ${{ needs.prepare.outputs.registry }}/${{ matrix.image }}
         run: docker buildx imagetools inspect "$IMAGE:latest"
