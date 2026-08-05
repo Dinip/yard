@@ -3,9 +3,11 @@
 //! Ported from `stf-ios-provider/src/device/mod.rs`. The supervision shape is
 //! unchanged — one task rebuilds tunnel, media and HID together, because they
 //! are not independent — but readiness now feeds `DeviceBackend::is_healthy`
-//! instead of STF's `TemporarilyUnavailable`, and the container-era
-//! `USBMUXD_SOCKET_ADDRESS` shim is gone: this provider runs one process per
-//! host and talks to the local usbmuxd directly.
+//! instead of STF's `TemporarilyUnavailable`.
+//!
+//! usbmuxd is normally the host's own socket. `USBMUXD_SOCKET_ADDRESS` exists
+//! for the one case where it cannot be: a provider container on macOS, where
+//! Docker passes neither USB nor unix sockets through.
 //!
 //! One supervisor task rebuilds the whole session forever. Everything below the
 //! tunnel is torn down and recreated together, because the pieces are not
