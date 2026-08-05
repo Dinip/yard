@@ -88,6 +88,15 @@ export const device = pgTable(
     abi: text("abi"),
     /** Android SDK level. */
     sdk: integer("sdk"),
+    /**
+     * Identity for filing a bug against the right device. Android-only in
+     * practice: all of it comes from the provider's existing `getprop` read.
+     */
+    serial: text("serial"),
+    brand: text("brand"),
+    buildId: text("build_id"),
+    securityPatch: text("security_patch"),
+    abiList: text("abi_list"),
     displayWidth: integer("display_width"),
     displayHeight: integer("display_height"),
     displayScale: real("display_scale"),

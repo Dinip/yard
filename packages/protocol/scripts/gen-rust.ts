@@ -213,6 +213,11 @@ function emitStruct(name: string, d: Def): string {
 function emitTaggedUnion(name: string, d: Def): string {
   const tag = d.discriminator!;
   const lines = [
+    // A wire union's variants are whatever the protocol says they are: `hello`
+    // carries a whole inventory and `heartbeat` carries a timestamp. Boxing the
+    // big one to even them out would change nothing on the wire and cost every
+    // match site a deref.
+    "#[allow(clippy::large_enum_variant)]",
     "#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]",
     `#[serde(tag = "${tag}", rename_all = "camelCase")]`,
     `pub enum ${name} {`,

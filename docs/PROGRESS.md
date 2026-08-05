@@ -452,6 +452,57 @@ not how the picture turned — but only the device settles it.
 
 ---
 
+## Phase 8 — Device identity and remote debugging ✅
+
+| Item | State | Where |
+|---|---|---|
+| `serial`, `brand`, `buildId`, `securityPatch`, `abiList` on the wire | ✅ | `protocol/src/common.ts` |
+| Fixtures for `device.upsert`, `device.display`, `device.battery` | ✅ | `protocol/test/fixtures.ts` |
+| Matching nullable columns + generated migration | ✅ | `db/src/schema/farm.ts`, `drizzle/0001_*.sql` |
+| Gateway maps them on upsert | ✅ | `coordinator/src/gateway/handler.ts` |
+| Android reads them from the existing `getprop` | ✅ | `backend-android/src/lib.rs` |
+| `stream_codec` actually populated | ✅ | `provider-core/src/supervisor.rs` |
+| Device page: battery, patch, rotation, and no repeated rows | ✅ | `web/.../devices.$deviceId.tsx` |
+| `adb connect` block, holder + Android only | ✅ | `web/.../devices.$deviceId.tsx` |
+
+**A second bug that had been quietly wrong since phase 3a:** `snapshot_from`
+hardcoded `stream_codec: None` with a comment saying the session server fills it
+in. It never did, so the device page's "Codec" row was blank on every device in
+every deployment. It now reads the live codec off the video handle without
+waiting — a device that is not streaming simply reports none.
+
+**The metadata costs nothing extra.** All five fields come out of the single
+`getprop` round-trip `info()` already made; iOS reports `serial` (its UDID) and
+`buildId` and nothing else, and the `<Detail>` helper hides falsy values, so an
+iPhone shows fewer rows with no branching anywhere.
+
+**What the card actually shows is less than what is collected**, after looking
+at it on a real device: `ro.serialno` *is* the adb serial and `ro.product.brand`
+is usually the manufacturer again, so Serial and Brand appeared as rows
+repeating the two above them — they now render only when a device disagrees.
+Build id and the full ABI list are collected but not shown: a Samsung build id
+is 32 characters and pushed the card open. They stay on the wire and in the DB,
+where they cost nothing, and the row that broke the layout is gone rather than
+the data behind it. `<Detail>` also gained `min-w-0`, without which `truncate`
+does nothing inside a flex row and a long value widens the card instead of being
+cut short.
+
+Remote debugging was fully implemented in phase 4 and **unreachable from the
+UI** — `device.adbExpose`/`adbUnexpose` existed and nothing called them. The
+Details card now offers it to the holder of an Android device, prints
+`adb connect host:port` with click-to-copy, and turns it off again. The host
+comes from `provider.publicBaseUrl`, which `listDevices` already returned.
+
+One generator change came with this: a wire union's variants are inherently
+uneven — `hello` carries a whole inventory — so `emitTaggedUnion` now emits
+`#[allow(clippy::large_enum_variant)]`. Fixing it in the generator rather than
+in `generated.rs`, which is never hand-edited.
+
+**Not yet exercised on real hardware:** the `adb connect` round-trip and the
+Android metadata read.
+
+---
+
 ## Open decisions
 
 - **Name.** The project is "Device Farm" as a placeholder. See

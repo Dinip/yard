@@ -111,6 +111,11 @@ impl VideoHandle {
         self.codec.clone()
     }
 
+    /// The codec right now, without waiting for one.
+    pub fn current_codec(&self) -> Option<CodecDescription> {
+        self.codec.borrow().clone()
+    }
+
     /// Watch the stream's geometry. `None` until a backend publishes one.
     pub fn geometry(&self) -> watch::Receiver<Option<VideoGeometry>> {
         self.geometry.clone()

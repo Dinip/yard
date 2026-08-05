@@ -45,6 +45,53 @@
       "type": "heartbeat",
       "at": 1770000000000
     },
+    "deviceUpsert": {
+      "type": "device.upsert",
+      "device": {
+        "id": "R5CT10ABCDE",
+        "platform": "android",
+        "status": "ready",
+        "name": "Galaxy S25+",
+        "model": "SM-S936B",
+        "manufacturer": "Samsung",
+        "brand": "samsung",
+        "osVersion": "15",
+        "abi": "arm64-v8a",
+        "abiList": "arm64-v8a,armeabi-v7a,armeabi",
+        "sdk": 35,
+        "serial": "R5CT10ABCDE",
+        "buildId": "AP3A.240905.015.A2",
+        "securityPatch": "2025-06-01",
+        "display": {
+          "width": 1080,
+          "height": 2400,
+          "rotation": 90
+        },
+        "battery": {
+          "level": 0.64,
+          "state": "charging"
+        },
+        "streamCodec": "avc1.640020",
+        "adbPort": 15037
+      }
+    },
+    "deviceDisplay": {
+      "type": "device.display",
+      "deviceId": "R5CT10ABCDE",
+      "display": {
+        "width": 2400,
+        "height": 1080,
+        "rotation": 90
+      }
+    },
+    "deviceBattery": {
+      "type": "device.battery",
+      "deviceId": "R5CT10ABCDE",
+      "battery": {
+        "level": 0.11,
+        "state": "discharging"
+      }
+    },
     "deviceStatus": {
       "type": "device.status",
       "deviceId": "R5CT10ABCDE",

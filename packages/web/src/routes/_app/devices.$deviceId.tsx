@@ -150,16 +150,32 @@ function DevicePage() {
           <CardContent className="grid gap-2 text-sm">
             <Detail label="Identifier" value={device.id} mono />
             <Detail label="Manufacturer" value={device.manufacturer} />
+            {/* `serial` and `brand` are the same as the identifier and the
+                manufacturer on every device seen so far — `ro.serialno` *is*
+                the adb serial, and `ro.product.brand` is usually the vendor
+                again. Shown only when a device disagrees, so the card carries
+                no row that repeats the one above it. */}
+            <Detail label="Brand" value={differing(device.brand, device.manufacturer)} />
+            <Detail label="Serial" value={differing(device.serial, device.id)} mono />
             <Detail
               label="Display"
               value={
                 device.displayWidth
-                  ? `${device.displayWidth}×${device.displayHeight}${device.displayScale ? ` @${device.displayScale}x` : ""}`
+                  ? `${device.displayWidth}×${device.displayHeight}${device.displayScale ? ` @${device.displayScale}x` : ""}${device.displayRotation ? ` · ${device.displayRotation}°` : ""}`
                   : null
+              }
+            />
+            <Detail
+              label="Battery"
+              value={
+                device.batteryLevel == null
+                  ? null
+                  : `${Math.round(device.batteryLevel * 100)}%${device.batteryState ? ` · ${device.batteryState}` : ""}`
               }
             />
             <Detail label="ABI" value={device.abi} />
             <Detail label="SDK" value={device.sdk?.toString()} />
+            <Detail label="Security patch" value={device.securityPatch} />
             <Detail label="Codec" value={device.streamCodec} mono />
             <Detail label="Seen" value={relativeTime(device.presentAt)} />
             {device.reservation && (
@@ -168,9 +184,119 @@ function DevicePage() {
                 value={new Date(device.reservation.expiresAt).toLocaleTimeString()}
               />
             )}
+
+            {/* Remote debugging is the holder's tool, not an admin one: it
+                hands out a live adb transport to whoever runs the command. */}
+            {mine && device.platform === "android" && (
+              <RemoteDebugging
+                deviceId={deviceId}
+                port={device.adbPort}
+                host={hostOf(device.provider.publicBaseUrl)}
+                onChanged={invalidate}
+              />
+            )}
           </CardContent>
         </Card>
       </div>
+    </div>
+  );
+}
+
+/**
+ * The provider's host, not its URL: whatever proxy fronts the web origin does
+ * not forward a raw adb transport, so what a developer needs is the bare host
+ * the provider itself bound the port on.
+ */
+function hostOf(baseUrl: string): string {
+  try {
+    return new URL(baseUrl).hostname;
+  } catch {
+    return baseUrl;
+  }
+}
+
+/**
+ * `adb connect` against a reserved device.
+ *
+ * The transport has existed since phase 4 and nothing in the UI ever reached
+ * it. Exposing it is deliberately explicit — it opens a real adb port on the
+ * provider — and it stays open until it is turned off or the reservation ends.
+ */
+function RemoteDebugging({
+  deviceId,
+  port,
+  host,
+  onChanged,
+}: {
+  deviceId: string;
+  port: number | null;
+  host: string;
+  onChanged: () => void;
+}) {
+  const expose = useMutation(
+    trpc.device.adbExpose.mutationOptions({
+      onSuccess: (data) => {
+        toast.success(`adb listening on ${data.connectString}`);
+        onChanged();
+      },
+      onError: (e) => toast.error(e.message),
+    }),
+  );
+
+  const unexpose = useMutation(
+    trpc.device.adbUnexpose.mutationOptions({
+      onSuccess: () => {
+        toast.success("Remote debugging disabled");
+        onChanged();
+      },
+      onError: (e) => toast.error(e.message),
+    }),
+  );
+
+  const connectString = port ? `${host}:${port}` : null;
+
+  const copy = async () => {
+    if (!connectString) return;
+    try {
+      await navigator.clipboard.writeText(`adb connect ${connectString}`);
+      toast.success("Copied");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not copy");
+    }
+  };
+
+  return (
+    <div className="mt-2 grid gap-2 border-t pt-3">
+      <span className="text-muted-foreground">Remote debugging</span>
+      {connectString ? (
+        <>
+          <button
+            type="button"
+            onClick={copy}
+            title="Copy to clipboard"
+            className="truncate rounded bg-muted px-2 py-1 text-left font-mono text-xs hover:bg-muted/70"
+          >
+            adb connect {connectString}
+          </button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={unexpose.isPending}
+            onClick={() => unexpose.mutate({ deviceId })}
+          >
+            Disable
+          </Button>
+        </>
+      ) : (
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={expose.isPending}
+          onClick={() => expose.mutate({ deviceId })}
+        >
+          Enable
+        </Button>
+      )}
     </div>
   );
 }
@@ -238,12 +364,28 @@ function ForceReleaseDialog({
   );
 }
 
+/**
+ * `value` unless it says the same thing as `against`, in which case nothing.
+ *
+ * Case-insensitive because the two sources disagree on it — `ro.product.brand`
+ * answers `samsung` where `ro.product.manufacturer` answers `Samsung`.
+ */
+function differing(value: string | null | undefined, against: string | null | undefined) {
+  if (!value) return null;
+  return value.toLowerCase() === (against ?? "").toLowerCase() ? null : value;
+}
+
 function Detail({ label, value, mono }: { label: string; value?: string | null; mono?: boolean }) {
   if (!value) return null;
   return (
     <div className="flex justify-between gap-4">
-      <span className="text-muted-foreground">{label}</span>
-      <span className={`truncate ${mono ? "font-mono text-xs" : ""}`}>{value}</span>
+      <span className="shrink-0 text-muted-foreground">{label}</span>
+      {/* `min-w-0` is what makes `truncate` work at all inside a flex row:
+          without it the value sets the row's minimum width and pushes itself
+          out of the card instead of being cut short. */}
+      <span className={`min-w-0 truncate text-right ${mono ? "font-mono text-xs" : ""}`}>
+        {value}
+      </span>
     </div>
   );
 }

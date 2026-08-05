@@ -440,6 +440,14 @@ impl DeviceBackend for IosBackend {
             // Android's API level. iOS has no equivalent, and inventing one
             // from the product version would only mislead.
             sdk: None,
+            // The UDID *is* the serial for the purpose of naming a device in a
+            // bug report; the rest of this block is Android build metadata with
+            // no iOS counterpart worth inventing.
+            serial: Some(self.options.udid.clone()),
+            brand: None,
+            build_id: Some(identity.build.clone()).filter(|build| !build.is_empty()),
+            security_patch: None,
+            abi_list: None,
             display: self.display().await,
             // Battery state needs a diagnostics round-trip of its own; the poll
             // loop calls `info` every 15s and this is not worth that cost yet.
