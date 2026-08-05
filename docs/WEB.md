@@ -16,16 +16,20 @@ src/
 ├── components/
 │   ├── app-shell.tsx     header, nav, account menu
 │   ├── device-card.tsx
+│   ├── device-console.tsx / device-screen.tsx
 │   └── ui/               shadcn components
 └── routes/
     ├── __root.tsx
     ├── login.tsx         public
     ├── _app.tsx          pathless layout — the auth guard
-    └── _app/
-        ├── devices.index.tsx
-        ├── devices.$deviceId.tsx
-        ├── providers.tsx
-        └── admin.users.tsx
+    ├── _app/
+    │   ├── devices.index.tsx
+    │   ├── devices.$deviceId.tsx
+    │   ├── providers.tsx
+    │   └── admin.users.tsx
+    ├── _session.tsx      same guard, no shell
+    └── _session/
+        └── devices.$deviceId.popout.tsx
 ```
 
 ## Routing and the auth guard
@@ -51,6 +55,11 @@ import type { AppRouter } from "@farm/coordinator/router";
 No coordinator code reaches the bundle. Renaming a tRPC procedure is a
 compile-time break in the SPA, which is the point.
 
+Values may only come from `@farm/protocol` — the session-plane message types and
+the video frame-type bytes do, since both sides of that wire have to agree. If
+something shared ever needs to be *imported* from the coordinator, it belongs in
+`packages/protocol` instead.
+
 Derived types live in `lib/types.ts` (`DeviceListItem`, `AdminUser`, …) rather
 than being re-declared, so the UI can never drift from the API shape.
 
@@ -71,24 +80,66 @@ lightness flip rather than a second hand-tuned palette. Add components with:
 cd packages/web && bunx --bun shadcn@latest add <component>
 ```
 
-## Not yet built (phase 5)
+## The control surface
 
-The device page currently shows details and reserve/release only. Still to come:
+```
+src/lib/screen/
+├── renderer.ts     ScreenRenderer + isStreamSupported
+└── session.ts      DeviceSession (WS) + screenshot/install (artifact plane)
+src/hooks/use-device-session.ts
+src/components/device-screen.tsx    canvas + input capture
+src/components/device-console.tsx   screen + toolbar + drop target
+```
 
-- Codec-agnostic `VideoDecoder` canvas renderer, ported from
-  `stf-ios-provider/src/frontend/hevc-screen.js` into `src/lib/screen/`. It
-  already handles the `{type:"codec"}` handshake, the
-  `[0]=key / [1]=delta / [2]=key-with-reset` type byte, and decoder rebuild on
-  reset. Generalising it is a matter of taking `codec` + `description` from the
-  handshake instead of assuming HEVC. That directory's `INTEGRATION.md`
-  documents the framing precisely.
-- Input capture, keyboard, clipboard, screenshot, rotate.
-- Drag-and-drop install with upload + install progress.
-- `/devices/:id/popout` — chrome-free, sized from the device's display geometry
-  and DPR via `window.open(url, name, 'width=…,height=…')`. It joins the *same*
-  reservation as the parent tab; the provider already fans video out to multiple
-  viewers with per-viewer backlog shedding, so no protocol change is needed.
-- MJPEG fallback when `VideoDecoder.isConfigSupported` fails or the page is not
-  a secure context. Capped at ~3 fps from the existing screenshot primitives,
-  honestly degraded, and labelled as such in the UI. No transcode pipeline is
-  introduced anywhere.
+`DeviceConsole` is shared verbatim by `/devices/:id` and the popout, so there is
+one control surface, not two that drift.
+
+**Everything on this path goes to the provider's origin.** The coordinator is
+asked for one thing — a session token, from `device.sessionToken` — and is then
+out of the way. Video, input, screenshots and uploads never touch it.
+
+### Renderer
+
+`ScreenRenderer` is `stf-ios-provider/src/frontend/hevc-screen.js` ported and
+generalised: codec and parameter sets come from the `{type:"codec"}` handshake,
+so `hev1.*`+hvcC and `avc1.*`+avcC both work with no branch on platform. The
+framing (`[0]=key / [1]=delta / [2]=key-with-reset`) is unchanged, and so is the
+reason it matters: a type-2 unit means frames were dropped upstream, and
+decoding it without rebuilding leaves a hardware decoder rendering from a stale
+reference — torn output, no `error` callback.
+
+The iOS motion resolution-collapse compensation is kept, defaulting on for HEVC
+only. It is an iOS encoder behaviour and its per-frame readback is pure waste on
+Android.
+
+`packages/web/test/renderer.test.ts` drives the state machine against a stub
+`VideoDecoder`. The mock backend's video is undecodable filler by design, so
+this is the only hardware-free check on the recovery paths.
+
+### Tokens and reconnects
+
+A session token lives ~60s and is checked only when a request starts, so the
+socket outlives it. If the socket drops, `DeviceSession` reconnects with backoff
+and mints a fresh token — the reservation is still the user's. A
+`session.closed` push is different: the reservation is gone, so retrying would
+only 403, and the loop stops and shows the reason.
+
+Each artifact-plane request (screenshot, install) mints its own token. Uploads
+go over `XMLHttpRequest` because `fetch` still has no portable upload progress.
+
+### Popout
+
+`/devices/:id/popout` renders under `_session`, a second pathless auth layout
+with the same guard as `_app` and no shell. It joins the *same* reservation as
+the parent tab — reservations are per user+device — and never reserves or
+releases, so closing it cannot take the device away from the page that owns it.
+The provider fans video out per viewer with its own backlog shedding, so a
+second viewer needs no protocol support.
+
+## Not yet built (phase 6)
+
+MJPEG fallback when `VideoDecoder.isConfigSupported` fails or the page is not a
+secure context. The renderer already reports that case as `unsupported` and the
+UI states it plainly; the fallback plugs in there. Capped at ~3 fps from the
+existing screenshot primitives, honestly degraded, and labelled as such. No
+transcode pipeline is introduced anywhere.

@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
+import { DeviceConsole } from "@/components/device-console";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -91,12 +92,9 @@ function DevicePage() {
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
         <Card className="min-h-[480px]">
-          <CardContent className="flex h-full items-center justify-center text-center text-muted-foreground text-sm">
+          <CardContent className="flex h-full min-h-0 items-center justify-center text-center text-muted-foreground text-sm">
             {mine ? (
-              <p>
-                Reserved. The live screen and input surface arrive in phase 5 — the session plane
-                connects straight to <code>{device.provider.publicBaseUrl}</code>.
-              </p>
+              <DeviceConsole deviceId={deviceId} active className="h-[70svh] w-full" />
             ) : (
               <p>Reserve this device to open a session.</p>
             )}

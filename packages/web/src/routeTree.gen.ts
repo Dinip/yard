@@ -11,12 +11,14 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppRouteImport } from './routes/_app'
+import { Route as SessionRouteImport } from './routes/_session'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AppProvidersRouteImport } from './routes/_app/providers'
 import { Route as AppAdminProvidersRouteImport } from './routes/_app/admin.providers'
 import { Route as AppAdminUsersRouteImport } from './routes/_app/admin.users'
 import { Route as AppDevicesIndexRouteImport } from './routes/_app/devices.index'
 import { Route as AppDevicesDeviceIdRouteImport } from './routes/_app/devices.$deviceId'
+import { Route as SessionDevicesDeviceIdPopoutRouteImport } from './routes/_session/devices.$deviceId.popout'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -25,6 +27,10 @@ const IndexRoute = IndexRouteImport.update({
 } as any)
 const AppRoute = AppRouteImport.update({
   id: '/_app',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SessionRoute = SessionRouteImport.update({
+  id: '/_session',
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -57,6 +63,12 @@ const AppDevicesDeviceIdRoute = AppDevicesDeviceIdRouteImport.update({
   path: '/devices/$deviceId',
   getParentRoute: () => AppRoute,
 } as any)
+const SessionDevicesDeviceIdPopoutRoute =
+  SessionDevicesDeviceIdPopoutRouteImport.update({
+    id: '/devices/$deviceId/popout',
+    path: '/devices/$deviceId/popout',
+    getParentRoute: () => SessionRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -66,6 +78,7 @@ export interface FileRoutesByFullPath {
   '/admin/users': typeof AppAdminUsersRoute
   '/devices/$deviceId': typeof AppDevicesDeviceIdRoute
   '/devices/': typeof AppDevicesIndexRoute
+  '/devices/$deviceId/popout': typeof SessionDevicesDeviceIdPopoutRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -75,17 +88,20 @@ export interface FileRoutesByTo {
   '/admin/users': typeof AppAdminUsersRoute
   '/devices/$deviceId': typeof AppDevicesDeviceIdRoute
   '/devices': typeof AppDevicesIndexRoute
+  '/devices/$deviceId/popout': typeof SessionDevicesDeviceIdPopoutRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/_app': typeof AppRouteWithChildren
+  '/_session': typeof SessionRouteWithChildren
   '/login': typeof LoginRoute
   '/_app/providers': typeof AppProvidersRoute
   '/_app/admin/providers': typeof AppAdminProvidersRoute
   '/_app/admin/users': typeof AppAdminUsersRoute
   '/_app/devices/$deviceId': typeof AppDevicesDeviceIdRoute
   '/_app/devices/': typeof AppDevicesIndexRoute
+  '/_session/devices/$deviceId/popout': typeof SessionDevicesDeviceIdPopoutRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -97,6 +113,7 @@ export interface FileRouteTypes {
     | '/admin/users'
     | '/devices/$deviceId'
     | '/devices/'
+    | '/devices/$deviceId/popout'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -106,21 +123,25 @@ export interface FileRouteTypes {
     | '/admin/users'
     | '/devices/$deviceId'
     | '/devices'
+    | '/devices/$deviceId/popout'
   id:
     | '__root__'
     | '/'
     | '/_app'
+    | '/_session'
     | '/login'
     | '/_app/providers'
     | '/_app/admin/providers'
     | '/_app/admin/users'
     | '/_app/devices/$deviceId'
     | '/_app/devices/'
+    | '/_session/devices/$deviceId/popout'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AppRoute: typeof AppRouteWithChildren
+  SessionRoute: typeof SessionRouteWithChildren
   LoginRoute: typeof LoginRoute
 }
 
@@ -138,6 +159,13 @@ declare module '@tanstack/react-router' {
       path: ''
       fullPath: '/'
       preLoaderRoute: typeof AppRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/_session': {
+      id: '/_session'
+      path: ''
+      fullPath: '/'
+      preLoaderRoute: typeof SessionRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/login': {
@@ -182,6 +210,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppDevicesDeviceIdRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_session/devices/$deviceId/popout': {
+      id: '/_session/devices/$deviceId/popout'
+      path: '/devices/$deviceId/popout'
+      fullPath: '/devices/$deviceId/popout'
+      preLoaderRoute: typeof SessionDevicesDeviceIdPopoutRouteImport
+      parentRoute: typeof SessionRoute
+    }
   }
 }
 
@@ -203,9 +238,21 @@ const AppRouteChildren: AppRouteChildren = {
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 
+interface SessionRouteChildren {
+  SessionDevicesDeviceIdPopoutRoute: typeof SessionDevicesDeviceIdPopoutRoute
+}
+
+const SessionRouteChildren: SessionRouteChildren = {
+  SessionDevicesDeviceIdPopoutRoute: SessionDevicesDeviceIdPopoutRoute,
+}
+
+const SessionRouteWithChildren =
+  SessionRoute._addFileChildren(SessionRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AppRoute: AppRouteWithChildren,
+  SessionRoute: SessionRouteWithChildren,
   LoginRoute: LoginRoute,
 }
 export const routeTree = rootRouteImport

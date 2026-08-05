@@ -19,7 +19,7 @@
     "build": "bun run --filter '*' build",
     "protocol:gen": "bun packages/protocol/scripts/gen-rust.ts",
     "protocol:check": "bun test packages/protocol && bun run protocol:gen && git diff --exit-code -- packages/provider/crates/farm-protocol",
-    "test": "bun test packages/protocol packages/coordinator/test"
+    "test": "bun test packages/protocol packages/coordinator/test packages/web/test"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.7",

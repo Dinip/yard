@@ -147,15 +147,38 @@ end-to-end.*
 
 ---
 
-## Phase 5 — Web control surface ⬜
+## Phase 5 — Web control surface 🚧
 
-| Item | State |
-|---|---|
-| Codec-agnostic `VideoDecoder` canvas renderer | ⬜ |
-| Input capture (pointer → tap/swipe), keyboard, text | ⬜ |
-| Clipboard get/set, screenshot download, rotate | ⬜ |
-| Drag-and-drop install with upload + install progress | ⬜ |
-| `/devices/:id/popout` chrome-free window | ⬜ |
+The browser half of the session plane. Everything here talks to the provider's
+own origin; nothing new touches the coordinator except `device.sessionToken`.
+
+| Item | State | Where |
+|---|---|---|
+| Codec-agnostic `VideoDecoder` canvas renderer | ✅ | `web/src/lib/screen/renderer.ts` |
+| Session-plane client (WS + artifact plane, backoff reconnect) | ✅ | `web/src/lib/screen/session.ts` |
+| Input capture (pointer down/move/up), keyboard, text, paste | ✅ | `web/src/components/device-screen.tsx` |
+| Clipboard get/set, screenshot download, rotate | ✅ | `web/src/components/device-console.tsx` |
+| Drag-and-drop install with upload progress | ✅ | `.../device-console.tsx` |
+| `/devices/:id/popout` chrome-free window | ✅ | `web/src/routes/_session/` |
+| Renderer state-machine tests (stub `VideoDecoder`) | ✅ | `packages/web/test/renderer.test.ts` |
+| **Verify in a browser against a real device** | ⬜ | — |
+
+The renderer is the `stf-ios-provider` HEVC one generalised: codec and
+parameter sets come from the `{type:"codec"}` handshake, so `hev1.*`+hvcC and
+`avc1.*`+avcC both work without the browser knowing which backend it has. The
+iOS motion-collapse compensation is kept but defaults on for HEVC only — it is
+an iOS encoder behaviour and its per-frame readback is waste elsewhere.
+
+**Not verifiable without hardware:** the mock backend's video is deliberately
+undecodable filler, so nothing in this phase has yet painted a real frame. The
+decode state machine — keyframe gating, the type-2 rebuild, error resync — is
+covered by unit tests against a stub `VideoDecoder` instead; the rest (connect,
+input, clipboard, screenshot, upload, popout) can be exercised against
+`backend: mock`. First real paint lands with phase 3b or 4.
+
+**Deferred to phase 6:** the MJPEG fallback. The renderer already reports
+`unsupported` when `VideoDecoder.isConfigSupported` fails or the origin is not
+secure, and the UI says so plainly — that is the hook the fallback plugs into.
 
 ---
 
@@ -166,7 +189,7 @@ end-to-end.*
 | Reservation reaper + client-side renewal | ⬜ |
 | Admin force-release UI (procedure exists, UI does not) | ⬜ |
 | Audit log UI | ⬜ |
-| MJPEG fallback path | ⬜ |
+| MJPEG fallback path (`unsupported` hook exists in the renderer) | ⬜ |
 | Healthchecks, multi-arch CI images | ⬜ |
 | Docs finalised | ⬜ |
 

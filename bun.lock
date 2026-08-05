@@ -50,6 +50,7 @@
       "version": "0.0.0",
       "dependencies": {
         "@farm/coordinator": "workspace:*",
+        "@farm/protocol": "workspace:*",
         "@tanstack/react-query": "^5.101.4",
         "@tanstack/react-router": "^1.170.19",
         "@trpc/client": "^11.18.0",
