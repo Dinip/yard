@@ -406,8 +406,49 @@ frame that is already painted.
 **Tests:** a mid-session `set_codec` produces a second `codec` message *and* an
 `AU_KEY_RESET` frame; `rotate(90)` on the mock swaps 1179×2556 → 2556×1179 on a
 live socket; the renderer holds deltas after `reconfigure` until the reset
-lands. **Not yet exercised on real hardware** — the mock path is verified, the
-Android and iOS confirmation is outstanding.
+lands; the pointer mapping round-trips through every quarter turn.
+
+**Verified on a Galaxy S22**: the device rotates and the picture follows.
+
+### iOS rotates the UI, not the stream
+
+Android was the easy half. **iOS never changes its capture geometry at all**:
+CoreDevice hands over the native portrait buffer whatever the phone is doing and
+draws the rotated UI *inside* it, so the frames stay 9:16 with the content
+sideways. Measured, not assumed — a rotation produced no new SPS, and a brand
+new capture session started while the phone was already rotated published
+`1184×2576` again. No amount of geometry plumbing can fix that in the provider,
+and rotating pixels there would mean a transcode, which this project does
+nowhere.
+
+So the viewer does it, which is what `stf-ios-provider` did too — its
+integration notes set `screen.rotation = device.display.rotation` on the element.
+
+- **`Display.renderRotation`** is new on the wire: *how far the viewer must turn
+  the decoded picture*, which is a different question from `rotation`, the
+  device's own orientation. Android sets it to 0 because its encoder already did
+  the work; iOS sets it to the orientation. Inferring it by comparing the
+  reported rotation against the frame's aspect would be guessing at which
+  backend is on the other end.
+- **iOS reports orientation for the first time.** There is no orientation query
+  in CoreDevice — but the rotate *answers* with the state it landed in, and that
+  reply was being thrown away (`format!("{:?}")` of a struct, discarded by the
+  caller). `hid.rs` now maps the typed enum to degrees, and takes
+  `non_flat_orientation`: a phone lying on a desk answers `faceUp`, which is the
+  farm's normal resting state and says nothing about how the UI is drawn.
+- **So iOS's `rotate` becomes a delta too**, exactly like Android's. Until the
+  first rotation the orientation is genuinely unknown, and an unknown one is
+  walked as a single step rather than against a zero we invented.
+- **The renderer turns the picture** in `drawFrame` rather than via a CSS
+  transform, so the canvas stays the shape of what is on it and the box sizing
+  follows from one number. **The pointer travels back the other way**
+  (`lib/screen/rotation.ts`): the canvas is viewer space, the HID surface is
+  device space, and a wrong sign there lands taps on the mirror image of where
+  they were aimed.
+
+**Still to confirm on the iPhone**: which way `landscapeLeft` reads. The mapping
+follows Apple's convention — the names say where the device's left edge went,
+not how the picture turned — but only the device settles it.
 
 ---
 

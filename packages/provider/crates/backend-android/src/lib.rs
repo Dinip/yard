@@ -25,7 +25,7 @@ use provider_core::backend::{
     BackendError, DeviceBackend, DeviceInfo, InputEvent, ProgressSink, RemoteDebug,
     Result as BackendResult,
 };
-use provider_core::video::{channel, VideoHandle, VideoPublisher};
+use provider_core::video::{channel, VideoGeometry, VideoHandle, VideoPublisher};
 use tokio::net::TcpStream;
 use tokio::sync::{watch, Mutex};
 use tracing::{debug, info, warn};
@@ -348,6 +348,7 @@ impl DeviceBackend for AndroidBackend {
                     height,
                     scale: None,
                     rotation,
+                    render_rotation: Some(0),
                 })
             }
             None => {
@@ -364,6 +365,7 @@ impl DeviceBackend for AndroidBackend {
                     height,
                     scale,
                     rotation,
+                    render_rotation: Some(0),
                 })
             }
         };
@@ -731,7 +733,14 @@ async fn run_once(supervisor: &Supervisor) -> Result<()> {
                 let (width, height) = *changes.borrow_and_update();
                 if width > 0 && height > 0 {
                     let rotation = current_rotation(&adb, &serial).await;
-                    publisher.set_geometry(width, height, rotation);
+                    publisher.set_geometry(VideoGeometry {
+                        width,
+                        height,
+                        rotation,
+                        // scrcpy re-encodes at the rotated dimensions, so what
+                        // arrives is already the right way up.
+                        render_rotation: Some(0),
+                    });
                 }
                 if changes.changed().await.is_err() {
                     return;

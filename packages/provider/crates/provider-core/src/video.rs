@@ -45,13 +45,19 @@ pub struct AccessUnit {
 /// Deliberately a plain struct rather than `farm_protocol::Display`: this module
 /// is protocol-free so that a backend can publish geometry without depending on
 /// the wire format. `server.rs` does the mapping.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct VideoGeometry {
     pub width: i64,
     pub height: i64,
-    /// `None` where the backend cannot know — the iOS SPS gives dimensions but
-    /// no orientation.
+    /// The device's orientation in degrees, `None` where the backend cannot
+    /// know it.
     pub rotation: Option<i64>,
+    /// How far a viewer must rotate the decoded picture to make it upright.
+    ///
+    /// Zero for any backend whose encoder follows the device. iOS keeps a fixed
+    /// portrait capture buffer and rotates the UI inside it, so its frames need
+    /// putting right at the far end — see `backend-ios`.
+    pub render_rotation: Option<i64>,
 }
 
 /// The read side of a live video stream, as viewers see it.
@@ -148,16 +154,18 @@ impl VideoPublisher {
     /// place they already track geometry, which a keyframe reset re-visits with
     /// unchanged numbers, and a viewer should not be told about a rotation that
     /// did not happen.
-    pub fn set_geometry(&self, width: i64, height: i64, rotation: Option<i64>) {
-        let next = VideoGeometry {
-            width,
-            height,
-            rotation,
-        };
+    pub fn set_geometry(&self, next: VideoGeometry) {
         self.geometry.send_if_modified(|slot| {
             if slot.as_ref() == Some(&next) {
                 false
             } else {
+                tracing::info!(
+                    width = next.width,
+                    height = next.height,
+                    rotation = ?next.rotation,
+                    render_rotation = ?next.render_rotation,
+                    "stream geometry published"
+                );
                 *slot = Some(next);
                 true
             }
@@ -301,23 +309,39 @@ mod tests {
         let mut geometry = handle.geometry();
         assert!(geometry.borrow_and_update().is_none());
 
-        publisher.set_geometry(1080, 2400, Some(0));
+        let portrait = VideoGeometry {
+            width: 1080,
+            height: 2400,
+            rotation: Some(0),
+            render_rotation: None,
+        };
+        publisher.set_geometry(portrait);
         assert!(geometry.has_changed().unwrap());
-        assert_eq!(
-            geometry.borrow_and_update().unwrap(),
-            VideoGeometry {
-                width: 1080,
-                height: 2400,
-                rotation: Some(0),
-            }
-        );
+        assert_eq!(geometry.borrow_and_update().unwrap(), portrait);
 
         // A keyframe reset re-publishes the same numbers; a viewer must not be
         // told the display changed.
-        publisher.set_geometry(1080, 2400, Some(0));
+        publisher.set_geometry(portrait);
         assert!(!geometry.has_changed().unwrap());
 
-        publisher.set_geometry(2400, 1080, Some(90));
+        publisher.set_geometry(VideoGeometry {
+            width: 2400,
+            height: 1080,
+            rotation: Some(90),
+            ..portrait
+        });
+        assert!(geometry.has_changed().unwrap());
+
+        // A device that rotates without re-encoding changes nothing but the
+        // rotations — and that must still reach a viewer, because it is the
+        // only signal that the picture needs putting right.
+        geometry.borrow_and_update();
+        publisher.set_geometry(VideoGeometry {
+            width: 2400,
+            height: 1080,
+            rotation: Some(90),
+            render_rotation: Some(90),
+        });
         assert!(geometry.has_changed().unwrap());
     }
 

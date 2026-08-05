@@ -349,6 +349,7 @@ fn display_of(geometry: VideoGeometry) -> Display {
         height: geometry.height,
         scale: None,
         rotation: geometry.rotation,
+        render_rotation: geometry.render_rotation,
     }
 }
 
@@ -373,6 +374,7 @@ async fn current_display(
             height: 0,
             scale: None,
             rotation: None,
+            render_rotation: None,
         })
 }
 

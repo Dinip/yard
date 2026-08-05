@@ -22,7 +22,9 @@ use farm_protocol::{AppInfo, Display, Platform};
 use provider_core::backend::{
     BackendError, DeviceBackend, DeviceInfo, InputEvent, ProgressSink, RemoteDebug, Result,
 };
-use provider_core::video::{channel, AccessUnit, CodecDescription, VideoHandle, VideoPublisher};
+use provider_core::video::{
+    channel, AccessUnit, CodecDescription, VideoGeometry, VideoHandle, VideoPublisher,
+};
 use tokio::sync::Mutex;
 use tracing::{debug, info};
 
@@ -87,7 +89,12 @@ impl MockBackend {
         });
 
         let (width, height) = backend.panel_size();
-        publisher.set_geometry(width, height, Some(0));
+        publisher.set_geometry(VideoGeometry {
+            width,
+            height,
+            rotation: Some(0),
+            render_rotation: Some(0),
+        });
 
         tokio::spawn(synthesize(publisher, platform));
         backend
@@ -201,6 +208,7 @@ impl DeviceBackend for MockBackend {
                 height,
                 scale: Some(3.0),
                 rotation: Some(rotation),
+                render_rotation: Some(0),
             }),
             battery_level: Some(0.77),
             battery_state: Some("discharging".into()),
@@ -298,8 +306,14 @@ impl DeviceBackend for MockBackend {
         // pushes them to viewers; publishing here is what makes the whole
         // rotation path exercisable with no hardware.
         let (width, height) = self.stream_size();
-        self.publisher
-            .set_geometry(width, height, Some(self.state.rotation.load(Ordering::Relaxed)));
+        self.publisher.set_geometry(VideoGeometry {
+            width,
+            height,
+            rotation: Some(self.state.rotation.load(Ordering::Relaxed)),
+            // The mock streams like Android does: the picture it produces is
+            // already the right way up, so a viewer rotates nothing.
+            render_rotation: Some(0),
+        });
         Ok(())
     }
 

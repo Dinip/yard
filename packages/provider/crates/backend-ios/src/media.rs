@@ -48,7 +48,7 @@ use tokio::sync::watch;
 use tokio::time::{interval, MissedTickBehavior};
 use tracing::{debug, info, warn};
 
-use provider_core::video::{AccessUnit, CodecDescription, VideoPublisher};
+use provider_core::video::{AccessUnit, CodecDescription, VideoGeometry, VideoPublisher};
 
 use crate::hevc::{self, Depacketizer, ParameterSets};
 use crate::{Geometry, IosOptions};
@@ -371,9 +371,16 @@ async fn receive_video(
             if parameter_sets.observe(&nal) {
                 if let Some(size) = parameter_sets.dimensions {
                     geometry.set(size);
-                    // Live viewers re-shape from this. No rotation: the SPS
-                    // gives dimensions, never orientation.
-                    publisher.set_geometry(size.0, size.1, None);
+                    // Live viewers re-shape from this. The orientation does not
+                    // come from the SPS — it never changes on iOS, whatever the
+                    // device is doing — so it rides along from the last rotate.
+                    let rotation = geometry.rotation();
+                    publisher.set_geometry(VideoGeometry {
+                        width: size.0,
+                        height: size.1,
+                        rotation,
+                        render_rotation: rotation,
+                    });
                 }
             }
             if parameter_sets.is_complete() {

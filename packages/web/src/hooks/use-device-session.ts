@@ -116,6 +116,7 @@ export function useDeviceSession(
             // would blank the canvas and re-ask a question already answered.
             if (rendererRef.current) {
               rendererRef.current.reconfigure(message);
+              rendererRef.current.setRenderRotation(message.display.renderRotation);
               requestKeyframe();
               return;
             }
@@ -146,6 +147,7 @@ export function useDeviceSession(
                 onError: (error) => console.warn("[screen]", error),
               });
               renderer.configure(message);
+              renderer.setRenderRotation(message.display.renderRotation);
               rendererRef.current = renderer;
               requestKeyframe();
             });
@@ -153,6 +155,10 @@ export function useDeviceSession(
           }
           case "display":
             setDisplay(message.display);
+            // iOS rotates without re-encoding: no new parameter sets, no new
+            // frame size, and this message is the only thing that says the
+            // picture is now sideways.
+            rendererRef.current?.setRenderRotation(message.display.renderRotation);
             break;
           case "clipboard": {
             const waiters = clipboardWaiters.current;

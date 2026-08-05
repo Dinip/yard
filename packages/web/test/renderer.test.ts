@@ -24,8 +24,11 @@ class StubDecoder {
   config: unknown = null;
   readonly onError: (error: { message: string }) => void;
 
+  readonly onOutput: (frame: unknown) => void;
+
   constructor(init: { output: (frame: unknown) => void; error: (error: unknown) => void }) {
     this.onError = init.error as (error: { message: string }) => void;
+    this.onOutput = init.output;
     decoders.push(this);
   }
 
@@ -37,6 +40,8 @@ class StubDecoder {
   decode(chunk: DecodedChunk) {
     if (this.state !== "configured") throw new Error("not configured");
     this.chunks.push(chunk);
+    // A portrait frame, which is what iOS emits whichever way up the phone is.
+    this.onOutput({ displayWidth: 1080, displayHeight: 2400, close() {} });
   }
 
   close() {
@@ -52,6 +57,10 @@ class StubDecoder {
 const stubContext = {
   drawImage() {},
   getImageData: () => ({ data: new Uint8ClampedArray(4) }),
+  save() {},
+  restore() {},
+  translate() {},
+  rotate() {},
 };
 
 function stubCanvas() {
@@ -76,7 +85,11 @@ beforeEach(async () => {
       }
     },
     document: { createElement: () => stubCanvas() },
-    requestAnimationFrame: () => 0,
+    // Synchronous, so a decoded frame reaches the canvas within the test.
+    requestAnimationFrame: (cb: (t: number) => void) => {
+      cb(0);
+      return 0;
+    },
   });
   ({ ScreenRenderer, isStreamSupported } = await import("../src/lib/screen/renderer.ts"));
 });
@@ -172,6 +185,29 @@ describe("ScreenRenderer", () => {
 
     instance.decodeChunk(au(AU_KEY_RESET));
     expect(decoders[2]?.chunks.map((c) => c.type)).toEqual(["key"]);
+  });
+
+  test("a render rotation turns the picture and reshapes the canvas", () => {
+    const sizes: [number, number][] = [];
+    const canvas = stubCanvas();
+    const instance = new ScreenRenderer(canvas, {
+      onSize: (width, height) => sizes.push([width, height]),
+    });
+    instance.configure({ codec: "avc1.640028" });
+
+    instance.decodeChunk(au(AU_KEY));
+    expect(sizes.at(-1)).toEqual([1080, 2400]);
+
+    // What iOS sends on rotation: the frames stay portrait, only this changes.
+    instance.setRenderRotation(90);
+    instance.decodeChunk(au(AU_KEY));
+    expect(sizes.at(-1)).toEqual([2400, 1080]);
+    expect([canvas.width, canvas.height]).toEqual([2400, 1080]);
+
+    // Back to upright, and the canvas follows.
+    instance.setRenderRotation(0);
+    instance.decodeChunk(au(AU_KEY));
+    expect(sizes.at(-1)).toEqual([1080, 2400]);
   });
 
   test("support probing is what drives the fallback", async () => {

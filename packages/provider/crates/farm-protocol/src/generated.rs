@@ -54,6 +54,8 @@ pub struct Display {
     pub scale: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub rotation: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub render_rotation: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
