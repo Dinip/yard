@@ -215,6 +215,7 @@ pub enum CoordinatorMessage {
         protocol_version: i64,
         heartbeat_interval_ms: i64,
         jwks_url: String,
+        web_origins: Vec<String>,
     },
     #[serde(rename = "hello.reject", rename_all = "camelCase")]
     HelloReject { reason: String },

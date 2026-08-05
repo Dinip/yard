@@ -94,7 +94,8 @@ command dispatch.
 
 ### coordinator → provider (`CoordinatorMessage`)
 
-`hello.ack` (carries the heartbeat interval and JWKS URL), `hello.reject`,
+`hello.ack` (carries the heartbeat interval, the JWKS URL, and `webOrigins` —
+the browser origins the provider may serve; see below), `hello.reject`,
 `ping`, and `command` — whose `payload` is one of:
 
 `session.authorize` · `session.revoke` · `device.reboot` · `device.rotate` ·
@@ -152,10 +153,26 @@ desynchronise an in-flight event.
 `Pointer` state machine needs down/move/up to distinguish a drag from a tap — the
 regression `stf-ios-provider/src/control.rs` documents at length.
 
-## Artifact plane — browser → provider (phase 3)
+## Artifact plane — browser → provider ✅ built
 
 Same port, same token. `POST /s/:deviceId/install`,
-`GET /s/:deviceId/screenshot.png`, `GET /s/:deviceId/mjpeg`.
+`GET /s/:deviceId/screenshot.png`, `GET /s/:deviceId/mjpeg` (phase 6).
+
+### CORS is structural here, not incidental
+
+The browser loads the app from the coordinator's origin and then talks straight
+to the provider — so *every* artifact-plane request is cross-origin, in every
+deployment. Without CORS this plane is unreachable from a browser while looking
+perfectly healthy to `curl`, which is exactly how phase 5 found it missing.
+
+The allowed origins ride in `hello.ack` rather than provider config: the
+coordinator owns policy, and a separately configured provider would drift the
+first time the web app moved. Until a provider registers the list is empty and
+it refuses browser requests — it fails closed, then self-heals on registration.
+
+Credentials are never allowed. Authorization on this plane is the session token
+in the query string, never a cookie, so there is no ambient authority for a
+hostile page to ride on even if an origin were mislisted.
 
 ## Fake provider ✅ built
 

@@ -74,6 +74,7 @@ export const coordinatorFixtures = {
     protocolVersion: 1,
     heartbeatIntervalMs: 15000,
     jwksUrl: "https://farm.example.com/.well-known/farm-jwks.json",
+    webOrigins: ["https://farm.example.com"],
   },
   helloReject: { type: "hello.reject", reason: "unknown provider token" },
   authorize: {

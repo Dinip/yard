@@ -14,6 +14,7 @@ pub mod auth;
 pub mod backend;
 pub mod config;
 pub mod control;
+pub mod origins;
 pub mod server;
 pub mod session;
 pub mod supervisor;
@@ -23,6 +24,7 @@ pub use backend::{
     BackendError, DeviceBackend, DeviceInfo, InputEvent, NullProgress, ProgressSink, RemoteDebug,
 };
 pub use config::{BackendKind, Config, DeviceConfig};
+pub use origins::WebOrigins;
 pub use session::{Authorization, SessionRegistry};
 pub use supervisor::{Device, Supervisor};
 pub use video::{AccessUnit, CodecDescription, VideoHandle, VideoPublisher};

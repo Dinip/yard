@@ -22,6 +22,7 @@ use tokio_tungstenite::tungstenite::Message;
 use tracing::{debug, error, info, warn};
 
 use crate::config::{Config, RECONNECT_MAX, RECONNECT_MIN};
+use crate::origins::WebOrigins;
 
 /// What the control plane hands to whoever executes commands. Implemented by
 /// the supervisor; kept as a trait so the client is testable on its own.
@@ -57,16 +58,23 @@ impl ControlSender {
 pub struct ControlClient {
     config: Arc<Config>,
     handler: Arc<dyn CommandHandler>,
+    /// Written on every `hello.ack`; read by the browser-facing server.
+    web_origins: WebOrigins,
     tx: mpsc::UnboundedSender<ProviderMessage>,
     rx: mpsc::UnboundedReceiver<ProviderMessage>,
 }
 
 impl ControlClient {
-    pub fn new(config: Arc<Config>, handler: Arc<dyn CommandHandler>) -> Self {
+    pub fn new(
+        config: Arc<Config>,
+        handler: Arc<dyn CommandHandler>,
+        web_origins: WebOrigins,
+    ) -> Self {
         let (tx, rx) = mpsc::unbounded_channel();
         Self {
             config,
             handler,
+            web_origins,
             tx,
             rx,
         }
@@ -202,6 +210,7 @@ impl ControlClient {
                 protocol_version,
                 heartbeat_interval_ms,
                 jwks_url,
+                web_origins,
             } => {
                 if protocol_version != PROTOCOL_VERSION {
                     bail!(
@@ -209,7 +218,15 @@ impl ControlClient {
                          this provider speaks {PROTOCOL_VERSION}"
                     );
                 }
-                info!(%jwks_url, heartbeat_interval_ms, "registered with coordinator");
+                info!(
+                    %jwks_url,
+                    heartbeat_interval_ms,
+                    origins = ?web_origins,
+                    "registered with coordinator"
+                );
+                // Until this lands the artifact plane refuses every browser
+                // request, so it must be applied before anything else.
+                self.web_origins.set(web_origins);
 
                 let mut interval = tokio::time::interval(Duration::from_millis(
                     heartbeat_interval_ms.max(1) as u64,

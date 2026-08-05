@@ -161,7 +161,29 @@ own origin; nothing new touches the coordinator except `device.sessionToken`.
 | Drag-and-drop install with upload progress | ✅ | `.../device-console.tsx` |
 | `/devices/:id/popout` chrome-free window | ✅ | `web/src/routes/_session/` |
 | Renderer state-machine tests (stub `VideoDecoder`) | ✅ | `packages/web/test/renderer.test.ts` |
-| **Verify in a browser against a real device** | ⬜ | — |
+| Provider CORS for the artifact plane, origins via `hello.ack` | ✅ | `provider-core/src/origins.rs` |
+| **Paint a real frame** (needs hardware) | ⬜ | — |
+
+**Verified in a browser** against the coordinator and the Rust provider with
+mock devices: reserve opens a session and the codec handshake sizes the canvas
+box; pointer down/move/up arrive at the backend as separate events with exact
+normalised coordinates (0.5/0.25 …); `Enter` arrives as key down+up and a
+printable character as `text`; rotate reaches the device and the new geometry
+comes back and re-shapes the canvas live; `clipboard.get` round-trips; a 3 MB
+drag-and-drop install uploads with progress, installs, writes an audit row with
+its sha256, and leaves nothing in the scratch dir; the popout joins the same
+reservation as a second concurrent viewer.
+
+**One real bug this found, in the provider rather than the web app:** the
+artifact plane had no CORS at all, so uploads and screenshots were unreachable
+from a browser in *every* deployment while looking healthy to `curl`. The
+allowed origins now ride in `hello.ack`; two regression tests cover the grant
+and the refusal.
+
+**Still unverified:** the screenshot download (a file download, left for the
+user to trigger) and a genuine mouse drag-and-drop — a synthetic `DragEvent`
+does not reach React's delegated handler, so the handler was driven directly
+instead.
 
 The renderer is the `stf-ios-provider` HEVC one generalised: codec and
 parameter sets come from the `{type:"codec"}` handshake, so `hev1.*`+hvcC and
@@ -170,11 +192,11 @@ iOS motion-collapse compensation is kept but defaults on for HEVC only — it is
 an iOS encoder behaviour and its per-frame readback is waste elsewhere.
 
 **Not verifiable without hardware:** the mock backend's video is deliberately
-undecodable filler, so nothing in this phase has yet painted a real frame. The
-decode state machine — keyframe gating, the type-2 rebuild, error resync — is
-covered by unit tests against a stub `VideoDecoder` instead; the rest (connect,
-input, clipboard, screenshot, upload, popout) can be exercised against
-`backend: mock`. First real paint lands with phase 3b or 4.
+undecodable filler, so nothing here has yet painted a real frame — the browser
+correctly reports the stream as undecodable and shows the fallback message,
+which is itself the right behaviour to have seen. The decode state machine —
+keyframe gating, the type-2 rebuild, error resync — is covered by unit tests
+against a stub `VideoDecoder` instead. First real paint lands with phase 3b or 4.
 
 **Deferred to phase 6:** the MJPEG fallback. The renderer already reports
 `unsupported` when `VideoDecoder.isConfigSupported` fails or the origin is not

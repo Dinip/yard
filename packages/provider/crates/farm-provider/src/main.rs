@@ -13,6 +13,7 @@ use farm_protocol::Platform;
 use provider_core::auth::TokenVerifier;
 use provider_core::config::{BackendKind, Config};
 use provider_core::control::ControlClient;
+use provider_core::origins::WebOrigins;
 use provider_core::server::{self, ServerState};
 use provider_core::session::SessionRegistry;
 use provider_core::supervisor::Supervisor;
@@ -110,13 +111,15 @@ async fn main() -> Result<()> {
 
     supervisor.bootstrap().await;
 
-    let control = ControlClient::new(config.clone(), supervisor.clone());
+    let web_origins = WebOrigins::new();
+    let control = ControlClient::new(config.clone(), supervisor.clone(), web_origins.clone());
     supervisor.attach_control(control.sender()).await;
 
     let state = ServerState {
         config: config.clone(),
         supervisor: supervisor.clone(),
         verifier,
+        web_origins,
     };
 
     let mut session_plane = tokio::spawn(server::serve(state));

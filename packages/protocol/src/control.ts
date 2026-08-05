@@ -127,6 +127,17 @@ export const CoordinatorMessage = named(
       heartbeatIntervalMs: z.number().int(),
       /** Absolute URL of the coordinator's JWKS; fetched once and cached. */
       jwksUrl: z.string(),
+      /**
+       * Browser origins allowed to call the provider's session and artifact
+       * planes. The provider is always a *different* origin from the web app —
+       * that is the entire point of keeping the coordinator off the data path —
+       * so uploads and screenshots are cross-origin requests and need CORS.
+       *
+       * It comes from the coordinator rather than provider config because the
+       * coordinator is where policy lives, and because a provider that had to
+       * be told separately would silently drift out of step with it.
+       */
+      webOrigins: z.array(z.string()),
     }),
     z.object({
       type: z.literal("hello.reject"),

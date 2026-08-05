@@ -18,12 +18,16 @@ use farm_protocol::Platform;
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
 use provider_core::auth::TokenVerifier;
 use provider_core::config::Config;
+use provider_core::origins::WebOrigins;
 use provider_core::server::{router, ServerState};
 use provider_core::session::{Authorization, SessionRegistry};
 use provider_core::supervisor::Supervisor;
 use serde::Serialize;
 
 const PROVIDER_ID: &str = "test-provider";
+/// The browser origin the coordinator hands out in `hello.ack`.
+const ALLOWED_ORIGIN: &str = "https://farm.example.com";
+
 const DEVICE_ID: &str = "mock-ios-1";
 const OTHER_DEVICE: &str = "mock-android-1";
 const RESERVATION: &str = "res-1";
@@ -185,10 +189,13 @@ scratch_dir: {}
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
+    let web_origins = WebOrigins::new();
+    web_origins.set(vec![ALLOWED_ORIGIN.into()]);
     let state = ServerState {
         config,
         supervisor,
         verifier,
+        web_origins,
     };
     tokio::spawn(async move { axum::serve(listener, router(state)).await });
 
@@ -639,4 +646,83 @@ async fn two_viewers_share_one_reservation() {
         }
         assert!(saw_frame, "a viewer connected but received no video");
     }
+}
+
+/// The artifact plane is reached from a browser on the coordinator's origin,
+/// never this one — so without CORS the upload and screenshot paths are dead in
+/// every deployment, which is exactly how phase 5 found this missing.
+#[tokio::test]
+async fn the_allowed_origin_may_use_the_artifact_plane() {
+    let h = start().await;
+    h.authorize().await;
+
+    let preflight = reqwest::Client::new()
+        .request(
+            reqwest::Method::OPTIONS,
+            format!("{}/s/{DEVICE_ID}/install?token=x", h.base),
+        )
+        .header("origin", ALLOWED_ORIGIN)
+        .header("access-control-request-method", "POST")
+        .header("access-control-request-headers", "x-farm-filename")
+        .send()
+        .await
+        .unwrap();
+
+    assert!(preflight.status().is_success(), "preflight was refused");
+    assert_eq!(
+        preflight
+            .headers()
+            .get("access-control-allow-origin")
+            .and_then(|v| v.to_str().ok()),
+        Some(ALLOWED_ORIGIN)
+    );
+
+    let res = reqwest::Client::new()
+        .get(format!(
+            "{}/s/{DEVICE_ID}/screenshot.png?token={}",
+            h.base,
+            h.token()
+        ))
+        .header("origin", ALLOWED_ORIGIN)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200);
+    assert_eq!(
+        res.headers()
+            .get("access-control-allow-origin")
+            .and_then(|v| v.to_str().ok()),
+        Some(ALLOWED_ORIGIN)
+    );
+}
+
+/// A page the coordinator never named gets no reply it can read, even holding a
+/// valid token. Credentials are not allowed on this plane at all, so there is
+/// no ambient authority for such a page to ride on either.
+#[tokio::test]
+async fn an_unknown_origin_gets_no_cors_grant() {
+    let h = start().await;
+    h.authorize().await;
+
+    let res = reqwest::Client::new()
+        .get(format!(
+            "{}/s/{DEVICE_ID}/screenshot.png?token={}",
+            h.base,
+            h.token()
+        ))
+        .header("origin", "https://evil.example.com")
+        .send()
+        .await
+        .unwrap();
+
+    assert!(
+        res.headers().get("access-control-allow-origin").is_none(),
+        "an unlisted origin was granted CORS access"
+    );
+    assert!(
+        res.headers()
+            .get("access-control-allow-credentials")
+            .is_none(),
+        "the artifact plane must never allow credentials"
+    );
 }

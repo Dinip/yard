@@ -15,7 +15,7 @@ use anyhow::{Context as _, Result};
 use axum::body::Body;
 use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{DefaultBodyLimit, Path, Query, State, WebSocketUpgrade};
-use axum::http::{header, StatusCode};
+use axum::http::{header, HeaderName, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::Router;
@@ -27,9 +27,12 @@ use tokio::io::AsyncWriteExt as _;
 use tokio::sync::broadcast;
 use tracing::{debug, info, warn};
 
+use tower_http::cors::{AllowOrigin, CorsLayer};
+
 use crate::auth::TokenVerifier;
 use crate::backend::{InputEvent, ProgressSink};
 use crate::config::Config;
+use crate::origins::WebOrigins;
 use crate::supervisor::Supervisor;
 
 /// How long a fresh viewer waits for the codec handshake before we give up.
@@ -45,6 +48,8 @@ pub struct ServerState {
     pub config: Arc<Config>,
     pub supervisor: Arc<Supervisor>,
     pub verifier: Arc<TokenVerifier>,
+    /// Filled in from `hello.ack`; see [`crate::origins`].
+    pub web_origins: WebOrigins,
 }
 
 #[derive(Debug, Deserialize)]
@@ -63,7 +68,32 @@ pub fn router(state: ServerState) -> Router {
             "/s/{device_id}/install",
             post(install).layer(DefaultBodyLimit::max(limit)),
         )
+        .layer(cors(state.web_origins.clone()))
         .with_state(state)
+}
+
+/// Browser access to the artifact plane.
+///
+/// The origin list is checked per request rather than baked into the layer,
+/// because the server starts listening before the provider has registered and
+/// learned which origins the coordinator allows.
+///
+/// Credentials are deliberately *not* allowed: authorization on this plane is
+/// the session token in the query string, never a cookie, so there is nothing
+/// ambient for a hostile page to ride on.
+fn cors(origins: WebOrigins) -> CorsLayer {
+    CorsLayer::new()
+        .allow_origin(AllowOrigin::predicate(move |origin, _| {
+            origin
+                .to_str()
+                .map(|origin| origins.allows(origin))
+                .unwrap_or(false)
+        }))
+        .allow_methods([Method::GET, Method::POST])
+        .allow_headers([
+            header::CONTENT_TYPE,
+            HeaderName::from_static("x-farm-filename"),
+        ])
 }
 
 pub async fn serve(state: ServerState) -> Result<()> {

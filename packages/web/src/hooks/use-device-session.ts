@@ -12,10 +12,18 @@ export interface DeviceSessionApi {
   frameSize: { width: number; height: number } | null;
   /** The browser cannot decode this stream: no WebCodecs, or an insecure origin. */
   unsupported: boolean;
-  /** Last clipboard payload the device sent back. */
-  clipboard: string | null;
+  /**
+   * Asks the device for its clipboard and resolves with the reply — `null`
+   * meaning genuinely empty. A request/response rather than a piece of state:
+   * reading the same text twice, or reading an empty clipboard, must still be
+   * something the caller can react to.
+   */
+  readClipboard: () => Promise<string | null>;
   send: (message: ClientMessage) => void;
 }
+
+/** Long enough for a slow device, short enough to not look hung. */
+const CLIPBOARD_TIMEOUT = 5_000;
 
 /**
  * Owns one viewer: the WebSocket, the decoder, and the canvas they feed.
@@ -34,14 +42,35 @@ export function useDeviceSession(
   const [display, setDisplay] = useState<Display | null>(null);
   const [frameSize, setFrameSize] = useState<{ width: number; height: number } | null>(null);
   const [unsupported, setUnsupported] = useState(false);
-  const [clipboard, setClipboard] = useState<string | null>(null);
 
   const sessionRef = useRef<DeviceSession | null>(null);
   const rendererRef = useRef<ScreenRenderer | null>(null);
+  const clipboardWaiters = useRef<((text: string | null) => void)[]>([]);
 
   const send = useCallback((message: ClientMessage) => {
     sessionRef.current?.send(message);
   }, []);
+
+  const readClipboard = useCallback(
+    () =>
+      new Promise<string | null>((resolve, reject) => {
+        if (!sessionRef.current) {
+          reject(new Error("no session"));
+          return;
+        }
+        const timer = setTimeout(() => {
+          clipboardWaiters.current = clipboardWaiters.current.filter((w) => w !== waiter);
+          reject(new Error("the device did not answer"));
+        }, CLIPBOARD_TIMEOUT);
+        const waiter = (text: string | null) => {
+          clearTimeout(timer);
+          resolve(text);
+        };
+        clipboardWaiters.current.push(waiter);
+        sessionRef.current.send({ type: "clipboard.get" });
+      }),
+    [],
+  );
 
   useEffect(() => {
     if (!enabled) return;
@@ -90,9 +119,12 @@ export function useDeviceSession(
           case "display":
             setDisplay(message.display);
             break;
-          case "clipboard":
-            setClipboard(message.text);
+          case "clipboard": {
+            const waiters = clipboardWaiters.current;
+            clipboardWaiters.current = [];
+            for (const waiter of waiters) waiter(message.text);
             break;
+          }
           case "session.closed":
             // Revocation, not a blip — stop the reconnect loop and say why.
             session.markRevoked();
@@ -123,5 +155,5 @@ export function useDeviceSession(
     };
   }, [deviceId, enabled, canvasRef]);
 
-  return { state, detail, display, frameSize, unsupported, clipboard, send };
+  return { state, detail, display, frameSize, unsupported, readClipboard, send };
 }

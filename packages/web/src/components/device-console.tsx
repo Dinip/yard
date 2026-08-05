@@ -7,7 +7,7 @@ import {
   RotateCw,
   Upload,
 } from "lucide-react";
-import { type DragEvent, useEffect, useRef, useState } from "react";
+import { type DragEvent, useRef, useState } from "react";
 import { toast } from "sonner";
 import { DeviceScreen } from "@/components/device-screen";
 import { Button } from "@/components/ui/button";
@@ -36,18 +36,6 @@ export function DeviceConsole({
   const session = useDeviceSession(deviceId, canvasRef, active);
   const [install, setInstall] = useState<{ name: string; fraction: number } | null>(null);
   const [dragging, setDragging] = useState(false);
-  const pendingClipboardRead = useRef(false);
-
-  // The device answers `clipboard.get` asynchronously; only a read *we* asked
-  // for should land in the user's own clipboard.
-  useEffect(() => {
-    if (!pendingClipboardRead.current || session.clipboard === null) return;
-    pendingClipboardRead.current = false;
-    navigator.clipboard.writeText(session.clipboard).then(
-      () => toast.success("Copied the device's clipboard"),
-      () => toast.error("Could not write to this browser's clipboard"),
-    );
-  }, [session.clipboard]);
 
   const upload = async (file: File) => {
     setInstall({ name: file.name, fraction: 0 });
@@ -94,9 +82,18 @@ export function DeviceConsole({
     session.send({ type: "rotate", degrees: next });
   };
 
-  const readDeviceClipboard = () => {
-    pendingClipboardRead.current = true;
-    session.send({ type: "clipboard.get" });
+  const readDeviceClipboard = async () => {
+    try {
+      const text = await session.readClipboard();
+      if (!text) {
+        toast.message("The device's clipboard is empty");
+        return;
+      }
+      await navigator.clipboard.writeText(text);
+      toast.success("Copied the device's clipboard");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Clipboard read failed");
+    }
   };
 
   const writeDeviceClipboard = async () => {

@@ -55,6 +55,7 @@ src/
 ├── auth.rs        JWKS fetch + session-token verification
 ├── session.rs     which reservation may use each device
 ├── control.rs     the outbound WSS to the coordinator
+├── origins.rs     browser origins allowed on the browser-facing planes
 ├── supervisor.rs  owns every device, routes commands
 └── server.rs      session plane (WS) + artifact plane (HTTP)
 ```
@@ -122,6 +123,14 @@ when a viewer lags, everything is dropped until the next keyframe, which is then
 promoted to `key-with-reset`. Feeding deltas that reference a frame the viewer
 never decoded produces torn output with **no error callback** — the decoder does
 not tell you it is wrong.
+
+The artifact plane is **always** cross-origin — the browser loads the app from
+the coordinator and connects straight here — so it carries a CORS layer whose
+allowed origins arrive in `hello.ack` (`origins.rs`). They come from the
+coordinator because that is where policy lives; a provider configured separately
+would drift the first time the web app moved. Before registration the list is
+empty and browser requests are refused, so it fails closed. Credentials are
+never allowed: the token is in the query string, never a cookie.
 
 Uploads stream to the scratch dir as they arrive, so a 200 MB APK never sits in
 memory, and a `Drop` guard deletes the staged file however the install turns
