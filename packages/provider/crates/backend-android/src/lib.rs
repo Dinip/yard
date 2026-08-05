@@ -40,6 +40,13 @@ const RECONNECT_DELAY: Duration = Duration::from_secs(5);
 /// How long a request waits for a session before giving up.
 const SESSION_WAIT: Duration = Duration::from_secs(20);
 
+/// How long to wait for a device to come back after `adbd` restarts.
+const ADB_RESTART_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// The port `adbd` listens on when told to. 5555 is the convention every
+/// `adb connect` example assumes.
+const DEVICE_ADB_PORT: u16 = 5555;
+
 /// Longest a contact may stay down with no further samples before the provider
 /// lifts it on its own. Same reasoning as the iOS backend: a browser that loses
 /// a pointerup would otherwise pin a finger to the glass for the session.
@@ -286,6 +293,32 @@ impl AndroidBackend {
             .await;
     }
 
+    /// Wait until the device reports the adb TCP port we are aiming for.
+    ///
+    /// `None` means "listening on nothing". Polling the property is what
+    /// actually confirms the restart landed; transport presence does not,
+    /// because the old transport is still there for a moment after the request.
+    async fn await_adb_port(&self, want: Option<u16>) -> BackendResult<()> {
+        let deadline = Instant::now() + ADB_RESTART_TIMEOUT;
+
+        loop {
+            // The shell itself fails while adbd is down, which is expected and
+            // is why this polls rather than asking once.
+            if let Ok(value) = self.shell("getprop service.adb.tcp.port").await {
+                if listening_port(&value) == want {
+                    return Ok(());
+                }
+            }
+            if Instant::now() >= deadline {
+                return Err(BackendError::Unavailable(format!(
+                    "adbd did not settle on {} within {ADB_RESTART_TIMEOUT:?}",
+                    want.map(|p| p.to_string()).unwrap_or_else(|| "usb".into())
+                )));
+            }
+            tokio::time::sleep(Duration::from_millis(300)).await;
+        }
+    }
+
     async fn shell(&self, command: &str) -> BackendResult<String> {
         self.adb
             .shell(&self.options.serial, command)
@@ -528,8 +561,18 @@ impl DeviceBackend for AndroidBackend {
             return Ok(RemoteDebug { port });
         }
 
-        self.shell("setprop service.adb.tcp.port 5555").await?;
-        let _ = self.shell("stop adbd; start adbd").await;
+        // Make the device listen before forwarding to it. `tcpip:` is a
+        // transport service; the setprop recipe needs root and fails silently.
+        self.adb
+            .tcpip(&self.options.serial, DEVICE_ADB_PORT)
+            .await
+            .map_err(|err| BackendError::Failed(format!("{err:#}")))?;
+
+        // Wait for the *end state*, not for the transport to reappear: adbd
+        // has not dropped yet at this point, so a presence check passes
+        // immediately against the connection that is about to die, and
+        // everything after it races the restart.
+        self.await_adb_port(Some(DEVICE_ADB_PORT)).await?;
 
         let port = pick_port().map_err(|err| BackendError::Failed(err.to_string()))?;
         self.adb
@@ -542,14 +585,35 @@ impl DeviceBackend for AndroidBackend {
         Ok(RemoteDebug { port })
     }
 
+    /// Stop remote debugging, and stop the *device* listening too.
+    ///
+    /// Removing the forward alone would leave `adbd` bound to port 5555 on
+    /// whatever network the phone is on, reachable by anyone who can route to
+    /// it, for as long as the device stays up. A farm device must not be left
+    /// in that state because someone finished debugging.
     async fn remote_debug_stop(&self) -> BackendResult<()> {
-        let Some(port) = self.exposed_port.lock().await.take() else {
-            return Ok(());
-        };
+        let exposed = self.exposed_port.lock().await.take();
+
+        if let Some(port) = exposed {
+            // Best effort. The forward may already be gone — an adb server
+            // restart loses every one of them — and that must not stop the
+            // part that closes the device's listener.
+            if let Err(err) = self.adb.forward_remove(&self.options.serial, port).await {
+                debug!(port, error = %format!("{err:#}"), "forward was already gone");
+            }
+        }
+
+        // Runs even when no forward was recorded: a provider restart loses that
+        // memory while the device keeps listening, and this is the only thing
+        // that closes it.
         self.adb
-            .forward_remove(&self.options.serial, port)
+            .usb_only(&self.options.serial)
             .await
             .map_err(|err| BackendError::Failed(format!("{err:#}")))?;
+        // Same restart, same wait: returning before adbd is back makes the
+        // next command fail for a reason that has nothing to do with it.
+        self.await_adb_port(None).await?;
+        info!(serial = %self.options.serial, "adb transport withdrawn");
         Ok(())
     }
 
@@ -732,6 +796,19 @@ pub fn keycode_for(key: &str) -> Option<u32> {
     })
 }
 
+/// The port `adbd` is listening on, if any.
+///
+/// Devices disagree about how to say "not listening": a Galaxy S25+ reports
+/// `0`, others `-1`, and some an empty string. Anything that is not a positive
+/// port number means the same thing, so this normalises rather than matching
+/// one vendor's spelling.
+fn listening_port(value: &str) -> Option<u16> {
+    match value.trim().parse::<i32>() {
+        Ok(port) if port > 0 => u16::try_from(port).ok(),
+        _ => None,
+    }
+}
+
 /// A free TCP port, chosen by binding one and letting the OS pick.
 fn pick_port() -> Result<u16> {
     let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
@@ -771,6 +848,16 @@ mod tests {
         let dump = "Current Battery Service state:\n  level: 87\n  status: 2\n  scale: 100\n";
         assert_eq!(parse_battery_level(dump), Some(87.0));
         assert_eq!(parse_battery_state(dump).as_deref(), Some("charging"));
+    }
+
+    #[test]
+    fn not_listening_is_spelled_several_ways() {
+        assert_eq!(listening_port("5555"), Some(5555));
+        // A Galaxy S25+ says 0; the docs say -1; a fresh device says nothing.
+        assert_eq!(listening_port("0"), None);
+        assert_eq!(listening_port("-1"), None);
+        assert_eq!(listening_port(""), None);
+        assert_eq!(listening_port("\n"), None);
     }
 
     #[test]

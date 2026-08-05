@@ -1,0 +1,150 @@
+import type { Database } from "@farm/db";
+import { device, reservation } from "@farm/db";
+import { and, eq, inArray, lt } from "drizzle-orm";
+import { providers } from "../gateway/registry.ts";
+import { audit } from "./audit.ts";
+import { deviceEvents } from "./events.ts";
+
+/**
+ * Releasing a reservation, in one place.
+ *
+ * There are four ways a device comes free — the holder releases it, an admin
+ * takes it back, the reaper sweeps a lapsed one, or its provider disconnects —
+ * and they were drifting apart. The one that mattered: force-release updated
+ * the row but never pushed `session.revoke`, so the device the admin had "taken
+ * back" carried on streaming to the person it was taken from.
+ */
+export interface ReleaseOptions {
+  /** Who did it. `null` for the reaper, which is nobody. */
+  actorUserId: string | null;
+  reason: string;
+  /**
+   * Whether to push `session.revoke`. False only when the provider is already
+   * gone, since it has lost every session with the socket.
+   */
+  revoke?: boolean;
+  /** Written to the audit log; omit to skip the entry. */
+  auditAction?: string;
+}
+
+/**
+ * Release every active reservation matching `deviceIds`, or all of them when it
+ * is omitted.
+ *
+ * Returns the released rows, so a caller can tell "nothing to do" from "done"
+ * without a second query.
+ */
+export async function releaseActive(
+  db: Database,
+  deviceIds: string[] | undefined,
+  options: ReleaseOptions,
+) {
+  const conditions = [eq(reservation.state, "active")];
+  if (deviceIds) {
+    if (deviceIds.length === 0) return [];
+    conditions.push(inArray(reservation.deviceId, deviceIds));
+  }
+
+  const released = await db
+    .update(reservation)
+    .set({
+      state: "released",
+      releasedAt: new Date(),
+      releasedBy: options.actorUserId,
+      reason: options.reason,
+    })
+    .where(and(...conditions))
+    .returning();
+
+  if (released.length === 0) return [];
+
+  const ids = released.map((row) => row.deviceId);
+  await db
+    .update(device)
+    .set({ status: "ready" })
+    .where(and(inArray(device.id, ids), eq(device.status, "busy")));
+
+  if (options.revoke !== false) {
+    // Revocation is a push, not a token-expiry side effect: live viewers must
+    // drop now, not up to SESSION_TOKEN_TTL seconds from now.
+    const rows = await db
+      .select({ id: device.id, providerId: device.providerId })
+      .from(device)
+      .where(inArray(device.id, ids));
+
+    for (const row of rows) {
+      providers.get(row.providerId)?.commandNoWait({
+        kind: "session.revoke",
+        deviceId: row.id,
+        reason: options.reason,
+      });
+    }
+  }
+
+  if (options.auditAction) {
+    for (const row of released) {
+      await audit(db, options.actorUserId, options.auditAction, "device", row.deviceId, {
+        reason: options.reason,
+        takenFrom: row.userId,
+      });
+    }
+  }
+
+  deviceEvents.publish();
+  return released;
+}
+
+/** How often the reaper looks. */
+const SWEEP_INTERVAL = 30_000;
+
+/**
+ * Expire reservations whose `expiresAt` has passed.
+ *
+ * The client renews while a session is open, so a lapsed reservation means the
+ * holder is gone — closed the tab, lost the network, went home. Without this a
+ * device stays `busy` forever and the farm bleeds capacity one abandoned tab at
+ * a time.
+ *
+ * The sweep is a single UPDATE with a `WHERE expires_at < now()`, so two
+ * coordinators running it would not double-release: the second finds no rows.
+ * That is worth keeping true even though only one coordinator is supported
+ * today.
+ */
+export function startReservationReaper(db: Database) {
+  const sweep = async () => {
+    try {
+      const lapsed = await db
+        .select({ deviceId: reservation.deviceId })
+        .from(reservation)
+        .where(and(eq(reservation.state, "active"), lt(reservation.expiresAt, new Date())));
+
+      if (lapsed.length === 0) return;
+
+      const released = await releaseActive(
+        db,
+        lapsed.map((row) => row.deviceId),
+        {
+          actorUserId: null,
+          reason: "reservation expired",
+          auditAction: "device.reservation_expired",
+        },
+      );
+
+      if (released.length) {
+        console.log(`[reaper] released ${released.length} lapsed reservation(s)`);
+      }
+    } catch (error) {
+      // A failed sweep must not kill the timer: the next one will find the
+      // same rows, and a coordinator that silently stopped reaping is exactly
+      // the failure this exists to prevent.
+      console.error("[reaper] sweep failed:", error);
+    }
+  };
+
+  const timer = setInterval(sweep, SWEEP_INTERVAL);
+  // Do not hold the process open for a timer that only tidies up.
+  timer.unref?.();
+  void sweep();
+
+  return () => clearInterval(timer);
+}

@@ -1,11 +1,24 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { ArrowLeft } from "lucide-react";
+import { useState } from "react";
 import { toast } from "sonner";
 import { DeviceConsole } from "@/components/device-console";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { useReservationRenewal } from "@/hooks/use-reservation-renewal";
 import { trpc } from "@/lib/trpc";
 import { relativeTime } from "@/lib/utils";
 
@@ -22,6 +35,14 @@ function DevicePage() {
   const qc = useQueryClient();
   const { data: device } = useQuery(trpc.device.get.queryOptions({ id: deviceId }));
   const { data: me } = useQuery(trpc.user.me.queryOptions());
+  const mine = device?.reservation?.userId === me?.id;
+
+  // Only the holder renews. Another user's tab must not keep a device they do
+  // not hold alive.
+  useReservationRenewal(
+    mine ? device?.reservation?.id : undefined,
+    mine ? device?.reservation?.expiresAt : undefined,
+  );
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: trpc.device.get.queryKey({ id: deviceId }) });
@@ -48,8 +69,17 @@ function DevicePage() {
     }),
   );
 
+  const forceRelease = useMutation(
+    trpc.admin.forceRelease.mutationOptions({
+      onSuccess: () => {
+        toast.success("Device taken back");
+        invalidate();
+      },
+      onError: (e) => toast.error(e.message),
+    }),
+  );
+
   if (!device) return null;
-  const mine = device.reservation?.userId === me?.id;
 
   return (
     <div className="flex flex-col gap-6">
@@ -70,7 +100,7 @@ function DevicePage() {
         </Badge>
         <div className="flex-1" />
         {device.reservation ? (
-          mine || me?.isAdmin ? (
+          mine ? (
             <Button
               variant="outline"
               disabled={release.isPending}
@@ -79,9 +109,21 @@ function DevicePage() {
               Release
             </Button>
           ) : (
-            <span className="text-muted-foreground text-sm">
-              Held by {device.reservation.ownerName}
-            </span>
+            <div className="flex items-center gap-3">
+              <span className="text-muted-foreground text-sm">
+                Held by {device.reservation.ownerName}
+              </span>
+              {/* Taking a device from someone mid-session is disruptive and
+                  auditable, so it asks for a reason rather than being a
+                  one-click action next to Release. */}
+              {me?.isAdmin && (
+                <ForceReleaseDialog
+                  owner={device.reservation.ownerName ?? "someone"}
+                  pending={forceRelease.isPending}
+                  onConfirm={(reason) => forceRelease.mutate({ deviceId, reason })}
+                />
+              )}
+            </div>
           )
         ) : (
           <Button disabled={reserve.isPending} onClick={() => reserve.mutate({ deviceId })}>
@@ -130,6 +172,69 @@ function DevicePage() {
         </Card>
       </div>
     </div>
+  );
+}
+
+/**
+ * Force-release, with the friction it deserves.
+ *
+ * The holder's session drops the moment this lands — `session.revoke` is a push
+ * — so the reason is what they will be told and what the audit log keeps.
+ */
+function ForceReleaseDialog({
+  owner,
+  pending,
+  onConfirm,
+}: {
+  owner: string;
+  pending: boolean;
+  onConfirm: (reason: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState("");
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="outline" size="sm">
+          Force release
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Take this device back?</DialogTitle>
+          <DialogDescription>
+            {owner} is using it right now. Their session ends immediately, and this is recorded in
+            the audit log.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-2">
+          <Label htmlFor="force-reason">Reason</Label>
+          <Input
+            id="force-reason"
+            value={reason}
+            placeholder="Needed for a release build"
+            onChange={(event) => setReason(event.target.value)}
+          />
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => setOpen(false)}>
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            disabled={pending}
+            onClick={() => {
+              onConfirm(reason.trim() || "force-released by admin");
+              setOpen(false);
+              setReason("");
+            }}
+          >
+            Take it back
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

@@ -225,9 +225,36 @@ short test:
   and `power_on=true` are now passed; scrcpy restores both on cleanup, so the
   device is left as it was found.
 
-**Not yet exercised on hardware:** APK install and uninstall, app launch, and
-the remote-debug proxy. They are the shell-command paths, which is the least
-surprising part of this backend, but "least surprising" is not "verified".
+**Since exercised on hardware** (`examples/device_ops.rs`), and it was worth it:
+app listing and launch work, a bad APK is refused with the device's own error
+and leaves nothing staged, and remote debugging now genuinely works — but the
+first implementation of it did not.
+
+`setprop service.adb.tcp.port 5555` plus an adbd restart is the recipe that
+circulates for adb-over-network. **It needs root, and without it fails
+silently**: the property does not stick, the daemon never listens, and the
+forward points at nothing. The device reported an empty port and the test
+passed anyway because nothing checked the end state. It now uses the `tcpip:`
+transport service — what `adb tcpip` itself uses, no root needed — and the
+probe asserts the forwarded port actually accepts a connection.
+
+Two more found in the same pass:
+
+- **Stopping remote debug left the phone listening on the network.** Removing
+  the host-side forward does nothing to `adbd`; the device stayed reachable by
+  anyone who could route to it, indefinitely. Stop now issues `usb:` as well,
+  and does it even when no forward was recorded — a provider restart forgets
+  the port while the device keeps listening.
+- **Waiting for the transport to reappear is a race.** `adbd` has not dropped
+  yet when the request returns, so a presence check passes against the
+  connection that is about to die. It now polls for the *end state* — the port
+  the device reports — which is also the only thing that proves the restart
+  landed. "Not listening" is spelled `0` on a Galaxy S25+, `-1` in the docs and
+  `""` on a fresh device, so that is normalised rather than string-matched.
+
+**Still not exercised:** a real APK install (the failure path is covered; the
+success path needs an APK, and installing onto a personal device was not
+something to do unasked).
 
 **Worth knowing for a real deployment:** a woken device shows its lock screen.
 A managed farm device should have its screen lock disabled, or every session
@@ -292,16 +319,34 @@ secure, and the UI says so plainly — that is the hook the fallback plugs into.
 
 ---
 
-## Phase 6 — Operations ⬜
+## Phase 6 — Operations 🚧
 
-| Item | State |
-|---|---|
-| Reservation reaper + client-side renewal | ⬜ |
-| Admin force-release UI (procedure exists, UI does not) | ⬜ |
-| Audit log UI | ⬜ |
-| MJPEG fallback path (`unsupported` hook exists in the renderer) | ⬜ |
-| Healthchecks, multi-arch CI images | ⬜ |
-| Docs finalised | ⬜ |
+| Item | State | Where |
+|---|---|---|
+| Reservation reaper + client-side renewal | ✅ | `coordinator/src/lib/reservations.ts`, `web/src/hooks/` |
+| Admin force-release UI | ✅ | `web/src/routes/_app/devices.$deviceId.tsx` |
+| Audit log UI | ✅ | `web/src/routes/_app/admin.audit.tsx` |
+| MJPEG fallback path (`unsupported` hook exists in the renderer) | ⬜ | — |
+| Healthchecks, multi-arch CI images | ⬜ | — |
+| Docs finalised | ⬜ | — |
+
+Releasing a reservation now lives in one place. There were four ways a device
+came free — the holder releases it, an admin takes it back, the reaper sweeps a
+lapsed one, a provider disconnects — and they had drifted. The one that
+mattered: **force-release never pushed `session.revoke`**, so a device an admin
+had "taken back" carried on streaming to the person it was taken from. It does
+now, which is also why the UI asks for a reason: the holder's session ends the
+moment it lands, and that reason is what they and the audit log get.
+
+The reaper sweeps every 30s; the browser renews every third of the reservation's
+lifetime, derived from the actual `expiresAt` rather than assuming the server's
+TTL so the two cannot drift. The popout deliberately does *not* renew — it
+shares the parent tab's reservation, and a popout left open should not keep a
+device nobody is watching.
+
+Also fixed: the app shell hardcoded "Device Farm" in its header, which
+[RENAMING.md](./RENAMING.md) exists to prevent. It reads `APP_NAME` through
+`user.capabilities` now, like the sign-in page always did.
 
 ---
 

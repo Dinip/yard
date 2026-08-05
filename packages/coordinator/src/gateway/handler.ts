@@ -1,4 +1,4 @@
-import { device, provider, providerToken, reservation } from "@farm/db";
+import { device, provider, providerToken } from "@farm/db";
 import {
   type CoordinatorMessage,
   type DeviceSnapshot,
@@ -12,6 +12,7 @@ import { env } from "../env.ts";
 import { audit } from "../lib/audit.ts";
 import { deviceEvents } from "../lib/events.ts";
 import { hashProviderToken } from "../lib/provider-token.ts";
+import { releaseActive } from "../lib/reservations.ts";
 import { ProviderConnection, providers } from "./registry.ts";
 
 export const HEARTBEAT_INTERVAL_MS = 15_000;
@@ -332,14 +333,13 @@ export class GatewaySession {
         .set({ status: "absent", updatedAt: new Date() })
         .where(eq(device.providerId, this.auth.providerId));
 
-      await db
-        .update(reservation)
-        .set({
-          state: "released",
-          releasedAt: new Date(),
-          reason: "provider disconnected",
-        })
-        .where(and(inArray(reservation.deviceId, ids), eq(reservation.state, "active")));
+      // No revoke: the provider is already gone, and it lost every session
+      // with the socket.
+      await releaseActive(db, ids, {
+        actorUserId: null,
+        reason: "provider disconnected",
+        revoke: false,
+      });
     }
 
     deviceEvents.publish();

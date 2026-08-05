@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useRouter } from "@tanstack/react-router";
-import { LogOut, Server, Shield, Smartphone } from "lucide-react";
+import { LogOut, ScrollText, Server, Shield, Smartphone } from "lucide-react";
 import type { ReactNode } from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -18,6 +18,9 @@ import { trpc } from "@/lib/trpc";
 export function AppShell({ children }: { children: ReactNode }) {
   const router = useRouter();
   const { data: me } = useQuery(trpc.user.me.queryOptions());
+  // The product name lives in APP_NAME and reaches the browser through
+  // `user.capabilities`; hardcoding it here would survive a rename.
+  const { data: caps } = useQuery(trpc.user.capabilities.queryOptions());
 
   return (
     <div className="flex min-h-svh flex-col">
@@ -25,7 +28,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <div className="mx-auto flex h-14 w-full max-w-[1600px] items-center gap-1 px-4">
           <Link to="/devices" className="mr-4 flex items-center gap-2 font-semibold">
             <Smartphone className="size-5" />
-            <span>{"Device Farm"}</span>
+            <span>{caps?.appName}</span>
           </Link>
 
           <NavLink to="/devices" icon={<Smartphone className="size-4" />}>
@@ -41,6 +44,9 @@ export function AppShell({ children }: { children: ReactNode }) {
               </NavLink>
               <NavLink to="/admin/users" icon={<Shield className="size-4" />}>
                 Users
+              </NavLink>
+              <NavLink to="/admin/audit" icon={<ScrollText className="size-4" />}>
+                Audit
               </NavLink>
             </>
           )}

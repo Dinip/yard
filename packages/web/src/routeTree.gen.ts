@@ -14,6 +14,7 @@ import { Route as AppRouteImport } from './routes/_app'
 import { Route as SessionRouteImport } from './routes/_session'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AppProvidersRouteImport } from './routes/_app/providers'
+import { Route as AppAdminAuditRouteImport } from './routes/_app/admin.audit'
 import { Route as AppAdminProvidersRouteImport } from './routes/_app/admin.providers'
 import { Route as AppAdminUsersRouteImport } from './routes/_app/admin.users'
 import { Route as AppDevicesIndexRouteImport } from './routes/_app/devices.index'
@@ -41,6 +42,11 @@ const LoginRoute = LoginRouteImport.update({
 const AppProvidersRoute = AppProvidersRouteImport.update({
   id: '/providers',
   path: '/providers',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppAdminAuditRoute = AppAdminAuditRouteImport.update({
+  id: '/admin/audit',
+  path: '/admin/audit',
   getParentRoute: () => AppRoute,
 } as any)
 const AppAdminProvidersRoute = AppAdminProvidersRouteImport.update({
@@ -74,6 +80,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/providers': typeof AppProvidersRoute
+  '/admin/audit': typeof AppAdminAuditRoute
   '/admin/providers': typeof AppAdminProvidersRoute
   '/admin/users': typeof AppAdminUsersRoute
   '/devices/$deviceId': typeof AppDevicesDeviceIdRoute
@@ -84,6 +91,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/providers': typeof AppProvidersRoute
+  '/admin/audit': typeof AppAdminAuditRoute
   '/admin/providers': typeof AppAdminProvidersRoute
   '/admin/users': typeof AppAdminUsersRoute
   '/devices/$deviceId': typeof AppDevicesDeviceIdRoute
@@ -97,6 +105,7 @@ export interface FileRoutesById {
   '/_session': typeof SessionRouteWithChildren
   '/login': typeof LoginRoute
   '/_app/providers': typeof AppProvidersRoute
+  '/_app/admin/audit': typeof AppAdminAuditRoute
   '/_app/admin/providers': typeof AppAdminProvidersRoute
   '/_app/admin/users': typeof AppAdminUsersRoute
   '/_app/devices/$deviceId': typeof AppDevicesDeviceIdRoute
@@ -109,6 +118,7 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/providers'
+    | '/admin/audit'
     | '/admin/providers'
     | '/admin/users'
     | '/devices/$deviceId'
@@ -119,6 +129,7 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/providers'
+    | '/admin/audit'
     | '/admin/providers'
     | '/admin/users'
     | '/devices/$deviceId'
@@ -131,6 +142,7 @@ export interface FileRouteTypes {
     | '/_session'
     | '/login'
     | '/_app/providers'
+    | '/_app/admin/audit'
     | '/_app/admin/providers'
     | '/_app/admin/users'
     | '/_app/devices/$deviceId'
@@ -182,6 +194,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppProvidersRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/admin/audit': {
+      id: '/_app/admin/audit'
+      path: '/admin/audit'
+      fullPath: '/admin/audit'
+      preLoaderRoute: typeof AppAdminAuditRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/admin/providers': {
       id: '/_app/admin/providers'
       path: '/admin/providers'
@@ -222,6 +241,7 @@ declare module '@tanstack/react-router' {
 
 interface AppRouteChildren {
   AppProvidersRoute: typeof AppProvidersRoute
+  AppAdminAuditRoute: typeof AppAdminAuditRoute
   AppAdminProvidersRoute: typeof AppAdminProvidersRoute
   AppAdminUsersRoute: typeof AppAdminUsersRoute
   AppDevicesDeviceIdRoute: typeof AppDevicesDeviceIdRoute
@@ -230,6 +250,7 @@ interface AppRouteChildren {
 
 const AppRouteChildren: AppRouteChildren = {
   AppProvidersRoute: AppProvidersRoute,
+  AppAdminAuditRoute: AppAdminAuditRoute,
   AppAdminProvidersRoute: AppAdminProvidersRoute,
   AppAdminUsersRoute: AppAdminUsersRoute,
   AppDevicesDeviceIdRoute: AppDevicesDeviceIdRoute,

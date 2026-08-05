@@ -29,6 +29,8 @@ function PopoutPage() {
   }, [device]);
 
   if (!device) return null;
+  // No renewal here: the popout shares the parent tab's reservation, and a
+  // popout left open should not keep a device that nobody is watching.
   const mine = device.reservation?.userId === me?.id;
 
   return (

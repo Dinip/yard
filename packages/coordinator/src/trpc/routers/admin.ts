@@ -1,8 +1,8 @@
-import { auditLog, device, reservation, user } from "@farm/db";
+import { auditLog, user } from "@farm/db";
 import { TRPCError } from "@trpc/server";
-import { and, count, desc, eq, ilike, or } from "drizzle-orm";
+import { count, desc, eq, ilike, or } from "drizzle-orm";
 import { z } from "zod";
-import { audit } from "../../lib/audit.ts";
+import { releaseActive } from "../../lib/reservations.ts";
 import { adminProcedure, router } from "../init.ts";
 
 export const adminRouter = router({
@@ -49,23 +49,12 @@ export const adminRouter = router({
   forceRelease: adminProcedure
     .input(z.object({ deviceId: z.string(), reason: z.string().optional() }))
     .mutation(async ({ ctx, input }) => {
-      const [released] = await ctx.db
-        .update(reservation)
-        .set({
-          state: "released",
-          releasedAt: new Date(),
-          releasedBy: ctx.user.id,
-          reason: input.reason ?? "force-released by admin",
-        })
-        .where(and(eq(reservation.deviceId, input.deviceId), eq(reservation.state, "active")))
-        .returning();
-      if (!released) throw new TRPCError({ code: "NOT_FOUND", message: "No active reservation" });
-
-      await ctx.db.update(device).set({ status: "ready" }).where(eq(device.id, input.deviceId));
-      await audit(ctx.db, ctx.user.id, "device.force_release", "device", input.deviceId, {
-        reason: input.reason,
-        takenFrom: released.userId,
+      const [released] = await releaseActive(ctx.db, [input.deviceId], {
+        actorUserId: ctx.user.id,
+        reason: input.reason ?? "force-released by admin",
+        auditAction: "device.force_release",
       });
+      if (!released) throw new TRPCError({ code: "NOT_FOUND", message: "No active reservation" });
       return released;
     }),
 

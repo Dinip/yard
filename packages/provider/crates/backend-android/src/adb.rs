@@ -36,6 +36,9 @@ pub const DEFAULT_ADB_SERVER: &str = "127.0.0.1:5037";
 /// Sync-protocol chunks are capped by adb itself; a larger DATA is rejected.
 const SYNC_CHUNK: usize = 64 * 1024;
 
+/// Where `adbd` listens once `tcpip:` has been issued.
+const DEVICE_ADB_PORT_STR: &str = "5555";
+
 /// How long to wait for the server to answer a request.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -282,13 +285,74 @@ impl Adb {
         stream.status("reverse:killforward").await
     }
 
+    /// Make the device's own `adbd` listen on TCP.
+    ///
+    /// This is a *transport service*, not a shell command. `setprop
+    /// service.adb.tcp.port` plus an adbd restart is the recipe that circulates
+    /// for this, and it silently does nothing without root — the property does
+    /// not stick, the daemon never listens, and a forward to it connects to
+    /// nothing. `tcpip:` is what `adb tcpip` itself uses and it needs no root.
+    ///
+    /// The device drops and re-enumerates its transport when adbd restarts, so
+    /// callers must expect a brief window where the serial is unreachable.
+    pub async fn tcpip(&self, serial: &str, port: u16) -> Result<()> {
+        let mut stream = self.transport(serial).await?;
+        stream.request(&format!("tcpip:{port}")).await?;
+        // The daemon answers with a human-readable line before restarting.
+        let message = stream.read_to_end().await.unwrap_or_default();
+        debug!(
+            serial,
+            port,
+            message = message.trim(),
+            "adbd restarting in TCP mode"
+        );
+        Ok(())
+    }
+
+    /// Put `adbd` back on USB only, so the device stops listening on the
+    /// network. The counterpart to [`Adb::tcpip`], and what `adb usb` does.
+    pub async fn usb_only(&self, serial: &str) -> Result<()> {
+        let mut stream = self.transport(serial).await?;
+        stream.request("usb:").await?;
+        let message = stream.read_to_end().await.unwrap_or_default();
+        debug!(
+            serial,
+            message = message.trim(),
+            "adbd restarting in USB mode"
+        );
+        Ok(())
+    }
+
+    /// Wait for a device to be usable, up to `timeout`.
+    ///
+    /// Needed after anything that restarts `adbd`: the transport disappears and
+    /// re-enumerates a second or two later, and a request in that window is
+    /// refused outright rather than queued.
+    pub async fn wait_for_device(&self, serial: &str, timeout: Duration) -> Result<()> {
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            if let Ok(devices) = self.devices().await {
+                if devices
+                    .iter()
+                    .any(|device| device.serial == serial && device.is_usable())
+                {
+                    return Ok(());
+                }
+            }
+            if tokio::time::Instant::now() >= deadline {
+                bail!("{serial} did not come back within {timeout:?}");
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+    }
+
     /// Expose a device's adb transport on a TCP port of the provider host, for
     /// remote debugging from a developer's machine.
     pub async fn forward(&self, serial: &str, local_port: u16) -> Result<()> {
         let mut stream = AdbStream::connect(&self.server).await?;
         stream
             .request(&format!(
-                "host-serial:{serial}:forward:tcp:{local_port};tcp:5555"
+                "host-serial:{serial}:forward:tcp:{local_port};tcp:{DEVICE_ADB_PORT_STR}"
             ))
             .await?;
         stream.status("forward").await

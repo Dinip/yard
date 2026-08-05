@@ -5,8 +5,9 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { device, provider, reservation, user } from "@farm/db";
-import { eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { db } from "../src/db.ts";
+import { startReservationReaper } from "../src/lib/reservations.ts";
 import {
   caller as callerFor,
   closePoolOnExit,
@@ -121,5 +122,64 @@ describe("reservations", () => {
     await expect(
       callerFor(USERS[0]!).device.reserve({ deviceId: DEVICE_ID }),
     ).rejects.toMatchObject({ code: "PRECONDITION_FAILED" });
+  });
+});
+
+describe("the reaper", () => {
+  test("sweeps a lapsed reservation and frees the device", async () => {
+    await resetDevice();
+    const caller = callerFor(USERS[0]);
+    await caller.device.reserve({ deviceId: DEVICE_ID });
+
+    // Backdate it rather than waiting out a 15-minute TTL.
+    await db
+      .update(reservation)
+      .set({ expiresAt: new Date(Date.now() - 1000) })
+      .where(and(eq(reservation.deviceId, DEVICE_ID), eq(reservation.state, "active")));
+
+    const stop = startReservationReaper(db);
+    // The reaper sweeps once immediately on start.
+    await Bun.sleep(200);
+    stop();
+
+    const [row] = await db
+      .select()
+      .from(reservation)
+      .where(eq(reservation.deviceId, DEVICE_ID))
+      .orderBy(desc(reservation.startedAt))
+      .limit(1);
+    expect(row?.state).toBe("released");
+    expect(row?.reason).toBe("reservation expired");
+    // Nobody released it, so nobody is recorded as having done so.
+    expect(row?.releasedBy).toBeNull();
+
+    const [freed] = await db.select().from(device).where(eq(device.id, DEVICE_ID)).limit(1);
+    expect(freed?.status).toBe("ready");
+
+    // And the device can be taken by someone else, which is the point.
+    await expect(
+      callerFor(USERS[1]).device.reserve({ deviceId: DEVICE_ID }),
+    ).resolves.toBeDefined();
+  });
+
+  test("leaves a renewed reservation alone", async () => {
+    await resetDevice();
+    const caller = callerFor(USERS[0]);
+    const held = await caller.device.reserve({ deviceId: DEVICE_ID });
+
+    await db
+      .update(reservation)
+      .set({ expiresAt: new Date(Date.now() - 1000) })
+      .where(eq(reservation.id, held.id));
+
+    // What the browser does every third of the lifetime.
+    await caller.device.renew({ reservationId: held.id });
+
+    const stop = startReservationReaper(db);
+    await Bun.sleep(200);
+    stop();
+
+    const [row] = await db.select().from(reservation).where(eq(reservation.id, held.id)).limit(1);
+    expect(row?.state).toBe("active");
   });
 });

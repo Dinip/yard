@@ -1,11 +1,12 @@
 import { device, provider, reservation, user } from "@farm/db";
 import { TRPCError } from "@trpc/server";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { env } from "../../env.ts";
 import { providers } from "../../gateway/registry.ts";
 import { audit } from "../../lib/audit.ts";
 import { deviceEvents } from "../../lib/events.ts";
+import { releaseActive } from "../../lib/reservations.ts";
 import { signSessionToken } from "../../lib/session-token.ts";
 import { protectedProcedure, router } from "../init.ts";
 
@@ -222,43 +223,28 @@ export const deviceRouter = router({
   release: protectedProcedure
     .input(z.object({ deviceId: z.string() }))
     .mutation(async ({ ctx, input }) => {
-      const isAdmin = ctx.user.role === "admin";
+      // An admin may release anyone's device; everyone else only their own.
+      // The ownership check is here rather than in `releaseActive`, which has
+      // no notion of who is asking.
       const conditions = [
         eq(reservation.deviceId, input.deviceId),
         eq(reservation.state, "active"),
       ];
-      if (!isAdmin) conditions.push(eq(reservation.userId, ctx.user.id));
+      if (ctx.user.role !== "admin") conditions.push(eq(reservation.userId, ctx.user.id));
 
-      const [released] = await ctx.db
-        .update(reservation)
-        .set({ state: "released", releasedAt: new Date(), releasedBy: ctx.user.id })
+      const [held] = await ctx.db
+        .select({ id: reservation.id })
+        .from(reservation)
         .where(and(...conditions))
-        .returning();
-      if (!released) throw new TRPCError({ code: "NOT_FOUND" });
-
-      await ctx.db
-        .update(device)
-        .set({ status: "ready" })
-        .where(and(eq(device.id, input.deviceId), inArray(device.status, ["busy"])));
-
-      // Revocation is a push, not a token-expiry side effect: live viewers must
-      // drop now, not up to SESSION_TOKEN_TTL seconds from now. A disconnected
-      // provider needs no revoke — it has already lost every session.
-      const [row] = await ctx.db
-        .select({ providerId: device.providerId })
-        .from(device)
-        .where(eq(device.id, input.deviceId))
         .limit(1);
-      if (row) {
-        providers.get(row.providerId)?.commandNoWait({
-          kind: "session.revoke",
-          deviceId: input.deviceId,
-          reason: "reservation released",
-        });
-      }
+      if (!held) throw new TRPCError({ code: "NOT_FOUND" });
 
-      await audit(ctx.db, ctx.user.id, "device.release", "device", input.deviceId);
-      deviceEvents.publish();
+      const [released] = await releaseActive(ctx.db, [input.deviceId], {
+        actorUserId: ctx.user.id,
+        reason: "reservation released",
+        auditAction: "device.release",
+      });
+      if (!released) throw new TRPCError({ code: "NOT_FOUND" });
       return released;
     }),
 

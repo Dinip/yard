@@ -1,6 +1,8 @@
 import { app } from "./app.ts";
+import { db } from "./db.ts";
 import { env } from "./env.ts";
 import { gatewayWebSocket } from "./gateway/route.ts";
+import { startReservationReaper } from "./lib/reservations.ts";
 
 const server = Bun.serve({
   port: env.PORT,
@@ -13,11 +15,14 @@ const server = Bun.serve({
   idleTimeout: 120,
 });
 
+const stopReaper = startReservationReaper(db);
+
 console.log(`[coordinator] ${env.APP_NAME} listening on :${server.port} (${env.NODE_ENV})`);
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.on(signal, async () => {
     console.log(`[coordinator] ${signal} — shutting down`);
+    stopReaper();
     await server.stop();
     process.exit(0);
   });
