@@ -114,20 +114,51 @@ automatically when the coordinator returned.
 
 ---
 
-## Phase 3b — iOS backend ⬜ *(needs hardware)*
-
-| Item | State |
-|---|---|
-| Port `device/mod.rs`, `device/media.rs`, `device/hid.rs`, `control.rs` | ⬜ |
-| Implement `DeviceBackend` over them | ⬜ |
-| Delete `bus.rs`, `wire.rs`, `group.rs`, `provider.rs`, `provider.sh` | ⬜ |
-| Drop the `zeromq` / `prost` / `protox` dependencies | ⬜ |
+## Phase 3b — iOS backend ✅
 
 *Done when: an iPhone appears, reserves, streams and takes touch input
-end-to-end.*
+end-to-end.* — **met**
 
-> `device/media.rs` carries hard-won RTP/keyframe-recovery behaviour. Port it
-> verbatim; every comment in it marks a field failure.
+| Item | State | Where |
+|---|---|---|
+| `device/mod.rs` → tunnel + session supervision | ✅ | `backend-ios/src/device.rs` |
+| `device/media.rs` → RTP in, RTCP out, access units | ✅ | `backend-ios/src/media.rs` |
+| `device/hevc.rs` → depacketisation, hvcC, codec string | ✅ | `backend-ios/src/hevc.rs` |
+| `device/hid.rs` → touch, keyboard, buttons, rotation | ✅ | `backend-ios/src/hid.rs` |
+| `control.rs` → the pointer state machine + service ops | ✅ | `backend-ios/src/lib.rs` |
+| `DeviceBackend` implemented over them | ✅ | `backend-ios/src/lib.rs` |
+| Frame geometry from the SPS | ✅ | `hevc.rs::dimensions_from_sps` |
+
+`media.rs` is carried over verbatim — every constant and branch in it marks a
+field failure, and the comments say which. The only structural change is that
+the fan-out now belongs to `provider-core::video`, which had already
+generalised this file's `MediaHandle` so Android can share it.
+
+**Verified end-to-end on an iPhone 13, iOS 27.0:** the tunnel comes up, HID
+surfaces connect, audio and video streams start under one `clientSessionID`,
+and the SPS parses to `hev1.1.6.L150.B0`. In the browser the device reserves and
+**paints a live frame** — the first real frame the project has rendered — and a
+mouse drag on the canvas scrolls the app on the physical phone. That is the
+whole path: device → RSD tunnel → RTP → depacketiser → hvcC → provider fan-out →
+WebSocket → `VideoDecoder` → canvas, and back the other way for input.
+
+**One thing the reference implementation did not have to handle:** `mobilegestalt`
+answers `MobileGestaltDeprecated` on iOS 26/27 and returns no screen dimensions
+at all, so the display geometry it used is simply unavailable. Geometry now
+comes from the stream's own SPS, which is better anyway — it reports what is
+actually encoded, which is what a viewer sees. The lockdown path stays as a
+fallback for older devices, since it is the only one that knows the scale.
+
+**Deliberately not ported:** STF's app-shortcut buttons (`settings`, `store`,
+`camera` → `appActivate`) and `open_url`, which existed for STF's toolbar and
+have no equivalent in this protocol; `swipe`/`tap` helpers, since the session
+plane always streams down/move/up. `zeromq`, `prost` and `protox` never entered
+this workspace at all — they were STF's transport, and the control plane
+replaced them in phase 2.
+
+**Known gaps:** battery level and state are not reported (they need a
+diagnostics round-trip per poll and nothing consumes them yet), and `sdk` is
+null because iOS has no API-level equivalent worth inventing.
 
 ---
 
@@ -147,7 +178,7 @@ end-to-end.*
 
 ---
 
-## Phase 5 — Web control surface 🚧
+## Phase 5 — Web control surface ✅
 
 The browser half of the session plane. Everything here talks to the provider's
 own origin; nothing new touches the coordinator except `device.sessionToken`.
@@ -162,7 +193,7 @@ own origin; nothing new touches the coordinator except `device.sessionToken`.
 | `/devices/:id/popout` chrome-free window | ✅ | `web/src/routes/_session/` |
 | Renderer state-machine tests (stub `VideoDecoder`) | ✅ | `packages/web/test/renderer.test.ts` |
 | Provider CORS for the artifact plane, origins via `hello.ack` | ✅ | `provider-core/src/origins.rs` |
-| **Paint a real frame** (needs hardware) | ⬜ | — |
+| Paint a real frame | ✅ | verified on an iPhone 13, iOS 27 — see phase 3b |
 
 **Verified in a browser** against the coordinator and the Rust provider with
 mock devices: reserve opens a session and the codec handshake sizes the canvas
@@ -191,12 +222,12 @@ parameter sets come from the `{type:"codec"}` handshake, so `hev1.*`+hvcC and
 iOS motion-collapse compensation is kept but defaults on for HEVC only — it is
 an iOS encoder behaviour and its per-frame readback is waste elsewhere.
 
-**Not verifiable without hardware:** the mock backend's video is deliberately
-undecodable filler, so nothing here has yet painted a real frame — the browser
-correctly reports the stream as undecodable and shows the fallback message,
-which is itself the right behaviour to have seen. The decode state machine —
+**On the mock backend** the video is deliberately undecodable filler, so the
+browser reports the stream as undecodable and shows the fallback message —
+which is the right behaviour to have seen. The decode state machine itself —
 keyframe gating, the type-2 rebuild, error resync — is covered by unit tests
-against a stub `VideoDecoder` instead. First real paint lands with phase 3b or 4.
+against a stub `VideoDecoder`. Real HEVC from an iPhone paints correctly; see
+phase 3b.
 
 **Deferred to phase 6:** the MJPEG fallback. The renderer already reports
 `unsupported` when `VideoDecoder.isConfigSupported` fails or the origin is not

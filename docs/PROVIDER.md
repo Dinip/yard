@@ -144,6 +144,36 @@ polls each device every 15s, pushing an update only when something actually
 changed. `busy` is the coordinator's word, not the provider's — a reserved
 device stays reserved across a poll.
 
+## `backend-ios`
+
+```
+crates/backend-ios/src/
+├── device.rs   tunnel + session supervision (one rebuild loop)
+├── media.rs    RTP in, RTCP out, access units — carried over verbatim
+├── hevc.rs     RFC 7798 depacketisation, hvcC, codec string, frame size
+├── hid.rs      touch, keyboard, hardware buttons, rotation
+└── lib.rs      the pointer state machine and the DeviceBackend impl
+```
+
+iOS 17.4+ only: below that the root-free `CoreDeviceProxy` tunnel does not
+exist, and bring-up fails loudly rather than half-working.
+
+One supervisor task rebuilds tunnel, media and HID **together**, because they
+are not independent — the HID surfaces authenticate against the live media
+stream, so a media restart invalidates them and a tunnel drop invalidates
+everything. That is also why `restart` just closes the adapter: there is no
+finer-grained restart to offer.
+
+`media.rs` is the file to leave alone. Receiver reports are not optional (the
+encoder stalls in ~20 s without them), audio is started and then ignored on
+purpose (iOS throttles a lone video client), corrupt access units are dropped
+whole, and keyframe requests are rate-limited because the iOS 26/27 encoder
+wedges under a PLI barrage. Every constant marks a field failure.
+
+Display geometry comes from the SPS. `mobilegestalt` — what `stf-ios-provider`
+read — answers `MobileGestaltDeprecated` on iOS 26/27, so it is a fallback for
+older devices only.
+
 ## Backend trait
 
 ```rust

@@ -11,6 +11,7 @@ license = "MIT"
 [workspace.dependencies]
 farm-protocol = { path = "packages/provider/crates/farm-protocol" }
 provider-core = { path = "packages/provider/crates/provider-core" }
+backend-ios = { path = "packages/provider/crates/backend-ios" }
 backend-mock = { path = "packages/provider/crates/backend-mock" }
 
 tokio = { version = "1.53", features = [
@@ -26,6 +27,14 @@ tokio = { version = "1.53", features = [
 tokio-util = { version = "0.7", features = ["rt", "io"] }
 futures = "0.3"
 async-trait = "0.1"
+
+# iOS device services: lockdown, CoreDevice, RSD. Pinned exactly — upstream
+# warns of breaking changes at every point release until 0.2.0
+# (../idevice/README.md), and the ported device layer is written against this
+# API surface.
+idevice = { version = "=0.1.65", features = ["full"] }
+# Lockdown and mobilegestalt answer in plists.
+plist = "1"
 
 # Session + artifact planes. `ws` for video/input, `multipart` for APK/IPA
 # uploads that must stream to disk rather than buffer in memory.
