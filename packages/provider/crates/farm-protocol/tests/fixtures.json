@@ -93,7 +93,9 @@
       "heartbeatIntervalMs": 15000,
       "jwksUrl": "https://farm.example.com/.well-known/farm-jwks.json",
       "issuer": "https://farm.example.com",
-      "webOrigins": ["https://farm.example.com"]
+      "webOrigins": [
+        "https://farm.example.com"
+      ]
     },
     "helloReject": {
       "type": "hello.reject",

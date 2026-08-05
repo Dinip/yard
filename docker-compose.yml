@@ -55,9 +55,13 @@ services:
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
+    # Wait for what it proxies to: Caddy starting first turns a slow migration
+    # into 502s that look like a broken deploy.
     depends_on:
-      - coordinator
-      - web
+      coordinator:
+        condition: service_healthy
+      web:
+        condition: service_healthy
     environment:
       # Set to the public hostname for automatic HTTPS, or leave as :80 for local.
       SITE_ADDRESS: ${SITE_ADDRESS:-:80}
@@ -68,6 +72,11 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1/index.html"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
   # Needs host device access, so it is opt-in:
   #   docker compose --profile provider up

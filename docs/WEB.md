@@ -136,10 +136,15 @@ releases, so closing it cannot take the device away from the page that owns it.
 The provider fans video out per viewer with its own backlog shedding, so a
 second viewer needs no protocol support.
 
-## Not yet built (phase 6)
+### The fallback
 
-MJPEG fallback when `VideoDecoder.isConfigSupported` fails or the page is not a
-secure context. The renderer already reports that case as `unsupported` and the
-UI states it plainly; the fallback plugs in there. Capped at ~3 fps from the
-existing screenshot primitives, honestly degraded, and labelled as such. No
-transcode pipeline is introduced anywhere.
+When `VideoDecoder.isConfigSupported` fails or the page is not a secure context,
+the renderer reports `unsupported` and an `<img>` takes over, showing the
+provider's `multipart/x-mixed-replace` stream at ~3fps. It sits *above* the
+canvas rather than replacing it, so the input surface underneath keeps working —
+a degraded picture is still a usable device — and it is labelled, because a
+jerky picture otherwise reads as a slow farm.
+
+`?fallback=1` forces it. Every machine a developer owns can decode the real
+stream, so without that the path is unreachable and rots until the day someone
+needs it.

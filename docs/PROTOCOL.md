@@ -94,8 +94,9 @@ command dispatch.
 
 ### coordinator → provider (`CoordinatorMessage`)
 
-`hello.ack` (carries the heartbeat interval, the JWKS URL, and `webOrigins` —
-the browser origins the provider may serve; see below), `hello.reject`,
+`hello.ack` (carries the heartbeat interval, the JWKS URL, the token `issuer`,
+and `webOrigins` — the browser origins the provider may serve; see below),
+`hello.reject`,
 `ping`, and `command` — whose `payload` is one of:
 
 `session.authorize` · `session.revoke` · `device.reboot` · `device.rotate` ·
@@ -136,7 +137,16 @@ reservation, and returns the `wss://…/s/<deviceId>` URL alongside. The short
 `exp` is a **backstop**: revocation is a `session.revoke` push, which is instant
 and does not wait for a token to age out.
 
-## Session plane — browser ↔ provider (schemas ready, provider is phase 3)
+### The issuer is told, not inferred
+
+`iss` is the coordinator's **public** URL — the origin browsers use — and it
+arrives in `hello.ack`. A provider cannot derive it from the address it dialled:
+those match only on a laptop, and in any real deployment the provider reaches
+the coordinator over an internal address while tokens are signed with the public
+one. Inferring it meant every session was refused with `InvalidIssuer`, visible
+to the browser as nothing but an abnormal socket close.
+
+## Session plane — browser ↔ provider ✅ built
 
 `wss://<publicBaseUrl>/s/<deviceId>?token=<jwt>`
 
@@ -156,7 +166,12 @@ regression `stf-ios-provider/src/control.rs` documents at length.
 ## Artifact plane — browser → provider ✅ built
 
 Same port, same token. `POST /s/:deviceId/install`,
-`GET /s/:deviceId/screenshot.png`, `GET /s/:deviceId/mjpeg` (phase 6).
+`GET /s/:deviceId/screenshot.png`, `GET /s/:deviceId/mjpeg`.
+
+`/mjpeg` is the degraded fallback for browsers that cannot decode the real
+stream: `multipart/x-mixed-replace` at ~3fps. Its parts are **PNG** despite the
+path — both backends capture PNG, and converting would mean a transcode in the
+provider, which happens nowhere in this system.
 
 ### CORS is structural here, not incidental
 

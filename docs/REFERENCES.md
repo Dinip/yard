@@ -23,7 +23,7 @@ ScreenCapture, Pasteboard, Diagnostics reboot.
 
 It exists only to impersonate an STF device unit — `bus.rs` speaks STF's ZMQ
 PUSH/SUB and `wire.rs`/`provider.rs`/`group.rs` reimplement STF's protobuf
-contract and reservation semantics. **Those four files are exactly what phase 3
+contract and reservation semantics. **Those four files are exactly what the iOS
 throws away.** Everything below them is kept.
 
 | Read this | For |

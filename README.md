@@ -14,13 +14,18 @@ directly. The coordinator is never on the data path.
 
 ## Status
 
-Phases 1, 2 and 3a complete: auth, data model, app plane, the wire protocol, the
-provider control plane, and the Rust provider's technology-independent half.
+All six phases are complete and verified against real hardware: an iPhone 13 on
+iOS 27 and a Galaxy S22 on Android 16 both reserve, stream to a browser, and
+take touch and keyboard input — through the containerised stack, with the
+coordinator nowhere near the video.
 
-The whole system runs today with **no hardware** — the Rust provider ships a
-mock backend that registers, reserves, streams synthetic video, and accepts
-input and uploads.
-**[docs/PROGRESS.md](docs/PROGRESS.md) is the live status board** — read it first.
+It also runs with **no hardware at all**: the Rust provider ships a mock backend
+that registers, reserves, streams synthetic video and accepts input and uploads,
+and `packages/protocol/test/fake-provider.ts` does the same one layer up.
+
+**[docs/PROGRESS.md](docs/PROGRESS.md) is the live status board** — read it
+first. It records what each phase cost, including the bugs that only appeared
+once the thing was run the way it deploys.
 
 ## Quick start
 
@@ -42,8 +47,8 @@ packages/
 ├── db/             drizzle schema, migrations, client
 ├── coordinator/    Hono + tRPC + better-auth + provider gateway
 ├── web/            TanStack Router SPA + shadcn
-├── protocol/       zod schemas + Rust codegen        (phase 2)
-└── provider/       cargo workspace: iOS + Android    (phase 3–4)
+├── protocol/       zod schemas + Rust codegen
+└── provider/       cargo workspace: iOS + Android
 ```
 
 ## Documentation

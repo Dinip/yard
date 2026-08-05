@@ -319,7 +319,7 @@ secure, and the UI says so plainly — that is the hook the fallback plugs into.
 
 ---
 
-## Phase 6 — Operations 🚧
+## Phase 6 — Operations ✅
 
 | Item | State | Where |
 |---|---|---|
@@ -327,8 +327,9 @@ secure, and the UI says so plainly — that is the hook the fallback plugs into.
 | Admin force-release UI | ✅ | `web/src/routes/_app/devices.$deviceId.tsx` |
 | Audit log UI | ✅ | `web/src/routes/_app/admin.audit.tsx` |
 | Degraded fallback stream | ✅ | `provider-core/src/server.rs`, `web/src/components/device-screen.tsx` |
-| Healthchecks, multi-arch CI images | ⬜ | — |
-| Docs finalised | ⬜ | — |
+| Healthchecks on every service | ✅ | `docker-compose.yml`, `packages/*/Dockerfile` |
+| CI: lint, typecheck, tests, drift guard, multi-arch images | ✅ | `.github/workflows/ci.yml` |
+| Docs finalised | ✅ | `docs/` |
 
 Releasing a reservation now lives in one place. There were four ways a device
 came free — the holder releases it, an admin takes it back, the reaper sweeps a

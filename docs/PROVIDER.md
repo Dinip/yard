@@ -13,8 +13,8 @@ while collapsing N containers, N ZMQ connections and N config files into one.
 | `farm-protocol` | ✅ generated wire types + framing helpers |
 | `provider-core` | ✅ config, control plane, session plane, supervision, JWT auth |
 | `backend-mock` | ✅ synthetic device — the whole provider runs with no hardware |
-| `backend-ios` | ⬜ phase 3b |
-| `backend-android` | ⬜ phase 4 |
+| `backend-ios` | ✅ CoreDevice over a root-free RSD tunnel, iOS 17.4+ |
+| `backend-android` | ✅ adb host protocol + scrcpy, no transcode |
 
 ```
 packages/provider/
@@ -253,53 +253,9 @@ rotation cannot desynchronise an in-flight event.
 The backend's pointer state machine needs them to tell a drag from a tap — the
 regression `stf-ios-provider/src/control.rs` documents at length.
 
-## `backend-ios` — phase 3b
-
-Ports, essentially unchanged, from `../../stf-ios-provider/src/`:
-
-| File | What it carries |
-|---|---|
-| `device/mod.rs` | `DeviceHost` supervisor, RSD/CoreDeviceProxy session, `DeviceInfo` |
-| `device/media.rs` | RTP/HEVC depacketization, RTCP receiver reports, PLI/FIR keyframe recovery, motion-IDR loop, stall watchdog |
-| `device/hid.rs` | HID report encoding, `to_hid` normalization, key tables |
-| `control.rs` | Every device operation, and the `Pointer` state machine |
-
-> **`device/media.rs` carries hard-won behaviour. Do not touch it.** Every line
-> in the keyframe-recovery and stall-watchdog paths exists because something
-> failed in the field.
-
-The work is to implement `DeviceBackend` by delegating to those, and to delete
-`bus.rs`, `wire.rs`, `group.rs`, `provider.rs` and `provider.sh` — all of which
-`provider-core` now replaces. `MediaHandle` becomes `video::VideoPublisher`.
-
-## `backend-android` — phase 4
-
-- **adb** — bundle `adb` from platform-tools, run a provider-local adb server,
-  and talk the adb host protocol (4-hex-length-prefixed commands) for
-  `host:track-devices` hotplug, `sync:` push, `shell:`, `localabstract:`.
-- **Video** — push a pinned `scrcpy-server` jar, launch via `app_process`, read
-  the codec-metadata header, split H.264 config packets into an `avcC`
-  description and frames into `AccessUnit`. **Zero transcode.**
-- **Input/clipboard** — scrcpy's control socket covers touch, keycodes, text,
-  `GET_CLIPBOARD`/`SET_CLIPBOARD`, back/home/power and rotation.
-- **Apps** — `pm install`/`list`/`uninstall`, `am start`.
-- **Screenshot** — `screencap -p` over `exec:`.
-- **Remote debug** — bind a per-device port proxying into
-  `host:transport:<serial>`, so a developer runs `adb connect <host>:<port>`.
-  Same trick as STF's `connect.js` + `remotedebug.js`, minus the RethinkDB
-  round-trip.
-
-### ⚠️ Risk
-
-The adb host-protocol client and the scrcpy handshake are the **two
-highest-uncertainty items in the project**, and the scrcpy framing is
-version-sensitive. Pin an exact `scrcpy-server`, vendor the jar, write the
-handshake against *that version's* `DeviceMessage`/`ControlMessage` layout, and
-validate against a real device before building any UI on top.
-
 ## Docker
 
-`debian:bookworm-slim` rather than `distroless/cc`, because phase 4 needs the
+`debian:bookworm-slim` rather than `distroless/cc`, because the Android backend needs the
 `adb` binary and the scrcpy jar. `ca-certificates` is **required**, not
 optional: the control plane and JWKS fetch both use the OS trust store, which is
 what lets an on-prem farm terminate TLS with a private CA.

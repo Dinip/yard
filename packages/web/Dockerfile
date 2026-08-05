@@ -24,3 +24,9 @@ FROM caddy:2-alpine AS runtime
 COPY --from=builder /app/packages/web/dist /srv
 COPY packages/web/Caddyfile /etc/caddy/Caddyfile
 EXPOSE 80
+
+# Health is "the bundle is being served", not "the process is up": a Caddy that
+# started with an empty /srv answers every request with a 404 and looks fine to
+# anything that only checks the port.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+  CMD ["wget", "--spider", "-q", "http://127.0.0.1/index.html"]
