@@ -21,7 +21,7 @@ use idevice::core_device::hid::{
     ButtonState, IndigoHidClient, UniversalHidServiceClient, TOUCHSCREEN_STATE_CONTACT,
     TOUCHSCREEN_STATE_RELEASE,
 };
-use idevice::core_device::{OrientationServiceClient, RotationDirection};
+use idevice::core_device::{Orientation, OrientationServiceClient, RotationDirection};
 use idevice::rsd::RsdHandshake;
 use idevice::tcp::handle::AdapterHandle;
 use idevice::ReadWrite;
@@ -142,6 +142,22 @@ pub fn ascii_to_hid(character: char) -> Option<(u64, bool)> {
     Some((usage, false))
 }
 
+/// CoreDevice orientation → degrees clockwise from portrait.
+///
+/// Apple's landscape names say where the device's *left edge* went, not how the
+/// picture turned: `landscapeLeft` is the phone rotated so its home edge is on
+/// the right, which reads as the UI having turned 90° clockwise.
+pub fn orientation_degrees(orientation: &Orientation) -> Option<i64> {
+    Some(match orientation {
+        Orientation::Portrait => 0,
+        Orientation::LandscapeLeft => 90,
+        Orientation::PortraitUpsideDown => 180,
+        Orientation::LandscapeRight => 270,
+        // Flat on a desk says nothing about how the UI is drawn.
+        Orientation::FaceUp | Orientation::FaceDown | Orientation::Unknown(_) => return None,
+    })
+}
+
 /// One HID action, applied in the order it was queued.
 pub enum Input {
     /// An in-contact touchscreen sample.
@@ -154,10 +170,15 @@ pub enum Input {
     KeyUsage(u64),
     /// Press and release a named hardware button.
     Button(&'static str, u64, u64, Duration),
-    /// Step the orientation 90° and report the resulting state.
+    /// Step the orientation 90° and report where the device landed, in degrees.
+    ///
+    /// Degrees rather than the service's own enum because this is the only
+    /// place that can see that enum: there is no orientation *query* in
+    /// CoreDevice, so a rotate's answer is the sole source of truth about which
+    /// way up an iPhone is.
     Rotate {
         direction: RotationDirection,
-        reply: oneshot::Sender<Option<String>>,
+        reply: oneshot::Sender<Option<i64>>,
     },
 }
 
@@ -294,7 +315,14 @@ impl HidClients {
                     .rotate(direction)
                     .await
                     .map_err(|err| anyhow!("rotate: {err:?}"))?;
-                let _ = reply.send(Some(format!("{:?}", state)));
+                // `non_flat_orientation`, not `orientation`: a phone lying on a
+                // desk answers `faceUp`, which says nothing about which way the
+                // UI is drawn — and that is the farm's normal resting state.
+                let degrees = orientation_degrees(&state.non_flat_orientation);
+                if degrees.is_none() {
+                    warn!(?state, "unrecognised orientation");
+                }
+                let _ = reply.send(degrees);
             }
         }
         Ok(())

@@ -361,6 +361,97 @@ forces it — an untestable fallback rots until the day it is needed.
 
 ---
 
+## Phase 7 — Rotation, end to end ✅
+
+The one real bug in the post-launch set: the device rotated and the picture did
+not. `ServerMessage::display` and `AuKind::KeyWithReset` were both designed for
+this case and **neither was ever emitted**, so the browser kept decoding
+new-geometry frames against a stale `avcC`/`hvcC`. It recovered only by
+accident — decoder-error resync, and the iOS crop detector.
+
+| Item | State | Where |
+|---|---|---|
+| Geometry watch channel alongside the codec one | ✅ | `provider-core/src/video.rs` |
+| `codec_watch()` — observe changes, not just the first | ✅ | `provider-core/src/video.rs` |
+| Session arms: re-announce codec + reset; push display | ✅ | `provider-core/src/server.rs` |
+| Android publishes geometry, with real rotation | ✅ | `backend-android/src/{lib,scrcpy}.rs` |
+| iOS publishes geometry from the SPS (rotation `None`) | ✅ | `backend-ios/src/media.rs` |
+| Mock publishes it on rotate — the whole path, no hardware | ✅ | `backend-mock/src/lib.rs` |
+| `ScreenRenderer.reconfigure` — swap config in place | ✅ | `web/src/lib/screen/renderer.ts` |
+| `case "codec"` reconfigures rather than rebuilding | ✅ | `web/src/hooks/use-device-session.ts` |
+
+**Two latent bugs fixed here, both invisible until rotation was reported:**
+
+- **`backend-android::rotate` took an absolute angle and walked it as relative
+  steps.** It worked only because `display.rotation` was always `None`, so the
+  UI always sent `90` → exactly one step. The moment rotation is reported,
+  rotating from 270 asks for `0` → zero steps → nothing happens. It now walks
+  `((target - current) / 90).rem_euclid(4)` against a `dumpsys window displays`
+  read, with a regression test. **iOS is deliberately left absolute** and
+  documented: it reports no rotation at all — the SPS gives dimensions, not
+  orientation — so the browser always asks for 90 and always means one step.
+- **A keyframe reset re-published unchanged geometry**, which would have made
+  every reset look like a rotation to a viewer. `set_geometry` and Android's
+  `Geometry` both use `send_if_modified`, so an unchanged value wakes nobody.
+
+Rotation costs a shell round-trip on Android, so announcing it lives in its own
+task rather than inside `pump_video` — the video loop must never block on the
+device to read the next packet.
+
+`reconfigure` exists rather than rebuilding the renderer because a rebuild drops
+the canvas and re-runs `isStreamSupported` for a codec that is by definition
+still supported: the picture would blank and the loader would flash back over a
+frame that is already painted.
+
+**Tests:** a mid-session `set_codec` produces a second `codec` message *and* an
+`AU_KEY_RESET` frame; `rotate(90)` on the mock swaps 1179×2556 → 2556×1179 on a
+live socket; the renderer holds deltas after `reconfigure` until the reset
+lands; the pointer mapping round-trips through every quarter turn.
+
+**Verified on a Galaxy S22**: the device rotates and the picture follows.
+
+### iOS rotates the UI, not the stream
+
+Android was the easy half. **iOS never changes its capture geometry at all**:
+CoreDevice hands over the native portrait buffer whatever the phone is doing and
+draws the rotated UI *inside* it, so the frames stay 9:16 with the content
+sideways. Measured, not assumed — a rotation produced no new SPS, and a brand
+new capture session started while the phone was already rotated published
+`1184×2576` again. No amount of geometry plumbing can fix that in the provider,
+and rotating pixels there would mean a transcode, which this project does
+nowhere.
+
+So the viewer does it, which is what `stf-ios-provider` did too — its
+integration notes set `screen.rotation = device.display.rotation` on the element.
+
+- **`Display.renderRotation`** is new on the wire: *how far the viewer must turn
+  the decoded picture*, which is a different question from `rotation`, the
+  device's own orientation. Android sets it to 0 because its encoder already did
+  the work; iOS sets it to the orientation. Inferring it by comparing the
+  reported rotation against the frame's aspect would be guessing at which
+  backend is on the other end.
+- **iOS reports orientation for the first time.** There is no orientation query
+  in CoreDevice — but the rotate *answers* with the state it landed in, and that
+  reply was being thrown away (`format!("{:?}")` of a struct, discarded by the
+  caller). `hid.rs` now maps the typed enum to degrees, and takes
+  `non_flat_orientation`: a phone lying on a desk answers `faceUp`, which is the
+  farm's normal resting state and says nothing about how the UI is drawn.
+- **So iOS's `rotate` becomes a delta too**, exactly like Android's. Until the
+  first rotation the orientation is genuinely unknown, and an unknown one is
+  walked as a single step rather than against a zero we invented.
+- **The renderer turns the picture** in `drawFrame` rather than via a CSS
+  transform, so the canvas stays the shape of what is on it and the box sizing
+  follows from one number. **The pointer travels back the other way**
+  (`lib/screen/rotation.ts`): the canvas is viewer space, the HID surface is
+  device space, and a wrong sign there lands taps on the mirror image of where
+  they were aimed.
+
+**Still to confirm on the iPhone**: which way `landscapeLeft` reads. The mapping
+follows Apple's convention — the names say where the device's left edge went,
+not how the picture turned — but only the device settles it.
+
+---
+
 ## Open decisions
 
 - **Name.** The project is "Device Farm" as a placeholder. See

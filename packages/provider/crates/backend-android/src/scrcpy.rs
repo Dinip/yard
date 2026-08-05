@@ -245,18 +245,38 @@ struct Packet {
 ///
 /// It is not fixed for the life of a session: a reset or a rotation re-sends
 /// it, and touch scaling has to follow.
-#[derive(Clone, Default)]
-pub struct Geometry(std::sync::Arc<std::sync::Mutex<(i64, i64)>>);
+///
+/// A watch channel rather than a mutex because two things now consume it —
+/// touch scaling, which only ever reads the latest value, and the task that
+/// announces a rotation to live viewers, which has to be woken by a change.
+#[derive(Clone)]
+pub struct Geometry(tokio::sync::watch::Sender<(i64, i64)>);
+
+impl Default for Geometry {
+    fn default() -> Self {
+        Self(tokio::sync::watch::Sender::new((0, 0)))
+    }
+}
 
 impl Geometry {
     pub fn set(&self, width: i64, height: i64) {
-        if let Ok(mut slot) = self.0.lock() {
-            *slot = (width, height);
-        }
+        self.0.send_if_modified(|slot| {
+            if *slot == (width, height) {
+                false
+            } else {
+                *slot = (width, height);
+                true
+            }
+        });
     }
 
     pub fn get(&self) -> (i64, i64) {
-        self.0.lock().map(|slot| *slot).unwrap_or((0, 0))
+        *self.0.borrow()
+    }
+
+    /// Wakes on every change, starting from the value at subscription.
+    pub fn watch(&self) -> tokio::sync::watch::Receiver<(i64, i64)> {
+        self.0.subscribe()
     }
 }
 

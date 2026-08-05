@@ -25,7 +25,7 @@ use provider_core::backend::{
     BackendError, DeviceBackend, DeviceInfo, InputEvent, ProgressSink, RemoteDebug,
     Result as BackendResult,
 };
-use provider_core::video::{channel, VideoHandle, VideoPublisher};
+use provider_core::video::{channel, VideoGeometry, VideoHandle, VideoPublisher};
 use tokio::net::TcpStream;
 use tokio::sync::{watch, Mutex};
 use tracing::{debug, info, warn};
@@ -333,6 +333,10 @@ impl DeviceBackend for AndroidBackend {
         let props = parse_getprop(&self.shell("getprop").await?);
         let get = |key: &str| props.get(key).cloned().filter(|value| !value.is_empty());
 
+        // Reported, not assumed: `rotate` walks a delta against it, so a device
+        // that is already at 270 must not look like it is at 0.
+        let rotation = current_rotation(&self.adb, &self.options.serial).await;
+
         // The stream's geometry when there is a session, the panel's otherwise:
         // a device that is not streaming yet still has a screen worth
         // reporting, and the two differ whenever `max_size` scaled the stream.
@@ -343,7 +347,8 @@ impl DeviceBackend for AndroidBackend {
                     width,
                     height,
                     scale: None,
-                    rotation: None,
+                    rotation,
+                    render_rotation: Some(0),
                 })
             }
             None => {
@@ -359,7 +364,8 @@ impl DeviceBackend for AndroidBackend {
                     width,
                     height,
                     scale,
-                    rotation: None,
+                    rotation,
+                    render_rotation: Some(0),
                 })
             }
         };
@@ -535,8 +541,16 @@ impl DeviceBackend for AndroidBackend {
     }
 
     /// scrcpy rotates 90° at a time, so an absolute angle is walked to.
+    ///
+    /// The walk is a *delta* against where the device actually is. Treating the
+    /// target as the step count works only while rotation is never reported —
+    /// the moment it is, rotating from 270 asks for 0 and would take no steps
+    /// at all.
     async fn rotate(&self, degrees: i64) -> BackendResult<()> {
-        let steps = degrees.div_euclid(90).rem_euclid(4);
+        let current = current_rotation(&self.adb, &self.options.serial)
+            .await
+            .unwrap_or(0);
+        let steps = rotation_steps(current, degrees);
         for _ in 0..steps {
             self.send_control(scrcpy::rotate_device()).await?;
             tokio::time::sleep(Duration::from_millis(300)).await;
@@ -706,13 +720,53 @@ async fn run_once(supervisor: &Supervisor) -> Result<()> {
         })
     };
 
+    // Announcing geometry lives here rather than inside `pump_video` because
+    // the rotation it carries costs a shell round-trip, and the video loop must
+    // never block on the device to read the next packet.
+    let announce = {
+        let mut changes = geometry.watch();
+        let publisher = supervisor.publisher.clone();
+        let adb = supervisor.adb.clone();
+        let serial = serial.clone();
+        tokio::spawn(async move {
+            loop {
+                let (width, height) = *changes.borrow_and_update();
+                if width > 0 && height > 0 {
+                    let rotation = current_rotation(&adb, &serial).await;
+                    publisher.set_geometry(VideoGeometry {
+                        width,
+                        height,
+                        rotation,
+                        // scrcpy re-encodes at the rotated dimensions, so what
+                        // arrives is already the right way up.
+                        render_rotation: Some(0),
+                    });
+                }
+                if changes.changed().await.is_err() {
+                    return;
+                }
+            }
+        })
+    };
+
     let outcome = tokio::select! {
         result = scrcpy::pump_video(video, supervisor.publisher.clone(), geometry) => result,
         _ = supervisor.restart.notified() => Err(anyhow!("restart requested")),
     };
 
     keyframes.abort();
+    announce.abort();
     outcome
+}
+
+/// The display's current rotation, in degrees.
+///
+/// One `dumpsys` call. `None` when the device does not answer — a missing
+/// rotation is reported as unknown rather than guessed as zero, because
+/// [`AndroidBackend::rotate`] walks a delta against it.
+async fn current_rotation(adb: &Adb, serial: &str) -> Option<i64> {
+    let output = adb.shell(serial, "dumpsys window displays").await.ok()?;
+    parse_rotation(&output)
 }
 
 /// `wm size` prints `Physical size: WxH` and, when the user has overridden the
@@ -734,6 +788,41 @@ pub fn parse_wm_size(output: &str) -> Option<(i64, i64)> {
         }
     }
     physical
+}
+
+/// How many 90° steps to walk from `current` to `target`.
+pub fn rotation_steps(current: i64, target: i64) -> i64 {
+    ((target - current).div_euclid(90)).rem_euclid(4)
+}
+
+/// Rotation out of `dumpsys window displays`, in degrees.
+///
+/// Two spellings in the wild and both appear on devices this farm will see:
+/// `mCurrentRotation=ROTATION_90` on Android 12+, and a bare quarter-turn count
+/// (`mRotation=1`) before it. A quarter-turn count is multiplied out; anything
+/// already in degrees is taken as-is.
+pub fn parse_rotation(output: &str) -> Option<i64> {
+    for key in ["mCurrentRotation=", "mRotation=", "rotation="] {
+        for line in output.lines() {
+            let Some(rest) = line.split(key).nth(1) else {
+                continue;
+            };
+            let token: String = rest
+                .chars()
+                .take_while(|c| !c.is_whitespace() && *c != ',')
+                .collect();
+            let value: i64 = token
+                .strip_prefix("ROTATION_")
+                .unwrap_or(&token)
+                .parse()
+                .ok()?;
+            return Some(match value {
+                0..=3 => value * 90,
+                degrees => degrees.rem_euclid(360),
+            });
+        }
+    }
+    None
 }
 
 pub fn parse_density(output: &str) -> Option<i64> {
@@ -862,6 +951,30 @@ mod tests {
         // multiplies. Reporting 87 here renders as "8700%".
         assert_eq!(parse_battery_level(dump), Some(0.87));
         assert_eq!(parse_battery_state(dump).as_deref(), Some("charging"));
+    }
+
+    #[test]
+    fn rotation_is_read_in_either_spelling() {
+        // Android 12+.
+        assert_eq!(
+            parse_rotation("  Display: mDisplayId=0\n  mCurrentRotation=ROTATION_90\n"),
+            Some(90)
+        );
+        assert_eq!(parse_rotation("mCurrentRotation=ROTATION_0"), Some(0));
+        // Older: a quarter-turn count, not degrees.
+        assert_eq!(parse_rotation("  mRotation=3 mLastRotation=0"), Some(270));
+        assert_eq!(parse_rotation("nothing here"), None);
+    }
+
+    #[test]
+    fn rotating_walks_the_delta_not_the_target() {
+        // The bug this replaces: `rotate(0)` from 270 took zero steps, so a
+        // device already turned could never be turned back.
+        assert_eq!(rotation_steps(270, 0), 1);
+        assert_eq!(rotation_steps(0, 90), 1);
+        assert_eq!(rotation_steps(90, 90), 0);
+        assert_eq!(rotation_steps(0, 270), 3);
+        assert_eq!(rotation_steps(180, 90), 3);
     }
 
     #[test]

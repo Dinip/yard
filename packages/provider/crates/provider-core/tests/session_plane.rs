@@ -117,6 +117,9 @@ struct Harness {
     signer: Signer,
     issuer: String,
     scratch: std::path::PathBuf,
+    /// The backend behind `DEVICE_ID`, so a test can rotate it or change its
+    /// codec the way a real device does mid-session.
+    device: Arc<backend_mock::MockBackend>,
 }
 
 async fn start() -> Harness {
@@ -168,10 +171,8 @@ scratch_dir: {}
 
     let sessions = SessionRegistry::new();
     let mut supervisor = Supervisor::new(sessions.clone());
-    supervisor.add(
-        DEVICE_ID.into(),
-        backend_mock::MockBackend::new(DEVICE_ID, Platform::Ios, "Mock iPhone"),
-    );
+    let device = backend_mock::MockBackend::new(DEVICE_ID, Platform::Ios, "Mock iPhone");
+    supervisor.add(DEVICE_ID.into(), device.clone());
     supervisor.add(
         OTHER_DEVICE.into(),
         backend_mock::MockBackend::new(OTHER_DEVICE, Platform::Android, "Mock Pixel"),
@@ -205,6 +206,7 @@ scratch_dir: {}
         signer,
         issuer,
         scratch,
+        device,
     }
 }
 
@@ -516,6 +518,128 @@ async fn the_session_socket_hands_over_a_codec_then_streams_frames() {
     // The first thing a viewer receives must be decodable on its own.
     assert!(keys >= 1, "no keyframe arrived");
     assert!(deltas >= 1, "no delta frames arrived");
+}
+
+/// Rotation, on the wire.
+///
+/// A rotated device re-encodes at new dimensions, which means new parameter
+/// sets. A viewer told nothing keeps decoding new-shape frames against the old
+/// `hvcC`/`avcC` — no error fires, the picture is simply wrong. So the session
+/// has to re-announce the codec and promote the next key frame to
+/// `AU_KEY_RESET`, which is the browser's cue to rebuild its decoder.
+#[tokio::test]
+async fn a_mid_session_codec_change_re_announces_and_resets_the_decoder() {
+    use futures::StreamExt as _;
+    use provider_core::video::CodecDescription;
+    use tokio_tungstenite::tungstenite::Message;
+
+    let h = start().await;
+    h.authorize().await;
+
+    let url = format!(
+        "{}/s/{DEVICE_ID}?token={}",
+        h.base.replace("http://", "ws://"),
+        h.token()
+    );
+    let (mut socket, _) = tokio_tungstenite::connect_async(url).await.unwrap();
+
+    let first = socket.next().await.unwrap().unwrap();
+    let Message::Text(text) = first else {
+        panic!("expected the codec handshake first, got {first:?}");
+    };
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&text).unwrap()["type"],
+        "codec"
+    );
+
+    h.device.publisher().set_codec(CodecDescription {
+        codec: "hev1.1.6.L93.B0".into(),
+        description: vec![0x01, 0x02, 0x03, 0x04],
+    });
+
+    let expected =
+        base64::engine::general_purpose::STANDARD.encode([0x01u8, 0x02, 0x03, 0x04].as_slice());
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    let mut re_announced = false;
+    let mut reset_frame = false;
+    while tokio::time::Instant::now() < deadline && !(re_announced && reset_frame) {
+        let Ok(Some(Ok(frame))) = tokio::time::timeout(Duration::from_secs(5), socket.next()).await
+        else {
+            break;
+        };
+        match frame {
+            Message::Text(text) => {
+                let msg: serde_json::Value = serde_json::from_str(&text).unwrap();
+                if msg["type"] == "codec" && msg["description"] == expected {
+                    re_announced = true;
+                }
+            }
+            // Only meaningful after the re-announcement: the reset belongs to
+            // the new parameter sets, not to the connection's first keyframe.
+            Message::Binary(bytes)
+                if re_announced && bytes[0] == farm_protocol::AU_KEY_RESET =>
+            {
+                reset_frame = true;
+            }
+            _ => {}
+        }
+    }
+
+    assert!(re_announced, "the new codec was never announced");
+    assert!(
+        reset_frame,
+        "no AU_KEY_RESET followed the codec change — the browser would decode \
+         new-geometry frames against a stale description"
+    );
+}
+
+/// The other half of rotation: new geometry with the same codec still has to
+/// reach a live viewer, or the canvas keeps the old aspect ratio.
+#[tokio::test]
+async fn rotating_pushes_the_new_geometry_to_a_live_viewer() {
+    use futures::StreamExt as _;
+    use provider_core::backend::DeviceBackend as _;
+    use tokio_tungstenite::tungstenite::Message;
+
+    let h = start().await;
+    h.authorize().await;
+
+    let url = format!(
+        "{}/s/{DEVICE_ID}?token={}",
+        h.base.replace("http://", "ws://"),
+        h.token()
+    );
+    let (mut socket, _) = tokio_tungstenite::connect_async(url).await.unwrap();
+
+    let first = socket.next().await.unwrap().unwrap();
+    let Message::Text(text) = first else {
+        panic!("expected the codec handshake first, got {first:?}");
+    };
+    let handshake: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(handshake["display"]["width"], 1179);
+
+    h.device.rotate(90).await.unwrap();
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    let mut rotated = None;
+    while tokio::time::Instant::now() < deadline && rotated.is_none() {
+        let Ok(Some(Ok(frame))) = tokio::time::timeout(Duration::from_secs(5), socket.next()).await
+        else {
+            break;
+        };
+        if let Message::Text(text) = frame {
+            let msg: serde_json::Value = serde_json::from_str(&text).unwrap();
+            if msg["type"] == "display" {
+                rotated = Some(msg);
+            }
+        }
+    }
+
+    let rotated = rotated.expect("no display message followed the rotation");
+    // Landscape now: the dimensions swap, which is what re-shapes the canvas.
+    assert_eq!(rotated["display"]["width"], 2556);
+    assert_eq!(rotated["display"]["height"], 1179);
+    assert_eq!(rotated["display"]["rotation"], 90);
 }
 
 #[tokio::test]

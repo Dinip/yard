@@ -24,6 +24,7 @@ pub mod hid;
 pub mod media;
 
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -41,7 +42,7 @@ use idevice::{IdeviceService as _, ReadWrite};
 use provider_core::backend::{
     BackendError, DeviceBackend, DeviceInfo, InputEvent, ProgressSink, Result as BackendResult,
 };
-use provider_core::video::{channel, VideoHandle};
+use provider_core::video::{channel, VideoGeometry, VideoHandle, VideoPublisher};
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
@@ -97,6 +98,17 @@ impl IosOptions {
     }
 }
 
+/// The device's orientation → how far the *viewer* must turn the picture.
+///
+/// The inverse, not the same number. iOS draws the rotated UI inside a capture
+/// buffer that never moves, so a device at 90° hands over a picture already
+/// turned 90° — and undoing that means turning it back the other way. Setting
+/// the two equal renders every landscape upside down, which is exactly what a
+/// real iPhone showed.
+pub(crate) fn render_rotation_for(orientation: i64) -> i64 {
+    (360 - orientation.rem_euclid(360)).rem_euclid(360)
+}
+
 /// The pointer state machine.
 ///
 /// The pointer is a *state machine*, not a sequence of independent gestures.
@@ -125,22 +137,45 @@ impl Default for Pointer {
 }
 
 /// The encoded frame size, published by the media loop as soon as it parses an
-/// SPS and read back by `info`.
+/// SPS and read back by `info`, plus the device's orientation.
 ///
-/// A plain shared slot rather than a channel: there is exactly one writer, one
-/// reader, and no one who needs to be woken when it changes.
+/// The orientation lives here rather than beside it because the two are only
+/// meaningful together: the frame size never changes when an iPhone rotates —
+/// CoreDevice captures the native portrait buffer whatever the device is doing
+/// and draws the rotated UI inside it — so orientation is the *only* thing that
+/// tells a viewer the picture is sideways.
 #[derive(Clone, Default)]
-pub struct Geometry(Arc<std::sync::Mutex<Option<(i64, i64)>>>);
+pub struct Geometry {
+    size: Arc<std::sync::Mutex<Option<(i64, i64)>>>,
+    /// Degrees, 0/90/180/270. Unknown until the device is rotated through us:
+    /// there is no orientation query in CoreDevice, only a rotate that answers
+    /// with the state it landed in.
+    rotation: Arc<AtomicI64>,
+    known: Arc<AtomicBool>,
+}
 
 impl Geometry {
     pub fn set(&self, size: (i64, i64)) {
-        if let Ok(mut slot) = self.0.lock() {
+        if let Ok(mut slot) = self.size.lock() {
             *slot = Some(size);
         }
     }
 
     pub fn get(&self) -> Option<(i64, i64)> {
-        self.0.lock().ok().and_then(|slot| *slot)
+        self.size.lock().ok().and_then(|slot| *slot)
+    }
+
+    pub fn set_rotation(&self, degrees: i64) {
+        self.rotation.store(degrees.rem_euclid(360), Ordering::Relaxed);
+        self.known.store(true, Ordering::Relaxed);
+    }
+
+    /// `None` until the device's orientation is actually known — reporting an
+    /// unrotated 0 would make [`IosBackend::rotate`]'s delta walk wrong.
+    pub fn rotation(&self) -> Option<i64> {
+        self.known
+            .load(Ordering::Relaxed)
+            .then(|| self.rotation.load(Ordering::Relaxed))
     }
 }
 
@@ -149,6 +184,9 @@ pub struct IosBackend {
     name: Option<String>,
     host: Arc<DeviceHost>,
     video: VideoHandle,
+    /// Kept so a rotation can reach live viewers: it produces no new parameter
+    /// sets and no new frame size, so nothing else would ever announce it.
+    publisher: VideoPublisher,
     geometry: Geometry,
     pointer: Mutex<Pointer>,
 }
@@ -159,7 +197,7 @@ impl IosBackend {
         let geometry = Geometry::default();
         let host = Arc::new(DeviceHost::spawn(
             options.clone(),
-            publisher,
+            publisher.clone(),
             geometry.clone(),
         ));
 
@@ -168,9 +206,24 @@ impl IosBackend {
             name,
             host,
             video,
+            publisher,
             geometry,
             pointer: Mutex::new(Pointer::default()),
         })
+    }
+
+    /// Announce the current geometry and orientation to live viewers.
+    fn publish_geometry(&self) {
+        let Some((width, height)) = self.geometry.get() else {
+            return;
+        };
+        let rotation = self.geometry.rotation();
+        self.publisher.set_geometry(VideoGeometry {
+            width,
+            height,
+            rotation,
+            render_rotation: rotation.map(render_rotation_for),
+        });
     }
 
     /// Wait for a live session's RSD handles.
@@ -295,6 +348,7 @@ impl IosBackend {
     /// HID coordinates are normalised end to end.
     async fn display(&self) -> Option<Display> {
         if let Some((width, height)) = self.geometry.get() {
+            let rotation = self.geometry.rotation();
             return Some(Display {
                 width,
                 height,
@@ -302,7 +356,8 @@ impl IosBackend {
                 // report — and inventing one would misreport the geometry the
                 // popout window is sized from.
                 scale: None,
-                rotation: None,
+                rotation,
+                render_rotation: rotation.map(render_rotation_for),
             });
         }
         match self.try_display().await {
@@ -356,7 +411,8 @@ impl IosBackend {
             width: width as i64,
             height: height as i64,
             scale: Some(number("MainScreenScale").max(1.0)),
-            rotation: None,
+            rotation: self.geometry.rotation(),
+            render_rotation: self.geometry.rotation().map(render_rotation_for),
         })
     }
 }
@@ -600,23 +656,52 @@ impl DeviceBackend for IosBackend {
 
     /// The session plane sends an absolute angle; CoreDevice's orientation
     /// service only steps 90° at a time, so we walk there.
+    ///
+    /// The walk is a delta against where the device actually is, which is only
+    /// possible because the service *answers* with the orientation it landed
+    /// in — there is no way to ask an iPhone which way up it is. Until the
+    /// first rotation that answer is unknown, and an unknown orientation is
+    /// walked as a single step, which is what the browser means by "rotate"
+    /// when it has been told nothing.
     async fn rotate(&self, degrees: i64) -> BackendResult<()> {
-        let steps = degrees.div_euclid(90).rem_euclid(4);
+        let steps = match self.geometry.rotation() {
+            Some(current) => ((degrees - current).div_euclid(90)).rem_euclid(4),
+            None => 1,
+        };
+
         let Some(input) = self.host.input().await else {
             return Err(BackendError::Unavailable("no device session".into()));
         };
 
+        let mut landed = None;
         for _ in 0..steps {
-            input
+            landed = input
                 .request(|reply| Input::Rotate {
                     direction: RotationDirection::Left,
                     reply,
                 })
-                .await;
+                .await
+                .flatten();
             // backboardd animates the rotation; stepping faster than it can
             // settle drops the later steps on the floor.
             tokio::time::sleep(Duration::from_millis(400)).await;
         }
+
+        // The device's own answer, not what we asked for: rotation lock, or a
+        // step the animation swallowed, means the two can differ, and the
+        // viewer must be told where the screen really is.
+        match landed {
+            Some(degrees) => {
+                self.geometry.set_rotation(degrees);
+                self.publish_geometry();
+                info!(rotation = degrees, "device orientation reported");
+            }
+            // Flat on a desk, or a variant this crate does not know: leaving it
+            // unknown keeps the next rotate at one honest step rather than
+            // walking a delta against a number we invented.
+            None => debug!("the device reported no usable orientation"),
+        }
+
         Ok(())
     }
 
@@ -657,6 +742,26 @@ impl DeviceBackend for IosBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The constant this file exists to get right.
+    ///
+    /// A device at 90° hands over a picture that is *already* turned 90°, so the
+    /// viewer turns it back by 270°, not by 90°. Reporting the orientation
+    /// itself renders every landscape upside down — which is what a real iPhone
+    /// showed, twice.
+    #[test]
+    fn the_viewer_turns_the_picture_back_not_the_same_way_again() {
+        assert_eq!(render_rotation_for(0), 0);
+        assert_eq!(render_rotation_for(90), 270);
+        assert_eq!(render_rotation_for(180), 180);
+        assert_eq!(render_rotation_for(270), 90);
+
+        // Applying the orientation and then the render rotation must land back
+        // where it started, whichever orientation the device is in.
+        for orientation in [0, 90, 180, 270] {
+            assert_eq!((orientation + render_rotation_for(orientation)) % 360, 0);
+        }
+    }
 
     #[test]
     fn options_default_to_the_built_in_display_with_motion_idr_on() {

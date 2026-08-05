@@ -22,6 +22,7 @@
  */
 
 import { AU_DELTA, AU_KEY, AU_KEY_RESET } from "@farm/protocol";
+import { normalizeRotation } from "@/lib/screen/rotation";
 
 export interface RendererOptions {
   /** Hide the loader on first paint. */
@@ -102,6 +103,7 @@ export class ScreenRenderer {
 
   private lastW = 0;
   private lastH = 0;
+  private renderRotation = 0;
 
   constructor(canvas: HTMLCanvasElement, opts: RendererOptions = {}) {
     this.canvas = canvas;
@@ -118,6 +120,24 @@ export class ScreenRenderer {
     this.compensate = shouldCompensate(this.opts, info.codec);
     this.gotKey = false;
     this.sawFirstFrame = false;
+    this.buildDecoder();
+  }
+
+  /**
+   * Swap in new parameter sets mid-stream — what a rotation produces.
+   *
+   * Distinct from `configure` in what it leaves alone: the canvas keeps its
+   * last painted frame until the new keyframe lands, and `sawFirstFrame` stays
+   * set so the loader does not flash back over a picture that is already
+   * there. Rebuilding the whole renderer instead would drop both, and re-run
+   * `isStreamSupported` for a codec that is by definition still supported.
+   */
+  reconfigure(info: CodecInfo) {
+    this.config = configFor(info);
+    this.compensate = shouldCompensate(this.opts, info.codec);
+    // Nothing decoded against the old description can be referenced by the new
+    // stream, so hold everything until the provider's reset keyframe.
+    this.gotKey = false;
     this.buildDecoder();
   }
 
@@ -282,19 +302,52 @@ export class ScreenRenderer {
     }
   }
 
+  /**
+   * How far to turn the picture, clockwise, before drawing it.
+   *
+   * Only iOS ever asks for this — see `lib/screen/rotation.ts`. Rotating here
+   * rather than with a CSS transform keeps the canvas the shape of what is
+   * actually on it, so the box sizing and the pointer mapping both follow from
+   * one number instead of two that can disagree.
+   */
+  setRenderRotation(degrees: number | null | undefined) {
+    const next = normalizeRotation(degrees);
+    if (next === this.renderRotation) return;
+    this.renderRotation = next;
+    // The canvas is about to change shape; make the next frame report its size
+    // even if the decoded dimensions did not move.
+    this.lastW = 0;
+    this.lastH = 0;
+  }
+
   private drawFrame(frame: VideoFrame) {
     const fw = frame.displayWidth;
     const fh = frame.displayHeight;
-    if (this.canvas.width !== fw || this.canvas.height !== fh) {
-      this.canvas.width = fw;
-      this.canvas.height = fh;
+    const swap = this.renderRotation % 180 !== 0;
+    const cw = swap ? fh : fw;
+    const ch = swap ? fw : fh;
+
+    if (this.canvas.width !== cw || this.canvas.height !== ch) {
+      this.canvas.width = cw;
+      this.canvas.height = ch;
     }
-    if (fw !== this.lastW || fh !== this.lastH) {
-      this.lastW = fw;
-      this.lastH = fh;
-      this.opts.onSize?.(fw, fh);
+    if (cw !== this.lastW || ch !== this.lastH) {
+      this.lastW = cw;
+      this.lastH = ch;
+      this.opts.onSize?.(cw, ch);
     }
-    this.ctx.drawImage(frame, 0, 0, this.cropSrcW || fw, this.cropSrcH || fh, 0, 0, fw, fh);
+
+    const sw = this.cropSrcW || fw;
+    const sh = this.cropSrcH || fh;
+    if (this.renderRotation === 0) {
+      this.ctx.drawImage(frame, 0, 0, sw, sh, 0, 0, fw, fh);
+      return;
+    }
+    this.ctx.save();
+    this.ctx.translate(cw / 2, ch / 2);
+    this.ctx.rotate((this.renderRotation * Math.PI) / 180);
+    this.ctx.drawImage(frame, 0, 0, sw, sh, -fw / 2, -fh / 2, fw, fh);
+    this.ctx.restore();
   }
 
   destroy() {

@@ -18,7 +18,21 @@ export const Display = named(
     height: z.number().int(),
     /** Backing-store scale, e.g. 3 on a modern iPhone. Drives the popout window size. */
     scale: z.number().optional(),
+    /** The device's own orientation, in degrees: 0, 90, 180, 270. */
     rotation: z.number().int().optional(),
+    /**
+     * How far the *viewer* must rotate the decoded picture, clockwise, to make
+     * it upright — and it is not the same question as `rotation`.
+     *
+     * Android's encoder follows the device: a rotated phone streams swapped
+     * dimensions and the picture is already upright, so this stays 0. iOS
+     * captures its native portrait buffer whatever the orientation and draws
+     * the rotated UI *inside* it, so the frames stay 9:16 with the content
+     * sideways and only the client can put it right. Inferring this from
+     * `rotation` versus the frame's aspect would be guessing at which backend
+     * is on the other end; this states it.
+     */
+    renderRotation: z.number().int().optional(),
   }),
 );
 

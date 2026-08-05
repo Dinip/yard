@@ -111,6 +111,15 @@ export function useDeviceSession(
         switch (message.type) {
           case "codec": {
             setDisplay(message.display);
+            // A re-announcement mid-session is a rotation: same stream, new
+            // parameter sets. Swap them in place — tearing the renderer down
+            // would blank the canvas and re-ask a question already answered.
+            if (rendererRef.current) {
+              rendererRef.current.reconfigure(message);
+              rendererRef.current.setRenderRotation(message.display.renderRotation);
+              requestKeyframe();
+              return;
+            }
             const canvas = canvasRef.current;
             if (!canvas) return;
             // Check support before building anything: a decoder we cannot
@@ -138,6 +147,7 @@ export function useDeviceSession(
                 onError: (error) => console.warn("[screen]", error),
               });
               renderer.configure(message);
+              renderer.setRenderRotation(message.display.renderRotation);
               rendererRef.current = renderer;
               requestKeyframe();
             });
@@ -145,6 +155,10 @@ export function useDeviceSession(
           }
           case "display":
             setDisplay(message.display);
+            // iOS rotates without re-encoding: no new parameter sets, no new
+            // frame size, and this message is the only thing that says the
+            // picture is now sideways.
+            rendererRef.current?.setRenderRotation(message.display.renderRotation);
             break;
           case "clipboard": {
             const waiters = clipboardWaiters.current;

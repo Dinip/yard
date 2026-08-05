@@ -2,6 +2,7 @@ import type { ClientMessage } from "@farm/protocol";
 import { Loader2, MonitorOff } from "lucide-react";
 import { type PointerEvent as ReactPointerEvent, useCallback, useRef } from "react";
 import type { DeviceSessionApi } from "@/hooks/use-device-session";
+import { toDevicePoint } from "@/lib/screen/rotation";
 import { cn } from "@/lib/utils";
 
 /**
@@ -26,13 +27,21 @@ export function DeviceScreen({
   const { send, frameSize, display, state, unsupported, fallbackUrl, detail } = session;
   const activePointers = useRef(new Set<number>());
 
-  const at = useCallback((event: ReactPointerEvent<HTMLCanvasElement>) => {
-    const rect = event.currentTarget.getBoundingClientRect();
-    return {
-      x: clamp01((event.clientX - rect.left) / rect.width),
-      y: clamp01((event.clientY - rect.top) / rect.height),
-    };
-  }, []);
+  // The canvas is in viewer space; the device's HID surface is in device
+  // space, and on iOS the renderer has turned the picture between the two.
+  const renderRotation = display?.renderRotation;
+  const at = useCallback(
+    (event: ReactPointerEvent<HTMLCanvasElement>) => {
+      const rect = event.currentTarget.getBoundingClientRect();
+      const point = toDevicePoint(
+        clamp01((event.clientX - rect.left) / rect.width),
+        clamp01((event.clientY - rect.top) / rect.height),
+        renderRotation,
+      );
+      return { x: clamp01(point.x), y: clamp01(point.y) };
+    },
+    [renderRotation],
+  );
 
   const onPointerDown = (event: ReactPointerEvent<HTMLCanvasElement>) => {
     if (!interactive) return;
