@@ -503,6 +503,45 @@ Android metadata read.
 
 ---
 
+## Phase 9 — Popout ergonomics ✅
+
+| Item | State | Where |
+|---|---|---|
+| `controls="overlay"` — auto-hiding icon bar over the video | ✅ | `web/src/components/device-console.tsx` |
+| Popout: video fills the window, no column padding | ✅ | `web/src/routes/_session/devices.$deviceId.popout.tsx` |
+| `BroadcastChannel` presence — one stream at a time | ✅ | `web/src/hooks/use-popout-presence.ts` |
+| Parent suspends and offers "Bring it back here" | ✅ | `web/.../devices.$deviceId.tsx` |
+| Renewal follows the visible window | ✅ | both routes |
+
+The popout and its parent each ran a full `useDeviceSession` — two sockets, two
+decoders, two backlogs on one device — because **no coordination existed at
+all** (no `BroadcastChannel`, `postMessage` or `beforeunload` anywhere in
+`packages/web`). The popout now heartbeats every 2s on
+`farm-device-<id>`; the parent treats "alive within 5s" as popped-out and
+passes `active={false}`, which already meant "open no session".
+
+A **heartbeat rather than a single announcement**, because a popout that
+crashes never gets to say goodbye and a parent stuck suspended forever is worse
+than a redundant decoder. The parent posts `who` on mount, so reloading it
+re-discovers a popout that is already open.
+
+**One phase-6 decision reversed.** Phase 6 says "the popout deliberately does
+*not* renew — a popout left open should not keep a device nobody is watching."
+That guard cost a user who closed the parent tab their device mid-session, and
+with phase 10's idle timeout as the real backstop it is no longer load-bearing.
+Both windows renew now; whichever is streaming keeps the reservation.
+
+The overlay bar renders the *same* action list as the toolbar — one array, two
+renderings — so the popout cannot drift into being the lesser window. It is
+`pointer-events-none` while faded, or an invisible bar would swallow taps meant
+for the bottom of the device's screen.
+
+**Verification is manual and outstanding:** pop out and watch the parent's
+WebSocket close, close the popout and watch the parent resume within ~5s,
+reload the parent while the popout is open and confirm it comes back suspended.
+
+---
+
 ## Open decisions
 
 - **Name.** The project is "Device Farm" as a placeholder. See
