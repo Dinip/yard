@@ -538,11 +538,20 @@ renderings — so the popout cannot drift into being the lesser window.
 across the bottom that faded after a pause, and on any phone with a home
 indicator it covered exactly the wrong strip: the gesture area. Auto-hiding did
 not save it, since the bar has to be visible to be used and is then sitting on
-the swipe-up. It is now a single small handle in the *top-right*, inset from the
-corner — the bottom edge is the home indicator, the extreme corner is where iOS
-starts the control-centre pull, and everything else is the device's. Hover or
-focus expands the full bar; clicking the handle pins it open, because a pointer
-that cannot hover still has to reach the controls.
+the swipe-up. It is now a single small handle, inset from a corner. Hover or
+focus expands the full bar; clicking pins it open, because a pointer that cannot
+hover still has to reach the controls.
+
+**And the corner is the user's to pick**, because there is no right answer:
+the bottom edge is the home indicator, the top corners are where iOS pulls
+control centre and notifications from, and which of those matters depends on the
+device and the task. The handle drags to any of the four and the choice is
+remembered in `localStorage` — one key for the whole farm, since the reason to
+move it is the shape of your own screen, not the device's. A drag under four
+pixels is still a click, so pinning did not become fiddly. The row that holds it
+has a fixed height: the expanded pill is taller than the handle, and a centred
+row re-centred both the moment it appeared, so the handle jumped down as you
+reached it.
 
 **Verification is manual and outstanding:** pop out and watch the parent's
 WebSocket close, close the popout and watch the parent resume within ~5s,

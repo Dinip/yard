@@ -8,13 +8,23 @@ import {
   RotateCw,
   Upload,
 } from "lucide-react";
-import { type DragEvent, useRef, useState } from "react";
+import { type DragEvent, type PointerEvent as ReactPointerEvent, useRef, useState } from "react";
 import { toast } from "sonner";
 import { DeviceScreen } from "@/components/device-screen";
 import { Button } from "@/components/ui/button";
 import { useDeviceSession } from "@/hooks/use-device-session";
+import {
+  type Corner,
+  cornerClasses,
+  loadCorner,
+  nearestCorner,
+  saveCorner,
+} from "@/lib/controls-corner";
 import { fetchScreenshot, installApp } from "@/lib/screen/session";
 import { cn } from "@/lib/utils";
+
+/** How far the handle must travel before a click counts as a drag. */
+const DRAG_SLOP = 4;
 
 /**
  * The whole control surface: screen, input, clipboard, screenshot, rotate and
@@ -50,6 +60,49 @@ export function DeviceConsole({
   const [hovering, setHovering] = useState(false);
   const [pinned, setPinned] = useState(false);
   const controlsOpen = hovering || pinned;
+
+  const screenRef = useRef<HTMLDivElement | null>(null);
+  const [corner, setCorner] = useState<Corner>(loadCorner);
+  /** Set only while a drag is in flight; the handle follows the pointer. */
+  const [dragOffset, setDragOffset] = useState<{ dx: number; dy: number } | null>(null);
+  const dragFrom = useRef<{ x: number; y: number; moved: boolean } | null>(null);
+
+  const startDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dragFrom.current = { x: event.clientX, y: event.clientY, moved: false };
+  };
+
+  const moveDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    const from = dragFrom.current;
+    if (!from) return;
+    const dx = event.clientX - from.x;
+    const dy = event.clientY - from.y;
+    // A few pixels of slop, so a click with a shaky hand stays a click.
+    if (!from.moved && Math.hypot(dx, dy) < DRAG_SLOP) return;
+    from.moved = true;
+    setDragOffset({ dx, dy });
+  };
+
+  const endDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    const from = dragFrom.current;
+    dragFrom.current = null;
+    setDragOffset(null);
+    if (!from) return;
+
+    if (!from.moved) {
+      setPinned((current) => !current);
+      return;
+    }
+
+    const bounds = screenRef.current?.getBoundingClientRect();
+    if (!bounds) return;
+    const next = nearestCorner(
+      { x: event.clientX - bounds.left, y: event.clientY - bounds.top },
+      bounds,
+    );
+    setCorner(next);
+    saveCorner(next);
+  };
 
   const upload = async (file: File) => {
     setInstall({ name: file.name, fraction: 0 });
@@ -155,19 +208,31 @@ export function DeviceConsole({
       onDragLeave={() => setDragging(false)}
       onDrop={onDrop}
     >
-      <div className="relative flex min-h-0 flex-1">
+      <div ref={screenRef} className="relative flex min-h-0 flex-1">
         <DeviceScreen session={session} canvasRef={canvasRef} className="flex-1" />
 
         {controls === "overlay" && (
-          // Top-right, and inset from the corner: the bottom edge belongs to
-          // the device's home indicator — a bar there covers it and swallows
-          // the swipe-up gesture — and the extreme corner is where iOS starts
-          // the control-centre pull. What is left over the screen when idle is
-          // one small handle.
+          // Every corner is in something's way — the bottom edge is the home
+          // indicator, the top corners are where iOS pulls control centre and
+          // notifications from — so the handle is draggable and remembers where
+          // it was put. It is inset from the corner either way, to leave the
+          // extreme pixels to the device's own edge gestures.
           <div
             role="toolbar"
             aria-label="Device controls"
-            className="absolute top-3 right-3 flex items-center justify-end gap-1"
+            // A fixed height, so expanding the bar cannot nudge the handle:
+            // the pill is taller than the button, and a centred row would
+            // re-centre both the moment it appeared.
+            className={cn(
+              "absolute flex h-11 items-center gap-1",
+              cornerClasses(corner),
+              dragOffset && "z-10",
+            )}
+            style={
+              dragOffset
+                ? { transform: `translate(${dragOffset.dx}px, ${dragOffset.dy}px)` }
+                : undefined
+            }
             onPointerEnter={() => setHovering(true)}
             onPointerLeave={() => setHovering(false)}
             onFocus={() => setHovering(true)}
@@ -177,7 +242,7 @@ export function DeviceConsole({
               if (!event.currentTarget.contains(event.relatedTarget)) setHovering(false);
             }}
           >
-            {controlsOpen && (
+            {controlsOpen && !dragOffset && (
               <div className="flex items-center gap-1 rounded-full border bg-background/85 px-2 py-1 shadow-sm backdrop-blur">
                 {actions.map((action) => (
                   <Button
@@ -198,14 +263,22 @@ export function DeviceConsole({
             <Button
               variant="ghost"
               size="icon"
-              // Click to pin, for a pointer that cannot hover — a touchscreen
-              // reading the farm, or anyone who would rather not hold still.
-              onClick={() => setPinned((current) => !current)}
+              // Keyboard only (`detail === 0`); a mouse click is handled on
+              // pointer-up, which is the only place that can tell a click from
+              // the end of a drag.
+              onClick={(event) => {
+                if (event.detail === 0) setPinned((current) => !current);
+              }}
+              onPointerDown={startDrag}
+              onPointerMove={moveDrag}
+              onPointerUp={endDrag}
+              onPointerCancel={endDrag}
               aria-expanded={controlsOpen}
               aria-label={controlsOpen ? "Hide device controls" : "Show device controls"}
-              title="Device controls"
+              title="Device controls — drag to another corner"
               className={cn(
-                "rounded-full border bg-background/85 shadow-sm backdrop-blur transition-opacity",
+                "touch-none rounded-full border bg-background/85 shadow-sm backdrop-blur transition-opacity",
+                dragOffset ? "cursor-grabbing" : "cursor-grab",
                 controlsOpen ? "opacity-100" : "opacity-60 hover:opacity-100",
               )}
             >
