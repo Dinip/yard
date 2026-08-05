@@ -462,7 +462,7 @@ not how the picture turned — but only the device settles it.
 | Gateway maps them on upsert | ✅ | `coordinator/src/gateway/handler.ts` |
 | Android reads them from the existing `getprop` | ✅ | `backend-android/src/lib.rs` |
 | `stream_codec` actually populated | ✅ | `provider-core/src/supervisor.rs` |
-| Device page: battery, serial, build, patch, ABI list, rotation | ✅ | `web/.../devices.$deviceId.tsx` |
+| Device page: battery, patch, rotation, and no repeated rows | ✅ | `web/.../devices.$deviceId.tsx` |
 | `adb connect` block, holder + Android only | ✅ | `web/.../devices.$deviceId.tsx` |
 
 **A second bug that had been quietly wrong since phase 3a:** `snapshot_from`
@@ -475,6 +475,17 @@ waiting — a device that is not streaming simply reports none.
 `getprop` round-trip `info()` already made; iOS reports `serial` (its UDID) and
 `buildId` and nothing else, and the `<Detail>` helper hides falsy values, so an
 iPhone shows fewer rows with no branching anywhere.
+
+**What the card actually shows is less than what is collected**, after looking
+at it on a real device: `ro.serialno` *is* the adb serial and `ro.product.brand`
+is usually the manufacturer again, so Serial and Brand appeared as rows
+repeating the two above them — they now render only when a device disagrees.
+Build id and the full ABI list are collected but not shown: a Samsung build id
+is 32 characters and pushed the card open. They stay on the wire and in the DB,
+where they cost nothing, and the row that broke the layout is gone rather than
+the data behind it. `<Detail>` also gained `min-w-0`, without which `truncate`
+does nothing inside a flex row and a long value widens the card instead of being
+cut short.
 
 Remote debugging was fully implemented in phase 4 and **unreachable from the
 UI** — `device.adbExpose`/`adbUnexpose` existed and nothing called them. The

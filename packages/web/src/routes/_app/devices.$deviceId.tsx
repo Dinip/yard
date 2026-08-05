@@ -150,8 +150,13 @@ function DevicePage() {
           <CardContent className="grid gap-2 text-sm">
             <Detail label="Identifier" value={device.id} mono />
             <Detail label="Manufacturer" value={device.manufacturer} />
-            <Detail label="Brand" value={device.brand} />
-            <Detail label="Serial" value={device.serial} mono />
+            {/* `serial` and `brand` are the same as the identifier and the
+                manufacturer on every device seen so far — `ro.serialno` *is*
+                the adb serial, and `ro.product.brand` is usually the vendor
+                again. Shown only when a device disagrees, so the card carries
+                no row that repeats the one above it. */}
+            <Detail label="Brand" value={differing(device.brand, device.manufacturer)} />
+            <Detail label="Serial" value={differing(device.serial, device.id)} mono />
             <Detail
               label="Display"
               value={
@@ -169,9 +174,7 @@ function DevicePage() {
               }
             />
             <Detail label="ABI" value={device.abi} />
-            <Detail label="ABI list" value={device.abiList} />
             <Detail label="SDK" value={device.sdk?.toString()} />
-            <Detail label="Build" value={device.buildId} />
             <Detail label="Security patch" value={device.securityPatch} />
             <Detail label="Codec" value={device.streamCodec} mono />
             <Detail label="Seen" value={relativeTime(device.presentAt)} />
@@ -361,12 +364,28 @@ function ForceReleaseDialog({
   );
 }
 
+/**
+ * `value` unless it says the same thing as `against`, in which case nothing.
+ *
+ * Case-insensitive because the two sources disagree on it — `ro.product.brand`
+ * answers `samsung` where `ro.product.manufacturer` answers `Samsung`.
+ */
+function differing(value: string | null | undefined, against: string | null | undefined) {
+  if (!value) return null;
+  return value.toLowerCase() === (against ?? "").toLowerCase() ? null : value;
+}
+
 function Detail({ label, value, mono }: { label: string; value?: string | null; mono?: boolean }) {
   if (!value) return null;
   return (
     <div className="flex justify-between gap-4">
-      <span className="text-muted-foreground">{label}</span>
-      <span className={`truncate ${mono ? "font-mono text-xs" : ""}`}>{value}</span>
+      <span className="shrink-0 text-muted-foreground">{label}</span>
+      {/* `min-w-0` is what makes `truncate` work at all inside a flex row:
+          without it the value sets the row's minimum width and pushes itself
+          out of the card instead of being cut short. */}
+      <span className={`min-w-0 truncate text-right ${mono ? "font-mono text-xs" : ""}`}>
+        {value}
+      </span>
     </div>
   );
 }
