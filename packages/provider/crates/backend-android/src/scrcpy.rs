@@ -24,11 +24,24 @@
 //!   4  bytes  flags (bit 31 set)
 //!   4  bytes  width
 //!   4  bytes  height
-//!   then, per packet:
-//!   8  bytes  pts and flags, big-endian: bit 63 session, 62 config, 61 key
+//!   then, repeatedly, one of:
+//!   8  bytes  pts and flags, big-endian: bit 62 config, bit 61 key
 //!   4  bytes  payload size
 //!   n  bytes  Annex-B payload
+//!     …or, when the stream is reset or the display resizes:
+//!   4  bytes  flags with bit 31 set  ── the same session-meta block as above,
+//!   4  bytes  width                     re-sent bare, *not* wrapped in a
+//!   4  bytes  height                    packet header
 //! ```
+//!
+//! That last case is the one worth stating loudly. Bit 31 of the first word is
+//! bit 63 of what would otherwise be `pts_and_flags`, and no real timestamp
+//! ever sets it — so the first four bytes say which of the two this is. Reading
+//! a session block as a packet header instead yields a plausible-looking size
+//! (it is the height), swallows that many bytes of the next packet, and
+//! desynchronises the stream permanently. The visible symptom is a black
+//! screen, because everything after it decodes to nothing; the error only comes
+//! later, when a garbage length asks for a multi-gigabyte allocation.
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
@@ -58,6 +71,10 @@ const BIND_TIMEOUT: Duration = Duration::from_secs(10);
 /// also carries the timestamp.
 const PACKET_FLAG_CONFIG: u64 = 1 << 62;
 const PACKET_FLAG_KEY_FRAME: u64 = 1 << 61;
+
+/// Bit 31 of the first word, i.e. bit 63 of a packet header. Set only on a
+/// session-meta block.
+const SESSION_MARKER: u32 = 1 << 31;
 
 /// H.264. The only codec this backend asks for — `hev1` would save bandwidth,
 /// but H.264 is what every Android encoder and every browser agrees on.
@@ -108,10 +125,15 @@ impl ScrcpySession {
 
         let scid = NEXT_SCID.fetch_add(1, Ordering::Relaxed) & 0x7FFF_FFFF;
         let command = format!(
+            // `stay_awake` and `power_on` are what make this a farm device rather
+            // than a phone: without them the display dozes on its own timeout
+            // and every later viewer gets a black screen that looks exactly
+            // like a broken stream. scrcpy restores both settings on cleanup,
+            // so the device is left as it was found.
             "CLASSPATH={REMOTE_PATH} app_process / com.genymobile.scrcpy.Server {SERVER_VERSION} \
              scid={scid:08x} log_level=info video=true audio=false control=true \
              tunnel_forward=true video_codec=h264 max_size={} video_bit_rate={} max_fps={} \
-             cleanup=true",
+             stay_awake=true power_on=true cleanup=true",
             options.max_size, options.bit_rate, options.max_fps
         );
 
@@ -169,11 +191,18 @@ impl ScrcpySession {
             );
         }
 
-        let mut meta = [0u8; 12];
-        self.video.read_exact(&mut meta).await?;
-        self.width = u32::from_be_bytes(meta[4..8].try_into().unwrap()) as i64;
-        self.height = u32::from_be_bytes(meta[8..12].try_into().unwrap()) as i64;
-        Ok(())
+        // The geometry that follows the codec id is a session block, the same
+        // one a reset re-sends later.
+        match read_frame(&mut self.video).await? {
+            VideoFrame::Session { width, height } => {
+                self.width = width;
+                self.height = height;
+                Ok(())
+            }
+            VideoFrame::Packet { .. } => {
+                bail!("the handshake carried a video packet where the geometry should be")
+            }
+        }
     }
 }
 
@@ -205,24 +234,72 @@ async fn try_dial(adb: &Adb, serial: &str, socket_name: &str) -> Result<TcpStrea
     Ok(stream.into_inner())
 }
 
-/// One video packet, as the server frames it.
+/// One decoded packet, once its framing has been resolved.
 struct Packet {
     is_config: bool,
     is_key: bool,
     payload: Vec<u8>,
 }
 
-async fn read_packet(video: &mut TcpStream) -> Result<Packet> {
-    let mut header = [0u8; 12];
-    video.read_exact(&mut header).await?;
+/// The stream's current geometry, shared with the backend.
+///
+/// It is not fixed for the life of a session: a reset or a rotation re-sends
+/// it, and touch scaling has to follow.
+#[derive(Clone, Default)]
+pub struct Geometry(std::sync::Arc<std::sync::Mutex<(i64, i64)>>);
 
-    let pts_and_flags = u64::from_be_bytes(header[..8].try_into().unwrap());
-    let size = u32::from_be_bytes(header[8..].try_into().unwrap()) as usize;
+impl Geometry {
+    pub fn set(&self, width: i64, height: i64) {
+        if let Ok(mut slot) = self.0.lock() {
+            *slot = (width, height);
+        }
+    }
+
+    pub fn get(&self) -> (i64, i64) {
+        self.0.lock().map(|slot| *slot).unwrap_or((0, 0))
+    }
+}
+
+/// What the video socket carries.
+enum VideoFrame {
+    /// The stream restarted or the display resized; everything after this is a
+    /// new stream, and a fresh config packet follows.
+    Session { width: i64, height: i64 },
+    Packet {
+        is_config: bool,
+        is_key: bool,
+        payload: Vec<u8>,
+    },
+}
+
+/// Read the next thing off the video socket.
+///
+/// The first four bytes disambiguate: bit 31 set means a session block, since
+/// that bit is bit 63 of a packet's `pts_and_flags` and no timestamp reaches
+/// it.
+async fn read_frame(video: &mut TcpStream) -> Result<VideoFrame> {
+    let mut first = [0u8; 4];
+    video.read_exact(&mut first).await?;
+
+    if u32::from_be_bytes(first) & SESSION_MARKER != 0 {
+        let mut rest = [0u8; 8];
+        video.read_exact(&mut rest).await?;
+        return Ok(VideoFrame::Session {
+            width: u32::from_be_bytes(rest[..4].try_into().unwrap()) as i64,
+            height: u32::from_be_bytes(rest[4..].try_into().unwrap()) as i64,
+        });
+    }
+
+    let mut rest = [0u8; 8];
+    video.read_exact(&mut rest).await?;
+    let pts_and_flags = (u64::from(u32::from_be_bytes(first)) << 32)
+        | u64::from(u32::from_be_bytes(rest[..4].try_into().unwrap()));
+    let size = u32::from_be_bytes(rest[4..].try_into().unwrap()) as usize;
 
     let mut payload = vec![0u8; size];
     video.read_exact(&mut payload).await?;
 
-    Ok(Packet {
+    Ok(VideoFrame::Packet {
         is_config: pts_and_flags & PACKET_FLAG_CONFIG != 0,
         is_key: pts_and_flags & PACKET_FLAG_KEY_FRAME != 0,
         payload,
@@ -234,11 +311,34 @@ async fn read_packet(video: &mut TcpStream) -> Result<Packet> {
 /// The config packet is never forwarded as a frame: its parameter sets go out
 /// of band as avcC, and every media packet is rewritten from Annex-B to
 /// length-prefixed NALUs. See [`crate::h264`] for why.
-pub async fn pump_video(mut video: TcpStream, publisher: VideoPublisher) -> Result<()> {
+pub async fn pump_video(
+    mut video: TcpStream,
+    publisher: VideoPublisher,
+    geometry: Geometry,
+) -> Result<()> {
     let mut announced: Option<CodecDescription> = None;
 
     loop {
-        let packet = read_packet(&mut video).await.context("reading video")?;
+        let (is_config, is_key, payload) =
+            match read_frame(&mut video).await.context("reading video")? {
+                VideoFrame::Session { width, height } => {
+                    // Touch coordinates scale against this, so a resize that was
+                    // not applied would put every tap in the wrong place.
+                    info!(width, height, "stream geometry changed");
+                    geometry.set(width, height);
+                    continue;
+                }
+                VideoFrame::Packet {
+                    is_config,
+                    is_key,
+                    payload,
+                } => (is_config, is_key, payload),
+            };
+        let packet = Packet {
+            is_config,
+            is_key,
+            payload,
+        };
 
         if packet.is_config {
             let Some(sets) = h264::ParameterSets::parse(&packet.payload) else {
@@ -466,5 +566,105 @@ mod tests {
     #[test]
     fn a_clipboard_read_does_not_ask_the_app_to_copy_first() {
         assert_eq!(get_clipboard(), vec![control_message::GET_CLIPBOARD, 0]);
+    }
+}
+
+#[cfg(test)]
+mod framing_tests {
+    use super::*;
+    use tokio::net::{TcpListener, TcpStream};
+
+    /// Serve `bytes` on a loopback socket and hand back the client end.
+    async fn served(bytes: Vec<u8>) -> TcpStream {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            // One byte at a time: a socket is free to do this, and the first
+            // version of the probe that read this protocol was wrong precisely
+            // because it assumed otherwise.
+            for byte in bytes {
+                socket.write_all(&[byte]).await.unwrap();
+            }
+            socket.flush().await.unwrap();
+            // Hold the connection open so the reader sees EOF only at the end.
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        });
+        TcpStream::connect(addr).await.unwrap()
+    }
+
+    fn session_block(width: u32, height: u32) -> Vec<u8> {
+        let mut bytes = 0x8000_0000u32.to_be_bytes().to_vec();
+        bytes.extend_from_slice(&width.to_be_bytes());
+        bytes.extend_from_slice(&height.to_be_bytes());
+        bytes
+    }
+
+    fn packet(flags: u64, payload: &[u8]) -> Vec<u8> {
+        let mut bytes = flags.to_be_bytes().to_vec();
+        bytes.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+        bytes.extend_from_slice(payload);
+        bytes
+    }
+
+    /// The regression that turned the screen black: `RESET_VIDEO` — which every
+    /// viewer triggers by asking for a keyframe — makes the server re-send the
+    /// session block bare. Read as a packet header it looks valid, its "size"
+    /// is the height, and the stream desynchronises for good.
+    #[tokio::test]
+    async fn a_session_block_after_a_reset_is_not_read_as_a_packet() {
+        let mut stream = Vec::new();
+        stream.extend(session_block(472, 1024));
+        stream.extend(packet(PACKET_FLAG_CONFIG, &[0x00, 0x00, 0x00, 0x01, 0x67]));
+        stream.extend(packet(
+            PACKET_FLAG_KEY_FRAME,
+            &[0x00, 0x00, 0x00, 0x01, 0x65],
+        ));
+        let mut socket = served(stream).await;
+
+        match read_frame(&mut socket).await.unwrap() {
+            VideoFrame::Session { width, height } => assert_eq!((width, height), (472, 1024)),
+            VideoFrame::Packet { .. } => panic!("read the session block as a packet"),
+        }
+
+        match read_frame(&mut socket).await.unwrap() {
+            VideoFrame::Packet {
+                is_config,
+                is_key,
+                payload,
+            } => {
+                assert!(is_config);
+                assert!(!is_key);
+                assert_eq!(payload, vec![0x00, 0x00, 0x00, 0x01, 0x67]);
+            }
+            VideoFrame::Session { .. } => panic!("expected the config packet"),
+        }
+
+        match read_frame(&mut socket).await.unwrap() {
+            VideoFrame::Packet {
+                is_key, payload, ..
+            } => {
+                assert!(is_key, "the stream is still aligned three frames in");
+                assert_eq!(payload, vec![0x00, 0x00, 0x00, 0x01, 0x65]);
+            }
+            VideoFrame::Session { .. } => panic!("expected the keyframe"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_real_timestamp_never_reads_as_a_session_block() {
+        // The largest pts the field can carry, with the key-frame flag set.
+        let pts = (1u64 << 61) - 1;
+        let mut socket = served(packet(PACKET_FLAG_KEY_FRAME | pts, &[0xAA])).await;
+
+        match read_frame(&mut socket).await.unwrap() {
+            VideoFrame::Packet {
+                is_key, payload, ..
+            } => {
+                assert!(is_key);
+                assert_eq!(payload, vec![0xAA]);
+            }
+            VideoFrame::Session { .. } => panic!("a timestamp was mistaken for geometry"),
+        }
     }
 }

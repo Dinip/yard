@@ -117,8 +117,9 @@ impl Default for Pointer {
 /// What a live scrcpy session exposes to the backend.
 struct Live {
     control: Mutex<TcpStream>,
-    width: i64,
-    height: i64,
+    /// Not fixed for the session: a reset or a rotation re-sends it, and touch
+    /// coordinates scale against whatever it is *now*.
+    geometry: scrcpy::Geometry,
 }
 
 pub struct AndroidBackend {
@@ -243,13 +244,14 @@ impl AndroidBackend {
             _ => return Ok(()),
         };
 
+        let (width, height) = live.geometry.get();
         self.send_control(scrcpy::touch(
             action,
             pointer_id as u64,
-            Self::to_pixels(x, live.width),
-            Self::to_pixels(y, live.height),
-            live.width,
-            live.height,
+            Self::to_pixels(x, width),
+            Self::to_pixels(y, height),
+            width,
+            height,
         ))
         .await
     }
@@ -302,12 +304,15 @@ impl DeviceBackend for AndroidBackend {
         // a device that is not streaming yet still has a screen worth
         // reporting, and the two differ whenever `max_size` scaled the stream.
         let display = match self.live.lock().await.clone() {
-            Some(live) => Some(Display {
-                width: live.width,
-                height: live.height,
-                scale: None,
-                rotation: None,
-            }),
+            Some(live) => {
+                let (width, height) = live.geometry.get();
+                Some(Display {
+                    width,
+                    height,
+                    scale: None,
+                    rotation: None,
+                })
+            }
             None => {
                 let size = parse_wm_size(&self.shell("wm size").await.unwrap_or_default());
                 // Density is only worth a round-trip if there is a size to
@@ -608,10 +613,12 @@ async fn run_once(supervisor: &Supervisor) -> Result<()> {
         ..
     } = session;
 
+    let geometry = scrcpy::Geometry::default();
+    geometry.set(width, height);
+
     *supervisor.live.lock().await = Some(Arc::new(Live {
         control: Mutex::new(control),
-        width,
-        height,
+        geometry: geometry.clone(),
     }));
     let _ = supervisor.ready.send(true);
 
@@ -636,7 +643,7 @@ async fn run_once(supervisor: &Supervisor) -> Result<()> {
     };
 
     let outcome = tokio::select! {
-        result = scrcpy::pump_video(video, supervisor.publisher.clone()) => result,
+        result = scrcpy::pump_video(video, supervisor.publisher.clone(), geometry) => result,
         _ = supervisor.restart.notified() => Err(anyhow!("restart requested")),
     };
 

@@ -122,8 +122,27 @@ async fn main() -> Result<()> {
         &payload[..payload.len().min(16)]
     );
 
-    // A touch, to confirm the control socket is live. Bottom-centre, well away
-    // from anything: a tap at 50% x, 90% y on the navigation area.
+    // What a keyframe request actually does to the video stream. Every viewer
+    // that connects triggers one, so whatever follows here is on the hot path.
+    println!("\nsending RESET_VIDEO (what a keyframe request maps to)");
+    control.write_all(&[17]).await?;
+    control.flush().await?;
+
+    for packet in 1..=4 {
+        let mut header = [0u8; 12];
+        video.read_exact(&mut header).await?;
+        let pts_flags = u64::from_be_bytes(header[..8].try_into().unwrap());
+        let size = u32::from_be_bytes(header[8..].try_into().unwrap());
+        println!(
+            "  after-reset packet {packet}: flags={:03b} pts={} size={size}",
+            pts_flags >> 61,
+            pts_flags & ((1 << 61) - 1)
+        );
+        let mut payload = vec![0u8; size as usize];
+        video.read_exact(&mut payload).await?;
+        println!("    payload: {:02x?}", &payload[..payload.len().min(24)]);
+    }
+
     println!("\nsending a no-op control message (get clipboard)");
     control.write_all(&[8, 0]).await?;
     control.flush().await?;

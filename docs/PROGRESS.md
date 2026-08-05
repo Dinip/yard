@@ -206,9 +206,32 @@ owns the USB transport — and its address is config (`adb_server`), so a Linux
 host bundles adb in the provider image with the USB bus passed through, while
 macOS, where Docker cannot pass USB through at all, points at the host's server.
 
+**Two bugs found by leaving it running**, both fixed and both invisible to a
+short test:
+
+- **The stream desynchronised on every viewer connect.** A viewer connecting
+  makes provider-core request a keyframe, which maps to scrcpy's `RESET_VIDEO`,
+  and a reset makes the server re-send the *bare* 12-byte session block rather
+  than a framed packet. Read as a packet header it looks entirely valid — its
+  "size" is the height — so it swallowed 1024 bytes of the next packet and the
+  stream never recovered. The symptom was a black screen; the error only came
+  later, when a garbage length asked for a 3.9 GB allocation. The first four
+  bytes disambiguate (bit 31 = bit 63 of `pts_and_flags`, which no timestamp
+  reaches), and there are two regression tests, one of which serves the bytes
+  a byte at a time.
+- **The device dozed.** A farm phone left alone hits its screen timeout, and
+  scrcpy then faithfully streams a black display — `adb screencap` showed the
+  same black, which is what proved it was not a decode bug. `stay_awake=true`
+  and `power_on=true` are now passed; scrcpy restores both on cleanup, so the
+  device is left as it was found.
+
 **Not yet exercised on hardware:** APK install and uninstall, app launch, and
 the remote-debug proxy. They are the shell-command paths, which is the least
 surprising part of this backend, but "least surprising" is not "verified".
+
+**Worth knowing for a real deployment:** a woken device shows its lock screen.
+A managed farm device should have its screen lock disabled, or every session
+starts with a lock the user cannot get past.
 
 ---
 

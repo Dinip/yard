@@ -210,6 +210,17 @@ Video arrives as Annex-B and is rewritten to length-prefixed NALUs, with the
 config packet's SPS/PPS lifted into an `avcC` sent once out of band. Both halves
 matter: the Annex-B path tears in Chrome under motion.
 
+**Not everything on that socket is a packet.** A reset or a resize re-sends the
+session block bare — four bytes of flags, then width and height — and reading it
+as a packet header desynchronises the stream permanently, with a black screen as
+the only symptom until a garbage length eventually fails an allocation. Bit 31
+of the first word says which it is. A viewer connecting requests a keyframe,
+which is a reset, so this is the common path rather than an edge case.
+
+Sessions run with `stay_awake` and `power_on`. A device left to its own screen
+timeout goes black, and a black stream from a dozing phone is indistinguishable
+from a broken one until you run `adb screencap` and see the same black.
+
 ## Backend trait
 
 ```rust
