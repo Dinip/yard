@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { usePopoutPresence } from "@/hooks/use-popout-presence";
 import { useReservationRenewal } from "@/hooks/use-reservation-renewal";
 import { trpc } from "@/lib/trpc";
 import { relativeTime } from "@/lib/utils";
@@ -36,6 +37,9 @@ function DevicePage() {
   const { data: device } = useQuery(trpc.device.get.queryOptions({ id: deviceId }));
   const { data: me } = useQuery(trpc.user.me.queryOptions());
   const mine = device?.reservation?.userId === me?.id;
+
+  // A popout takes the stream; this tab keeps the reservation and the page.
+  const { poppedOut, reclaim } = usePopoutPresence(deviceId);
 
   // Only the holder renews. Another user's tab must not keep a device they do
   // not hold alive.
@@ -135,10 +139,19 @@ function DevicePage() {
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
         <Card className="min-h-[480px]">
           <CardContent className="flex h-full min-h-0 items-center justify-center text-center text-muted-foreground text-sm">
-            {mine ? (
-              <DeviceConsole deviceId={deviceId} active className="h-[70svh] w-full" />
-            ) : (
+            {!mine ? (
               <p>Reserve this device to open a session.</p>
+            ) : poppedOut ? (
+              // Two decoders on one device is waste the user never asked for,
+              // so this tab stands down while the popout has the stream.
+              <div className="flex flex-col items-center gap-3">
+                <p>This device is open in a popout window.</p>
+                <Button variant="outline" size="sm" onClick={reclaim}>
+                  Bring it back here
+                </Button>
+              </div>
+            ) : (
+              <DeviceConsole deviceId={deviceId} active className="h-[70svh] w-full" />
             )}
           </CardContent>
         </Card>

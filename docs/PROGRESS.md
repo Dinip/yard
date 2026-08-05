@@ -503,6 +503,62 @@ Android metadata read.
 
 ---
 
+## Phase 9 — Popout ergonomics ✅
+
+| Item | State | Where |
+|---|---|---|
+| `controls="overlay"` — corner handle expanding to an icon bar | ✅ | `web/src/components/device-console.tsx` |
+| Popout: video fills the window, no column padding | ✅ | `web/src/routes/_session/devices.$deviceId.popout.tsx` |
+| `BroadcastChannel` presence — one stream at a time | ✅ | `web/src/hooks/use-popout-presence.ts` |
+| Parent suspends and offers "Bring it back here" | ✅ | `web/.../devices.$deviceId.tsx` |
+| Renewal follows the visible window | ✅ | both routes |
+
+The popout and its parent each ran a full `useDeviceSession` — two sockets, two
+decoders, two backlogs on one device — because **no coordination existed at
+all** (no `BroadcastChannel`, `postMessage` or `beforeunload` anywhere in
+`packages/web`). The popout now heartbeats every 2s on
+`farm-device-<id>`; the parent treats "alive within 5s" as popped-out and
+passes `active={false}`, which already meant "open no session".
+
+A **heartbeat rather than a single announcement**, because a popout that
+crashes never gets to say goodbye and a parent stuck suspended forever is worse
+than a redundant decoder. The parent posts `who` on mount, so reloading it
+re-discovers a popout that is already open.
+
+**One phase-6 decision reversed.** Phase 6 says "the popout deliberately does
+*not* renew — a popout left open should not keep a device nobody is watching."
+That guard cost a user who closed the parent tab their device mid-session, and
+with phase 10's idle timeout as the real backstop it is no longer load-bearing.
+Both windows renew now; whichever is streaming keeps the reservation.
+
+The overlay renders the *same* action list as the toolbar — one array, two
+renderings — so the popout cannot drift into being the lesser window.
+
+**Where it sits was decided on a real device.** The first version was a bar
+across the bottom that faded after a pause, and on any phone with a home
+indicator it covered exactly the wrong strip: the gesture area. Auto-hiding did
+not save it, since the bar has to be visible to be used and is then sitting on
+the swipe-up. It is now a single small handle, inset from a corner. Hover or
+focus expands the full bar; clicking pins it open, because a pointer that cannot
+hover still has to reach the controls.
+
+**And the corner is the user's to pick**, because there is no right answer:
+the bottom edge is the home indicator, the top corners are where iOS pulls
+control centre and notifications from, and which of those matters depends on the
+device and the task. The handle drags to any of the four and the choice is
+remembered in `localStorage` — one key for the whole farm, since the reason to
+move it is the shape of your own screen, not the device's. A drag under four
+pixels is still a click, so pinning did not become fiddly. The row that holds it
+has a fixed height: the expanded pill is taller than the handle, and a centred
+row re-centred both the moment it appeared, so the handle jumped down as you
+reached it.
+
+**Verification is manual and outstanding:** pop out and watch the parent's
+WebSocket close, close the popout and watch the parent resume within ~5s,
+reload the parent while the popout is open and confirm it comes back suspended.
+
+---
+
 ## Open decisions
 
 - **Name.** The project is "Device Farm" as a placeholder. See
