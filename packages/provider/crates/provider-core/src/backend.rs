@@ -45,6 +45,13 @@ pub struct DeviceInfo {
     pub os_version: Option<String>,
     pub abi: Option<String>,
     pub sdk: Option<i64>,
+    /// Identity a tester needs to file a bug against the right device. Android
+    /// reads all of it out of the `getprop` round-trip it already makes.
+    pub serial: Option<String>,
+    pub brand: Option<String>,
+    pub build_id: Option<String>,
+    pub security_patch: Option<String>,
+    pub abi_list: Option<String>,
     pub display: Option<Display>,
     pub battery_level: Option<f64>,
     pub battery_state: Option<String>,

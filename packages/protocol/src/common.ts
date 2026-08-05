@@ -63,6 +63,16 @@ export const DeviceSnapshot = named(
     osVersion: z.string().optional(),
     abi: z.string().optional(),
     sdk: z.number().int().optional(),
+    /**
+     * Identity a tester needs to file a bug against the right device. All of it
+     * comes out of the `getprop` round-trip the provider already makes, so none
+     * of these costs an extra call.
+     */
+    serial: z.string().optional(),
+    brand: z.string().optional(),
+    buildId: z.string().optional(),
+    securityPatch: z.string().optional(),
+    abiList: z.string().optional(),
     display: Display.optional(),
     battery: Battery.optional(),
     /** Handed straight to the browser's VideoDecoder, e.g. "hev1.1.6.L93.B0". */

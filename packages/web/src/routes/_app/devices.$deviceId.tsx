@@ -150,16 +150,29 @@ function DevicePage() {
           <CardContent className="grid gap-2 text-sm">
             <Detail label="Identifier" value={device.id} mono />
             <Detail label="Manufacturer" value={device.manufacturer} />
+            <Detail label="Brand" value={device.brand} />
+            <Detail label="Serial" value={device.serial} mono />
             <Detail
               label="Display"
               value={
                 device.displayWidth
-                  ? `${device.displayWidth}×${device.displayHeight}${device.displayScale ? ` @${device.displayScale}x` : ""}`
+                  ? `${device.displayWidth}×${device.displayHeight}${device.displayScale ? ` @${device.displayScale}x` : ""}${device.displayRotation ? ` · ${device.displayRotation}°` : ""}`
                   : null
               }
             />
+            <Detail
+              label="Battery"
+              value={
+                device.batteryLevel == null
+                  ? null
+                  : `${Math.round(device.batteryLevel * 100)}%${device.batteryState ? ` · ${device.batteryState}` : ""}`
+              }
+            />
             <Detail label="ABI" value={device.abi} />
+            <Detail label="ABI list" value={device.abiList} />
             <Detail label="SDK" value={device.sdk?.toString()} />
+            <Detail label="Build" value={device.buildId} />
+            <Detail label="Security patch" value={device.securityPatch} />
             <Detail label="Codec" value={device.streamCodec} mono />
             <Detail label="Seen" value={relativeTime(device.presentAt)} />
             {device.reservation && (
@@ -168,9 +181,119 @@ function DevicePage() {
                 value={new Date(device.reservation.expiresAt).toLocaleTimeString()}
               />
             )}
+
+            {/* Remote debugging is the holder's tool, not an admin one: it
+                hands out a live adb transport to whoever runs the command. */}
+            {mine && device.platform === "android" && (
+              <RemoteDebugging
+                deviceId={deviceId}
+                port={device.adbPort}
+                host={hostOf(device.provider.publicBaseUrl)}
+                onChanged={invalidate}
+              />
+            )}
           </CardContent>
         </Card>
       </div>
+    </div>
+  );
+}
+
+/**
+ * The provider's host, not its URL: whatever proxy fronts the web origin does
+ * not forward a raw adb transport, so what a developer needs is the bare host
+ * the provider itself bound the port on.
+ */
+function hostOf(baseUrl: string): string {
+  try {
+    return new URL(baseUrl).hostname;
+  } catch {
+    return baseUrl;
+  }
+}
+
+/**
+ * `adb connect` against a reserved device.
+ *
+ * The transport has existed since phase 4 and nothing in the UI ever reached
+ * it. Exposing it is deliberately explicit — it opens a real adb port on the
+ * provider — and it stays open until it is turned off or the reservation ends.
+ */
+function RemoteDebugging({
+  deviceId,
+  port,
+  host,
+  onChanged,
+}: {
+  deviceId: string;
+  port: number | null;
+  host: string;
+  onChanged: () => void;
+}) {
+  const expose = useMutation(
+    trpc.device.adbExpose.mutationOptions({
+      onSuccess: (data) => {
+        toast.success(`adb listening on ${data.connectString}`);
+        onChanged();
+      },
+      onError: (e) => toast.error(e.message),
+    }),
+  );
+
+  const unexpose = useMutation(
+    trpc.device.adbUnexpose.mutationOptions({
+      onSuccess: () => {
+        toast.success("Remote debugging disabled");
+        onChanged();
+      },
+      onError: (e) => toast.error(e.message),
+    }),
+  );
+
+  const connectString = port ? `${host}:${port}` : null;
+
+  const copy = async () => {
+    if (!connectString) return;
+    try {
+      await navigator.clipboard.writeText(`adb connect ${connectString}`);
+      toast.success("Copied");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not copy");
+    }
+  };
+
+  return (
+    <div className="mt-2 grid gap-2 border-t pt-3">
+      <span className="text-muted-foreground">Remote debugging</span>
+      {connectString ? (
+        <>
+          <button
+            type="button"
+            onClick={copy}
+            title="Copy to clipboard"
+            className="truncate rounded bg-muted px-2 py-1 text-left font-mono text-xs hover:bg-muted/70"
+          >
+            adb connect {connectString}
+          </button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={unexpose.isPending}
+            onClick={() => unexpose.mutate({ deviceId })}
+          >
+            Disable
+          </Button>
+        </>
+      ) : (
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={expose.isPending}
+          onClick={() => expose.mutate({ deviceId })}
+        >
+          Enable
+        </Button>
+      )}
     </div>
   );
 }

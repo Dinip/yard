@@ -8,6 +8,13 @@
       "when": 1785876938581,
       "tag": "0000_soft_bastion",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1785966661771,
+      "tag": "0001_icy_frightful_four",
+      "breakpoints": true
     }
   ]
 }

@@ -203,6 +203,16 @@ impl DeviceBackend for MockBackend {
                 Platform::Android => "arm64-v8a".into(),
             }),
             sdk: matches!(self.platform, Platform::Android).then_some(34),
+            // Android-shaped identity, so the device page can be exercised
+            // without hardware. iOS reports none of it, which is also what the
+            // real backend does.
+            serial: Some(self.id.clone()),
+            brand: matches!(self.platform, Platform::Android).then(|| "google".into()),
+            build_id: matches!(self.platform, Platform::Android).then(|| "UD1A.230803.041".into()),
+            security_patch: matches!(self.platform, Platform::Android)
+                .then(|| "2026-05-01".into()),
+            abi_list: matches!(self.platform, Platform::Android)
+                .then(|| "arm64-v8a,armeabi-v7a,armeabi".into()),
             display: Some(Display {
                 width,
                 height,

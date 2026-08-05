@@ -46,11 +46,19 @@ impl Device {
     pub async fn snapshot(&self) -> DeviceSnapshot {
         let info = self.info.read().await.clone();
         let status = *self.status.read().await;
-        snapshot_from(&self.id, status, info.as_ref())
+        // The codec the stream is actually running, read without waiting: a
+        // device that is not streaming simply has none to report.
+        let codec = self.backend.video().current_codec().map(|c| c.codec);
+        snapshot_from(&self.id, status, info.as_ref(), codec)
     }
 }
 
-fn snapshot_from(id: &str, status: DeviceStatus, info: Option<&DeviceInfo>) -> DeviceSnapshot {
+fn snapshot_from(
+    id: &str,
+    status: DeviceStatus,
+    info: Option<&DeviceInfo>,
+    stream_codec: Option<String>,
+) -> DeviceSnapshot {
     match info {
         Some(info) => DeviceSnapshot {
             id: id.to_owned(),
@@ -62,6 +70,11 @@ fn snapshot_from(id: &str, status: DeviceStatus, info: Option<&DeviceInfo>) -> D
             os_version: info.os_version.clone(),
             abi: info.abi.clone(),
             sdk: info.sdk,
+            serial: info.serial.clone(),
+            brand: info.brand.clone(),
+            build_id: info.build_id.clone(),
+            security_patch: info.security_patch.clone(),
+            abi_list: info.abi_list.clone(),
             display: info.display.clone(),
             battery: (info.battery_level.is_some() || info.battery_state.is_some()).then(|| {
                 Battery {
@@ -69,8 +82,7 @@ fn snapshot_from(id: &str, status: DeviceStatus, info: Option<&DeviceInfo>) -> D
                     state: info.battery_state.clone(),
                 }
             }),
-            // Filled in by the session server once the codec handshake lands.
-            stream_codec: None,
+            stream_codec,
             adb_port: None,
             note: None,
         },
@@ -86,9 +98,14 @@ fn snapshot_from(id: &str, status: DeviceStatus, info: Option<&DeviceInfo>) -> D
             os_version: None,
             abi: None,
             sdk: None,
+            serial: None,
+            brand: None,
+            build_id: None,
+            security_patch: None,
+            abi_list: None,
             display: None,
             battery: None,
-            stream_codec: None,
+            stream_codec,
             adb_port: None,
             note: None,
         },

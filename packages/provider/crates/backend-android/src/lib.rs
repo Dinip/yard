@@ -381,6 +381,12 @@ impl DeviceBackend for AndroidBackend {
             os_version: get("ro.build.version.release"),
             abi: get("ro.product.cpu.abi"),
             sdk: get("ro.build.version.sdk").and_then(|sdk| sdk.parse().ok()),
+            // All from the single `getprop` read above — no extra round-trip.
+            serial: get("ro.serialno").or_else(|| Some(self.options.serial.clone())),
+            brand: get("ro.product.brand"),
+            build_id: get("ro.build.display.id"),
+            security_patch: get("ro.build.version.security_patch"),
+            abi_list: get("ro.product.cpu.abilist"),
             display,
             battery_level: parse_battery_level(&battery),
             battery_state: parse_battery_state(&battery),

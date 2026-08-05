@@ -86,6 +86,16 @@ pub struct DeviceSnapshot {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub sdk: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub serial: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub brand: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub build_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub security_patch: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub abi_list: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub display: Option<Display>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub battery: Option<Battery>,
@@ -109,6 +119,7 @@ pub struct AppInfo {
     pub system: Option<bool>,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum CommandPayload {
@@ -156,6 +167,7 @@ pub struct CommandData {
     pub adb_port: Option<i64>,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum ProviderMessage {
@@ -209,6 +221,7 @@ pub enum ProviderMessage {
     },
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum CoordinatorMessage {
@@ -235,6 +248,7 @@ pub struct PointerPoint {
     pub y: f64,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum ClientMessage {
@@ -260,6 +274,7 @@ pub enum ClientMessage {
     Pong { at: i64 },
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum ServerMessage {
