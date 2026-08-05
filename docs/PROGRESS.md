@@ -507,7 +507,7 @@ Android metadata read.
 
 | Item | State | Where |
 |---|---|---|
-| `controls="overlay"` — auto-hiding icon bar over the video | ✅ | `web/src/components/device-console.tsx` |
+| `controls="overlay"` — corner handle expanding to an icon bar | ✅ | `web/src/components/device-console.tsx` |
 | Popout: video fills the window, no column padding | ✅ | `web/src/routes/_session/devices.$deviceId.popout.tsx` |
 | `BroadcastChannel` presence — one stream at a time | ✅ | `web/src/hooks/use-popout-presence.ts` |
 | Parent suspends and offers "Bring it back here" | ✅ | `web/.../devices.$deviceId.tsx` |
@@ -531,10 +531,18 @@ That guard cost a user who closed the parent tab their device mid-session, and
 with phase 10's idle timeout as the real backstop it is no longer load-bearing.
 Both windows renew now; whichever is streaming keeps the reservation.
 
-The overlay bar renders the *same* action list as the toolbar — one array, two
-renderings — so the popout cannot drift into being the lesser window. It is
-`pointer-events-none` while faded, or an invisible bar would swallow taps meant
-for the bottom of the device's screen.
+The overlay renders the *same* action list as the toolbar — one array, two
+renderings — so the popout cannot drift into being the lesser window.
+
+**Where it sits was decided on a real device.** The first version was a bar
+across the bottom that faded after a pause, and on any phone with a home
+indicator it covered exactly the wrong strip: the gesture area. Auto-hiding did
+not save it, since the bar has to be visible to be used and is then sitting on
+the swipe-up. It is now a single small handle in the *top-right*, inset from the
+corner — the bottom edge is the home indicator, the extreme corner is where iOS
+starts the control-centre pull, and everything else is the device's. Hover or
+focus expands the full bar; clicking the handle pins it open, because a pointer
+that cannot hover still has to reach the controls.
 
 **Verification is manual and outstanding:** pop out and watch the parent's
 WebSocket close, close the popout and watch the parent resume within ~5s,

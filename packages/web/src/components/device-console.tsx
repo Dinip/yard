@@ -4,19 +4,17 @@ import {
   ClipboardCopy,
   ClipboardPaste,
   ExternalLink,
+  MoreHorizontal,
   RotateCw,
   Upload,
 } from "lucide-react";
-import { type DragEvent, useEffect, useRef, useState } from "react";
+import { type DragEvent, useRef, useState } from "react";
 import { toast } from "sonner";
 import { DeviceScreen } from "@/components/device-screen";
 import { Button } from "@/components/ui/button";
 import { useDeviceSession } from "@/hooks/use-device-session";
 import { fetchScreenshot, installApp } from "@/lib/screen/session";
 import { cn } from "@/lib/utils";
-
-/** How long the overlay bar lingers after the pointer stops moving. */
-const OVERLAY_LINGER = 2_500;
 
 /**
  * The whole control surface: screen, input, clipboard, screenshot, rotate and
@@ -36,9 +34,10 @@ export function DeviceConsole({
   className?: string;
   showPopout?: boolean;
   /**
-   * `"overlay"` floats the same actions over the video instead of below it.
-   * The popout is a window sized to a screen; controls competing with it for
-   * space is the whole reason it felt like half a feature.
+   * `"overlay"` puts the same actions behind a corner handle over the video
+   * instead of in a row below it. The popout is a window sized to a screen;
+   * controls competing with it for space is the whole reason it felt like half
+   * a feature.
    */
   controls?: "toolbar" | "overlay";
 }) {
@@ -46,25 +45,11 @@ export function DeviceConsole({
   const session = useDeviceSession(deviceId, canvasRef, active);
   const [install, setInstall] = useState<{ name: string; fraction: number } | null>(null);
   const [dragging, setDragging] = useState(false);
-  const [controlsVisible, setControlsVisible] = useState(true);
-  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  /** Overlay only: reveal on movement, fade back out after a pause. */
-  const wake = () => {
-    if (controls !== "overlay") return;
-    setControlsVisible(true);
-    if (hideTimer.current) clearTimeout(hideTimer.current);
-    hideTimer.current = setTimeout(() => setControlsVisible(false), OVERLAY_LINGER);
-  };
-
-  useEffect(() => {
-    if (controls !== "overlay") return;
-    const timer = setTimeout(() => setControlsVisible(false), OVERLAY_LINGER);
-    return () => {
-      clearTimeout(timer);
-      if (hideTimer.current) clearTimeout(hideTimer.current);
-    };
-  }, [controls]);
+  // Overlay only: the corner handle is expanded while hovered or focused, and
+  // `pinned` keeps it open for anyone who clicked rather than hovered.
+  const [hovering, setHovering] = useState(false);
+  const [pinned, setPinned] = useState(false);
+  const controlsOpen = hovering || pinned;
 
   const upload = async (file: File) => {
     setInstall({ name: file.name, fraction: 0 });
@@ -169,36 +154,63 @@ export function DeviceConsole({
       }}
       onDragLeave={() => setDragging(false)}
       onDrop={onDrop}
-      onPointerMove={wake}
     >
       <div className="relative flex min-h-0 flex-1">
         <DeviceScreen session={session} canvasRef={canvasRef} className="flex-1" />
 
         {controls === "overlay" && (
+          // Top-right, and inset from the corner: the bottom edge belongs to
+          // the device's home indicator — a bar there covers it and swallows
+          // the swipe-up gesture — and the extreme corner is where iOS starts
+          // the control-centre pull. What is left over the screen when idle is
+          // one small handle.
           <div
-            // `pointer-events-none` while faded, or an invisible bar would eat
-            // taps meant for the bottom of the screen.
-            className={cn(
-              "absolute inset-x-0 bottom-0 flex justify-center pb-3 transition-opacity duration-200 focus-within:pointer-events-auto focus-within:opacity-100 hover:pointer-events-auto hover:opacity-100",
-              controlsVisible ? "opacity-100" : "pointer-events-none opacity-0",
-            )}
+            role="toolbar"
+            aria-label="Device controls"
+            className="absolute top-3 right-3 flex items-center justify-end gap-1"
+            onPointerEnter={() => setHovering(true)}
+            onPointerLeave={() => setHovering(false)}
+            onFocus={() => setHovering(true)}
+            onBlur={(event) => {
+              // Only when focus left the group entirely, or tabbing from one
+              // action to the next would collapse the bar mid-keyboard-use.
+              if (!event.currentTarget.contains(event.relatedTarget)) setHovering(false);
+            }}
           >
-            <div className="flex items-center gap-1 rounded-full border bg-background/85 px-2 py-1 shadow-sm backdrop-blur">
-              {actions.map((action) => (
-                <Button
-                  key={action.key}
-                  variant="ghost"
-                  size="icon"
-                  disabled={!active}
-                  title={action.label}
-                  aria-label={action.label}
-                  onClick={action.run}
-                >
-                  <action.icon className="size-4" />
-                </Button>
-              ))}
-              <InstallButton disabled={!active} onFile={upload} iconOnly />
-            </div>
+            {controlsOpen && (
+              <div className="flex items-center gap-1 rounded-full border bg-background/85 px-2 py-1 shadow-sm backdrop-blur">
+                {actions.map((action) => (
+                  <Button
+                    key={action.key}
+                    variant="ghost"
+                    size="icon"
+                    disabled={!active}
+                    title={action.label}
+                    aria-label={action.label}
+                    onClick={action.run}
+                  >
+                    <action.icon className="size-4" />
+                  </Button>
+                ))}
+                <InstallButton disabled={!active} onFile={upload} iconOnly />
+              </div>
+            )}
+            <Button
+              variant="ghost"
+              size="icon"
+              // Click to pin, for a pointer that cannot hover — a touchscreen
+              // reading the farm, or anyone who would rather not hold still.
+              onClick={() => setPinned((current) => !current)}
+              aria-expanded={controlsOpen}
+              aria-label={controlsOpen ? "Hide device controls" : "Show device controls"}
+              title="Device controls"
+              className={cn(
+                "rounded-full border bg-background/85 shadow-sm backdrop-blur transition-opacity",
+                controlsOpen ? "opacity-100" : "opacity-60 hover:opacity-100",
+              )}
+            >
+              <MoreHorizontal className="size-4" />
+            </Button>
           </div>
         )}
 
