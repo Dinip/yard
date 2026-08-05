@@ -73,7 +73,12 @@ struct CachedKey {
 pub struct TokenVerifier {
     jwks_url: String,
     provider_id: String,
-    issuer: String,
+    /// Set from `hello.ack`, because only the coordinator knows it.
+    ///
+    /// A provider dials an address; tokens are signed with the origin browsers
+    /// use. Those differ in every deployment that is not a laptop, so this
+    /// starts as the configured address and is corrected on registration.
+    issuer: std::sync::RwLock<String>,
     http: reqwest::Client,
     keys: RwLock<Vec<Arc<CachedKey>>>,
     last_refresh: RwLock<Option<std::time::Instant>>,
@@ -84,13 +89,26 @@ impl TokenVerifier {
         Self {
             jwks_url,
             provider_id,
-            issuer,
+            issuer: std::sync::RwLock::new(issuer),
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(10))
                 .build()
                 .expect("building the JWKS http client"),
             keys: RwLock::new(Vec::new()),
             last_refresh: RwLock::new(None),
+        }
+    }
+
+    /// Adopt the issuer the coordinator reported in `hello.ack`.
+    ///
+    /// Tokens minted before this lands are rejected, which is correct: until
+    /// the provider has registered it has no authority to trust anything.
+    pub fn set_issuer(&self, issuer: String) {
+        if let Ok(mut current) = self.issuer.write() {
+            if *current != issuer {
+                info!(from = %current, to = %issuer, "issuer updated from hello.ack");
+                *current = issuer;
+            }
         }
     }
 
@@ -172,7 +190,12 @@ impl TokenVerifier {
         let kid = decode_kid(token);
 
         let mut validation = Validation::new(Algorithm::EdDSA);
-        validation.set_issuer(&[self.issuer.as_str()]);
+        let issuer = self
+            .issuer
+            .read()
+            .map(|issuer| issuer.clone())
+            .unwrap_or_default();
+        validation.set_issuer(&[issuer.as_str()]);
         validation.set_audience(&[SESSION_TOKEN_AUDIENCE]);
         validation.set_required_spec_claims(&["exp", "aud", "iss"]);
         // jsonwebtoken defaults to 60s of leeway, which would *double* the

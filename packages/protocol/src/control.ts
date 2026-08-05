@@ -128,6 +128,17 @@ export const CoordinatorMessage = named(
       /** Absolute URL of the coordinator's JWKS; fetched once and cached. */
       jwksUrl: z.string(),
       /**
+       * The `iss` every session token carries, which is the coordinator's
+       * **public** URL.
+       *
+       * A provider cannot infer this from the address it dialled. Those are the
+       * same string only in development: in any real deployment the provider
+       * reaches the coordinator over an internal address or a service name,
+       * while tokens are signed with the origin browsers use. Inferring it
+       * meant every session was refused with `InvalidIssuer`.
+       */
+      issuer: z.string(),
+      /**
        * Browser origins allowed to call the provider's session and artifact
        * planes. The provider is always a *different* origin from the web app —
        * that is the entire point of keeping the coordinator off the data path —

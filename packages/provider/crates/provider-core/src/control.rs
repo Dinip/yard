@@ -60,6 +60,9 @@ pub struct ControlClient {
     handler: Arc<dyn CommandHandler>,
     /// Written on every `hello.ack`; read by the browser-facing server.
     web_origins: WebOrigins,
+    /// Also written on `hello.ack`: only the coordinator knows which issuer it
+    /// signs session tokens with.
+    verifier: Arc<crate::auth::TokenVerifier>,
     tx: mpsc::UnboundedSender<ProviderMessage>,
     rx: mpsc::UnboundedReceiver<ProviderMessage>,
 }
@@ -69,12 +72,14 @@ impl ControlClient {
         config: Arc<Config>,
         handler: Arc<dyn CommandHandler>,
         web_origins: WebOrigins,
+        verifier: Arc<crate::auth::TokenVerifier>,
     ) -> Self {
         let (tx, rx) = mpsc::unbounded_channel();
         Self {
             config,
             handler,
             web_origins,
+            verifier,
             tx,
             rx,
         }
@@ -210,6 +215,7 @@ impl ControlClient {
                 protocol_version,
                 heartbeat_interval_ms,
                 jwks_url,
+                issuer,
                 web_origins,
             } => {
                 if protocol_version != PROTOCOL_VERSION {
@@ -224,9 +230,11 @@ impl ControlClient {
                     origins = ?web_origins,
                     "registered with coordinator"
                 );
-                // Until this lands the artifact plane refuses every browser
-                // request, so it must be applied before anything else.
+                // Until these land the provider refuses everything a browser
+                // sends: the artifact plane has no allowed origin, and every
+                // session token fails its issuer check.
                 self.web_origins.set(web_origins);
+                self.verifier.set_issuer(issuer);
 
                 let mut interval = tokio::time::interval(Duration::from_millis(
                     heartbeat_interval_ms.max(1) as u64,

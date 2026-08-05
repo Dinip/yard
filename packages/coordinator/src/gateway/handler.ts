@@ -212,6 +212,7 @@ export class GatewaySession {
       protocolVersion: PROTOCOL_VERSION,
       heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS,
       jwksUrl: new URL(JWKS_PATH, env.PUBLIC_URL).toString(),
+      issuer: env.PUBLIC_URL,
       webOrigins: env.WEB_ORIGIN,
     });
 

@@ -726,3 +726,41 @@ async fn an_unknown_origin_gets_no_cors_grant() {
         "the artifact plane must never allow credentials"
     );
 }
+
+/// The provider dials one address and the coordinator signs with another.
+///
+/// This is the normal case in any real deployment — a service name, an internal
+/// address, a tunnel — and it was broken: the provider inferred the issuer from
+/// what it dialled, so every token failed `InvalidIssuer` and no session could
+/// ever open. Development never saw it because both were `localhost:3000`.
+#[tokio::test]
+async fn the_issuer_comes_from_hello_ack_not_from_the_dialled_address() {
+    let h = start().await;
+    h.authorize().await;
+
+    // Deliberately not the address the provider dialled: that difference is
+    // what production has and development does not.
+    let public_issuer = "https://farm.example.com";
+    let token = h.signer.token(public_issuer, DEVICE_ID, RESERVATION, 60);
+
+    let verifier = Arc::new(TokenVerifier::new(
+        format!("{}{}", h.issuer, farm_protocol::JWKS_PATH),
+        PROVIDER_ID.into(),
+        // What a provider knows before registering: the address it dialled.
+        h.issuer.clone(),
+    ));
+    verifier.refresh().await.expect("fetching the test JWKS");
+
+    // Before `hello.ack`, this is exactly the production failure.
+    assert!(
+        verifier.verify(&token).await.is_err(),
+        "a token from an unknown issuer must not verify"
+    );
+
+    verifier.set_issuer(public_issuer.into());
+    let claims = verifier
+        .verify(&token)
+        .await
+        .expect("the coordinator's own issuer must be accepted");
+    assert_eq!(claims.device_id, DEVICE_ID);
+}

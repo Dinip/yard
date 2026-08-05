@@ -112,7 +112,12 @@ async fn main() -> Result<()> {
     supervisor.bootstrap().await;
 
     let web_origins = WebOrigins::new();
-    let control = ControlClient::new(config.clone(), supervisor.clone(), web_origins.clone());
+    let control = ControlClient::new(
+        config.clone(),
+        supervisor.clone(),
+        web_origins.clone(),
+        verifier.clone(),
+    );
     supervisor.attach_control(control.sender()).await;
 
     let state = ServerState {
