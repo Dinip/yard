@@ -15,6 +15,10 @@ target/
 .env.*
 !.env.example
 
+# The provider's real configuration: device serials and host addresses are
+# specific to one machine. provider.example.yaml is the one that ships.
+packages/provider/provider.yaml
+
 # logs
 logs/
 *.log

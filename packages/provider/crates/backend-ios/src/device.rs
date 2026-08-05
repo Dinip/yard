@@ -212,14 +212,53 @@ impl DeviceHost {
     }
 }
 
-/// Resolve a udid to a usbmux provider.
+/// Where usbmuxd is, honouring `USBMUXD_SOCKET_ADDRESS`.
 ///
-/// Plain local usbmuxd: this provider runs one process per host, next to the
-/// devices, so `stf-ios-provider`'s `USBMUXD_SOCKET_ADDRESS`/socat shim — which
-/// existed only to reach the host's usbmuxd from inside a per-device container —
-/// has nothing left to do.
+/// Normally this is the host's own socket and the default is right. The
+/// exception is a containerised provider on macOS, where Docker cannot pass USB
+/// through *or* bind-mount the host's unix socket, so usbmuxd is reached over a
+/// TCP bridge instead — see `scripts/usbmuxd-bridge.ts`.
+///
+/// `idevice`'s own `from_env_var` handles `ip:port` and unix paths but not
+/// hostnames, and the address that matters here is `host.docker.internal`. So
+/// the resolution is done here, exactly as `stf-ios-provider` had to.
+async fn usbmuxd_address() -> UsbmuxdAddr {
+    let Ok(configured) = std::env::var("USBMUXD_SOCKET_ADDRESS") else {
+        return UsbmuxdAddr::from_env_var().unwrap_or_default();
+    };
+
+    if !configured.contains(':') {
+        return UsbmuxdAddr::UnixSocket(configured);
+    }
+    if let Ok(socket) = configured.parse::<std::net::SocketAddr>() {
+        return UsbmuxdAddr::TcpSocket(socket);
+    }
+    // Owned rather than borrowed: the resolver's future is generic over the
+    // address and a `&str` ties it to this frame.
+    match tokio::net::lookup_host(configured.clone()).await {
+        Ok(mut resolved) => match resolved.next() {
+            Some(socket) => {
+                info!(configured, %socket, "resolved usbmuxd address");
+                UsbmuxdAddr::TcpSocket(socket)
+            }
+            None => {
+                warn!(
+                    configured,
+                    "usbmuxd address resolved to nothing — using the default"
+                );
+                UsbmuxdAddr::from_env_var().unwrap_or_default()
+            }
+        },
+        Err(err) => {
+            warn!(configured, %err, "could not resolve the usbmuxd address");
+            UsbmuxdAddr::from_env_var().unwrap_or_default()
+        }
+    }
+}
+
+/// Resolve a udid to a usbmux provider.
 pub async fn usbmux_provider(udid: &str) -> Result<Box<dyn IdeviceProvider>> {
-    let address = UsbmuxdAddr::from_env_var().unwrap_or_default();
+    let address = usbmuxd_address().await;
     let mut usbmuxd = address.connect(1).await.context("connect to usbmuxd")?;
 
     let device = usbmuxd

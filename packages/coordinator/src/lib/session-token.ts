@@ -18,7 +18,13 @@ const ALG = "EdDSA";
  */
 async function loadKeys() {
   if (env.SESSION_TOKEN_PRIVATE_KEY) {
-    const privateKey = await importPKCS8(env.SESSION_TOKEN_PRIVATE_KEY, ALG);
+    // `extractable` is not optional: jose imports keys non-extractable by
+    // default, and the JWK below is derived by exporting this one. Without it
+    // the coordinator throws at boot — but only when the key is *configured*,
+    // which is to say only in production.
+    const privateKey = await importPKCS8(env.SESSION_TOKEN_PRIVATE_KEY, ALG, {
+      extractable: true,
+    });
     // jose cannot derive a public key from a private one, so the JWK is built
     // from the private JWK with the private component dropped.
     const jwk = await exportJWK(privateKey);

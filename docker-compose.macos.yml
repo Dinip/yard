@@ -1,0 +1,27 @@
+# macOS overlay:
+#   docker compose -f docker-compose.yml -f docker-compose.macos.yml \
+#     --profile provider up
+#
+# Docker Desktop runs containers in a Linux VM and cannot pass USB through, so a
+# provider container can never see a phone directly. Both device backends reach
+# the host's daemons over TCP instead:
+#
+#   Android  the host's adb server, which already speaks TCP on :5037
+#   iOS      usbmuxd, which does not — run the bridge first:
+#            bun packages/provider/scripts/usbmuxd-bridge.ts
+#
+# This is a development shape, not a deployment one. A real provider host is
+# Linux with the USB bus passed into the container.
+
+services:
+  provider:
+    environment:
+      # Resolved inside the container to the host; the iOS backend does the
+      # lookup itself because idevice's parser handles only IPs and paths.
+      USBMUXD_SOCKET_ADDRESS: host.docker.internal:${USBMUXD_BRIDGE_PORT:-27015}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # The coordinator is reached over the compose network, but the browser
+    # reaches the session plane on the published port.
+    networks:
+      - default

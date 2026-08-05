@@ -16,14 +16,23 @@ COPY Cargo.toml Cargo.lock ./
 COPY packages/provider/crates/farm-protocol/Cargo.toml packages/provider/crates/farm-protocol/
 COPY packages/provider/crates/provider-core/Cargo.toml packages/provider/crates/provider-core/
 COPY packages/provider/crates/backend-mock/Cargo.toml  packages/provider/crates/backend-mock/
+COPY packages/provider/crates/backend-ios/Cargo.toml   packages/provider/crates/backend-ios/
+COPY packages/provider/crates/backend-android/Cargo.toml packages/provider/crates/backend-android/
 COPY packages/provider/crates/farm-provider/Cargo.toml packages/provider/crates/farm-provider/
+# The scrcpy server is embedded with include_bytes!, so it has to be present
+# for the stub build too — a missing file here fails compilation, not linking.
+COPY packages/provider/vendor ./packages/provider/vendor
 RUN mkdir -p packages/provider/crates/farm-protocol/src \
              packages/provider/crates/provider-core/src \
              packages/provider/crates/backend-mock/src \
+             packages/provider/crates/backend-ios/src \
+             packages/provider/crates/backend-android/src \
              packages/provider/crates/farm-provider/src \
  && echo "" > packages/provider/crates/farm-protocol/src/lib.rs \
  && echo "" > packages/provider/crates/provider-core/src/lib.rs \
  && echo "" > packages/provider/crates/backend-mock/src/lib.rs \
+ && echo "" > packages/provider/crates/backend-ios/src/lib.rs \
+ && echo "" > packages/provider/crates/backend-android/src/lib.rs \
  && echo "fn main() {}" > packages/provider/crates/farm-provider/src/main.rs \
  && cargo build --release -p farm-provider \
  && rm -rf packages/provider/crates/*/src
@@ -33,14 +42,19 @@ COPY packages/provider ./packages/provider
 RUN find packages/provider -name '*.rs' -exec touch {} + \
  && cargo build --release -p farm-provider
 
-# debian-slim rather than distroless/cc: the Android backend needs the `adb`
-# binary and the vendored scrcpy-server jar (phase 4).
+# debian-slim rather than distroless/cc: the Android backend needs an adb
+# server, which owns the USB transport and cannot be spoken to over TCP without
+# one existing somewhere.
 FROM debian:bookworm-slim AS runtime
 
 # ca-certificates is required, not optional: the control plane and the JWKS
 # fetch both use the OS trust store (see reqwest's rustls-native-certs).
+#
+# adb is the Android backend's one host dependency. The scrcpy server needs no
+# install — it is embedded in the binary and pushed to the phone at session
+# start — and iOS needs only usbmuxd, which is the host's.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates \
+ && apt-get install -y --no-install-recommends ca-certificates adb \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --system --uid 10001 --create-home farm \
  && mkdir -p /var/lib/farm/scratch \

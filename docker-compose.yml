@@ -69,24 +69,35 @@ services:
       - caddy-data:/data
       - caddy-config:/config
 
-  # Needs host device access (usbmuxd for iOS, /dev/bus/usb for Android), so it
-  # is opt-in: `docker compose --profile provider up`.
+  # Needs host device access, so it is opt-in:
+  #   docker compose --profile provider up
+  #
+  # Linux, where the devices are: uncomment the volumes and `privileged`. Mount
+  # the whole /dev/bus/usb *directory*, not individual --device nodes — a phone
+  # that reboots re-enumerates under a new node and a static binding silently
+  # loses it. The host must not run its own adb server; only one may own a
+  # device.
+  #
+  # macOS: Docker cannot pass USB through at all. Reach the host's daemons
+  # instead — see docker-compose.macos.yml, which is what this repo's own
+  # testing uses.
   provider:
     profiles: ["provider"]
     build:
       context: .
       dockerfile: packages/provider/Dockerfile
     restart: unless-stopped
-    network_mode: host
-    privileged: true
+    ports:
+      - "${PROVIDER_PORT:-7100}:7100"
     environment:
       FARM_CONFIG: /etc/farm/provider.yaml
       FARM_PROVIDER_TOKEN: ${FARM_PROVIDER_TOKEN:?issue one under /admin/providers}
       FARM_LOG: ${FARM_LOG:-info}
     volumes:
       - ./packages/provider/provider.yaml:/etc/farm/provider.yaml:ro
-      - /var/run/usbmuxd:/var/run/usbmuxd
-      - /dev/bus/usb:/dev/bus/usb
+      # - /var/run/usbmuxd:/var/run/usbmuxd     # Linux: iOS
+      # - /dev/bus/usb:/dev/bus/usb             # Linux: Android
+    # privileged: true                          # Linux: USB access
     tmpfs:
       # Staged APK/IPA uploads only. Nothing here outlives an install.
       - /var/lib/farm/scratch:size=4g

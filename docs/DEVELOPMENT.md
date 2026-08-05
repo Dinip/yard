@@ -59,6 +59,51 @@ FARM_PROVIDER_TOKEN=pft_… ./target/release/farm-provider --config /tmp/provide
 `--check` validates the config and exits. Still no hardware required: mock
 devices stream synthetic video and accept input, uploads and screenshots.
 
+## Running the whole thing in Docker
+
+The production shape — Caddy in front, coordinator and web in containers,
+migrations applied by the entrypoint, a real signing key:
+
+```bash
+cp .env.example .env.docker      # then fill in, or see below
+docker compose --env-file .env.docker up -d
+docker compose --env-file .env.docker exec coordinator \
+  bun /app/grant-admin.js you@example.com
+```
+
+`PUBLIC_URL=http://farm.localhost` is worth knowing about: `*.localhost` is a
+*potentially trustworthy origin* in every browser, so WebCodecs gets its secure
+context with no certificate to trust. A real deployment sets `SITE_ADDRESS` to
+a hostname and Caddy provisions TLS automatically.
+
+**Set `SESSION_TOKEN_PRIVATE_KEY`** (`openssl genpkey -algorithm ed25519`).
+Unset means a new keypair per restart, and every live session breaks until
+providers refetch the JWKS.
+
+### The provider container
+
+```bash
+docker compose --env-file .env.docker --profile provider up -d
+```
+
+On **Linux** uncomment the USB mounts in `docker-compose.yml` — the whole
+`/dev/bus/usb` directory, not individual `--device` nodes, because a phone that
+reboots re-enumerates under a new node — and make sure the host runs no adb
+server of its own, since only one may own a device.
+
+On **macOS** Docker cannot pass USB through at all, so the container talks to
+the host's daemons instead:
+
+```bash
+bun packages/provider/scripts/usbmuxd-bridge.ts   # iOS only; leave it running
+docker compose --env-file .env.docker \
+  -f docker-compose.yml -f docker-compose.macos.yml --profile provider up -d
+```
+
+Android needs no bridge — the adb server already speaks TCP, and the device's
+`adb_server` option points at it. This is a development shape; a provider host
+in production is Linux with the bus passed in.
+
 ## Everyday commands
 
 ```bash
