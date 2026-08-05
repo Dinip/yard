@@ -15,6 +15,7 @@ farm-protocol.workspace = true
 provider-core.workspace = true
 backend-mock.workspace = true
 backend-ios.workspace = true
+backend-android.workspace = true
 
 tokio.workspace = true
 clap.workspace = true

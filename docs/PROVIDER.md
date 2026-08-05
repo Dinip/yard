@@ -174,6 +174,42 @@ Display geometry comes from the SPS. `mobilegestalt` — what `stf-ios-provider`
 read — answers `MobileGestaltDeprecated` on iOS 26/27, so it is a fallback for
 older devices only.
 
+## `backend-android`
+
+```
+crates/backend-android/src/
+├── adb.rs      the adb server's host protocol — transport, shell, sync, forward
+├── scrcpy.rs   pushing/starting the server, its sockets, its control protocol
+├── h264.rs     Annex-B → avcC, so the browser gets the framing it wants
+└── lib.rs      session supervision and the DeviceBackend impl
+```
+
+The provider speaks adb's TCP protocol directly instead of shelling out: one
+dependency instead of a subprocess per operation. Two framings live in that one
+protocol and mixing them **hangs rather than errors** — the host protocol uses a
+4-digit hex length prefix, the sync subprotocol a 4-byte little-endian one.
+
+`adb_server` is per-device config. A Linux provider bundles adb in its image
+with `/dev/bus/usb` mounted (the directory, not a `--device` node: a phone that
+re-enumerates after a reboot gets a new node and a static binding would silently
+lose it). macOS cannot pass USB into Docker at all, so there the provider points
+at the host's adb server.
+
+The scrcpy server is **embedded in the binary** and pushed to the phone at
+session start, so nothing is installed on a provider host for it. It is started
+with `tunnel_forward=true`, which makes it listen on a device-side abstract
+socket that the adb transport can open directly — no `adb reverse`, no host port
+per device.
+
+Its wire format was read off a real device by `examples/scrcpy_probe.rs`, not
+inferred from scrcpy's source, because that source changes between releases.
+Re-run the probe when bumping the pin: the version string in `scrcpy.rs` must
+match the jar, and the server refuses a mismatch rather than half-working.
+
+Video arrives as Annex-B and is rewritten to length-prefixed NALUs, with the
+config packet's SPS/PPS lifted into an `avcC` sent once out of band. Both halves
+matter: the Annex-B path tears in Chrome under motion.
+
 ## Backend trait
 
 ```rust

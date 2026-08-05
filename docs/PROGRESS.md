@@ -162,19 +162,53 @@ null because iOS has no API-level equivalent worth inventing.
 
 ---
 
-## Phase 4 — Android backend ⬜
+## Phase 4 — Android backend ✅
 
-| Item | State |
-|---|---|
-| adb host-protocol client (`host:track-devices`, `sync:`, `shell:`) | ⬜ |
-| Pinned `scrcpy-server` vendored; video socket + `avcC` extraction | ⬜ |
-| scrcpy control socket: touch, keycodes, text, clipboard, rotation | ⬜ |
-| Apps: `pm install/uninstall/list`, `am start` | ⬜ |
-| `screencap -p` screenshot + MJPEG fallback source | ⬜ |
-| adb remote-debug transport proxy on a per-device port | ⬜ |
+*Done when: a phone appears, reserves, streams and takes touch input
+end-to-end.* — **met**
 
-> Highest-uncertainty phase. Validate the adb client and scrcpy handshake against
-> a real device *before* building anything on top of them.
+| Item | State | Where |
+|---|---|---|
+| adb host-protocol client (transport, `shell:`, `sync:`, forward) | ✅ | `backend-android/src/adb.rs` |
+| Pinned `scrcpy-server` embedded; handshake + video socket | ✅ | `backend-android/src/scrcpy.rs` |
+| Annex-B → `avcC` rewrite | ✅ | `backend-android/src/h264.rs` |
+| Control socket: touch, keycodes, text, clipboard, rotation | ✅ | `backend-android/src/scrcpy.rs` |
+| Apps: `pm list/install/uninstall`, `monkey` launch | ✅ | `backend-android/src/lib.rs` |
+| `screencap -p` screenshot | ✅ | `backend-android/src/lib.rs` |
+| adb remote-debug transport proxy on a per-device port | ✅ | `backend-android/src/lib.rs` |
+
+The advice to validate before building paid for itself. The handshake was read
+off a real device by `examples/scrcpy_probe.rs` rather than inferred from
+scrcpy's source, and the first version of that probe *misparsed it* by calling
+`read()` once — a socket is free to hand over one byte at a time. Building the
+video reader on that reading would have produced a decoder fed with garbage and
+no obvious cause.
+
+What the probe found, on v4.1: a dummy byte, a 64-byte device name, the codec
+id `"h264"`, then flags/width/height, then `pts+flags`/`size` framed packets
+carrying **Annex-B**. The browser needs `avcC` and length prefixes — the
+Annex-B path is what tears in Chrome under motion, the same finding that drove
+the iOS side to hvcC — so the config packet's SPS/PPS become an
+`AVCDecoderConfigurationRecord` sent once out of band, and every frame is
+rewritten. `h264.rs` is the H.264 mirror of `backend-ios/src/hevc.rs`; they
+share no code because the bitstreams differ exactly where it matters.
+
+**Verified end-to-end on a Galaxy S25+, Android 15 (SDK 35):** the server is
+pushed and started, both sockets connect, the codec announces as
+`avc1.640020`, and the browser **paints the live home screen**. A drag on the
+canvas pages between home screens on the physical phone, and a clipboard read
+round-trips. Battery, SDK, ABI and geometry all reach the device list.
+
+**Two host dependencies became one.** The scrcpy server is embedded in the
+binary with `include_bytes!` and pushed to the phone at session start, so a
+provider host installs nothing for it. Only the adb server remains, because it
+owns the USB transport — and its address is config (`adb_server`), so a Linux
+host bundles adb in the provider image with the USB bus passed through, while
+macOS, where Docker cannot pass USB through at all, points at the host's server.
+
+**Not yet exercised on hardware:** APK install and uninstall, app launch, and
+the remote-debug proxy. They are the shell-command paths, which is the least
+surprising part of this backend, but "least surprising" is not "verified".
 
 ---
 

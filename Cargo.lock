@@ -889,6 +889,7 @@ name = "farm-provider"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "backend-android",
  "backend-ios",
  "backend-mock",
  "clap",

@@ -47,12 +47,27 @@ devices:
     options:
       platform: android
 
-  # Real devices, once their backends exist:
+  # Real devices:
   #
-  # - udid: 00008120-000C1D2E3F401234   # iOS 17.4+; phase 3b
+  # - udid: 00008120-000C1D2E3F401234   # iOS 17.4+
   #   backend: ios
   #   name: iPhone 15 Pro
+  #   options:
+  #     display_id: 0                     # 0 is the built-in screen
+  #     motion_idr: true                  # undo iOS motion resolution-collapse
   #
-  # - udid: R5CT10ABCDE                 # adb serial; phase 4
+  # - udid: R5CT10ABCDE                 # adb serial
   #   backend: android
   #   name: Pixel 8
+  #   options:
+  #     # Where the adb server is. It owns the USB transport, so it must run on
+  #     # the host the phones are plugged into. On Linux that is this image,
+  #     # with /dev/bus/usb mounted in; on macOS, where Docker cannot pass USB
+  #     # through, point at the host's server instead.
+  #     adb_server: 127.0.0.1:5037        # default
+  #     # Encode settings. The default caps the long edge at 1280 — a phone's
+  #     # native panel is far more than a browser window shows, and every extra
+  #     # pixel is bandwidth and encode latency.
+  #     max_size: 1280
+  #     bit_rate: 8000000
+  #     max_fps: 60

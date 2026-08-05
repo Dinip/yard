@@ -183,7 +183,12 @@ fn build_backend(device: &provider_core::config::DeviceConfig) -> Result<Arc<dyn
             Ok(backend_ios::IosBackend::new(options, device.name.clone()))
         }
         BackendKind::Android => {
-            bail!("the Android backend is not built yet (phase 4). Use `backend: mock` for now.")
+            let options = backend_android::AndroidOptions::parse(&device.udid, &device.options)
+                .with_context(|| format!("device {}", device.udid))?;
+            Ok(backend_android::AndroidBackend::new(
+                options,
+                device.name.clone(),
+            ))
         }
     }
 }
