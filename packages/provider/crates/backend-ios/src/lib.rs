@@ -98,6 +98,17 @@ impl IosOptions {
     }
 }
 
+/// The device's orientation → how far the *viewer* must turn the picture.
+///
+/// The inverse, not the same number. iOS draws the rotated UI inside a capture
+/// buffer that never moves, so a device at 90° hands over a picture already
+/// turned 90° — and undoing that means turning it back the other way. Setting
+/// the two equal renders every landscape upside down, which is exactly what a
+/// real iPhone showed.
+pub(crate) fn render_rotation_for(orientation: i64) -> i64 {
+    (360 - orientation.rem_euclid(360)).rem_euclid(360)
+}
+
 /// The pointer state machine.
 ///
 /// The pointer is a *state machine*, not a sequence of independent gestures.
@@ -211,9 +222,7 @@ impl IosBackend {
             width,
             height,
             rotation,
-            // The whole point on iOS: the frames are portrait and the content
-            // inside them is not, so the viewer has to put it right.
-            render_rotation: rotation,
+            render_rotation: rotation.map(render_rotation_for),
         });
     }
 
@@ -348,7 +357,7 @@ impl IosBackend {
                 // popout window is sized from.
                 scale: None,
                 rotation,
-                render_rotation: rotation,
+                render_rotation: rotation.map(render_rotation_for),
             });
         }
         match self.try_display().await {
@@ -403,7 +412,7 @@ impl IosBackend {
             height: height as i64,
             scale: Some(number("MainScreenScale").max(1.0)),
             rotation: self.geometry.rotation(),
-            render_rotation: self.geometry.rotation(),
+            render_rotation: self.geometry.rotation().map(render_rotation_for),
         })
     }
 }
@@ -733,6 +742,26 @@ impl DeviceBackend for IosBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The constant this file exists to get right.
+    ///
+    /// A device at 90° hands over a picture that is *already* turned 90°, so the
+    /// viewer turns it back by 270°, not by 90°. Reporting the orientation
+    /// itself renders every landscape upside down — which is what a real iPhone
+    /// showed, twice.
+    #[test]
+    fn the_viewer_turns_the_picture_back_not_the_same_way_again() {
+        assert_eq!(render_rotation_for(0), 0);
+        assert_eq!(render_rotation_for(90), 270);
+        assert_eq!(render_rotation_for(180), 180);
+        assert_eq!(render_rotation_for(270), 90);
+
+        // Applying the orientation and then the render rotation must land back
+        // where it started, whichever orientation the device is in.
+        for orientation in [0, 90, 180, 270] {
+            assert_eq!((orientation + render_rotation_for(orientation)) % 360, 0);
+        }
+    }
 
     #[test]
     fn options_default_to_the_built_in_display_with_motion_idr_on() {

@@ -379,7 +379,7 @@ async fn receive_video(
                         width: size.0,
                         height: size.1,
                         rotation,
-                        render_rotation: rotation,
+                        render_rotation: rotation.map(crate::render_rotation_for),
                     });
                 }
             }
