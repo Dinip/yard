@@ -1,4 +1,4 @@
-import { device, provider, providerToken } from "@farm/db";
+import { device, provider, providerToken, reservation } from "@farm/db";
 import {
   type CoordinatorMessage,
   type DeviceSnapshot,
@@ -6,7 +6,7 @@ import {
   PROTOCOL_VERSION,
   ProviderMessage,
 } from "@farm/protocol";
-import { and, eq, inArray, notInArray } from "drizzle-orm";
+import { and, eq, inArray, lt, notInArray } from "drizzle-orm";
 import { db } from "../db.ts";
 import { env } from "../env.ts";
 import { audit } from "../lib/audit.ts";
@@ -151,6 +151,27 @@ export class GatewaySession {
           .where(and(eq(device.id, msg.deviceId), eq(device.providerId, this.auth.providerId)));
         // Battery alone does not warrant waking every subscriber.
         break;
+
+      case "device.activity": {
+        // The provider is authoritative about use — it sees input the browser
+        // cannot vouch for, and adb traffic the browser cannot see at all.
+        //
+        // Clamped to now and guarded by `lt` because two sources write this
+        // column: a provider host whose clock runs fast must not be able to
+        // buy itself an extra hour, and neither source may wind it back.
+        const at = new Date(Math.min(msg.at, Date.now()));
+        await db
+          .update(reservation)
+          .set({ lastActivityAt: at })
+          .where(
+            and(
+              eq(reservation.deviceId, msg.deviceId),
+              eq(reservation.state, "active"),
+              lt(reservation.lastActivityAt, at),
+            ),
+          );
+        break;
+      }
 
       case "command.result":
         this.conn?.settle(msg.id, msg.ok, msg.data, msg.error);

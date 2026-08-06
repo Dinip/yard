@@ -1,6 +1,6 @@
 import { device, provider, reservation, user } from "@farm/db";
 import { TRPCError } from "@trpc/server";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { providers } from "../../gateway/registry.ts";
 import { audit } from "../../lib/audit.ts";
@@ -60,6 +60,7 @@ async function listDevices(db: import("@farm/db").Database) {
           ownerEmail: r.ownerEmail,
           startedAt: r.reservation.startedAt,
           expiresAt: r.reservation.expiresAt,
+          lastActivityAt: r.reservation.lastActivityAt,
         }
       : null,
   }));
@@ -213,12 +214,33 @@ export const deviceRouter = router({
       };
     }),
 
+  /**
+   * Keep a reservation alive, and optionally say when the tab was last used.
+   *
+   * `interactedAt` is the browser's floor under the provider's authoritative
+   * reporting: reading a crash log on a reserved device is still using it, and
+   * nothing reaches the device while that happens. It is clamped both ways —
+   * never into the future, never backwards — because two sources write this
+   * column and neither may be able to move the other's clock.
+   */
   renew: protectedProcedure
-    .input(z.object({ reservationId: z.string() }))
+    .input(z.object({ reservationId: z.string(), interactedAt: z.number().int().optional() }))
     .mutation(async ({ ctx, input }) => {
+      const interacted =
+        input.interactedAt === undefined
+          ? undefined
+          : new Date(Math.min(input.interactedAt, Date.now()));
+
       const [updated] = await ctx.db
         .update(reservation)
-        .set({ expiresAt: await expiryFromNow(ctx.db) })
+        .set({
+          expiresAt: await expiryFromNow(ctx.db),
+          ...(interacted
+            ? {
+                lastActivityAt: sql`greatest(${reservation.lastActivityAt}, ${interacted})`,
+              }
+            : {}),
+        })
         .where(
           and(
             eq(reservation.id, input.reservationId),

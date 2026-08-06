@@ -2,8 +2,8 @@ import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect } from "react";
 import { DeviceConsole } from "@/components/device-console";
+import { ReservationKeeper } from "@/components/reservation-keeper";
 import { usePopoutHeartbeat } from "@/hooks/use-popout-presence";
-import { useReservationRenewal } from "@/hooks/use-reservation-renewal";
 import { trpc } from "@/lib/trpc";
 
 /**
@@ -32,16 +32,6 @@ function PopoutPage() {
 
   const mine = device?.reservation?.userId === me?.id;
 
-  // Whichever window is streaming keeps the reservation. Phase 6 deliberately
-  // did the opposite — a popout left open should not hold a device nobody is
-  // watching — but that guard cost a user who closed the parent tab their
-  // device mid-session, and phase 10's idle timeout is the real backstop for
-  // the case it was written for.
-  useReservationRenewal(
-    mine ? device?.reservation?.id : undefined,
-    mine ? device?.reservation?.expiresAt : undefined,
-  );
-
   // Tells the parent tab to stand down, and closes this window when it asks
   // for the stream back.
   usePopoutHeartbeat(deviceId, Boolean(mine));
@@ -50,6 +40,18 @@ function PopoutPage() {
 
   return (
     <div className="flex h-svh flex-col bg-background">
+      {/* Whichever window is streaming keeps the reservation. Phase 6
+          deliberately did the opposite — a popout left open should not hold a
+          device nobody is watching — but that guard cost a user who closed the
+          parent tab their device mid-session, and the idle timeout is the real
+          backstop for the case it was written for. */}
+      {mine && (
+        <ReservationKeeper
+          reservationId={device.reservation?.id}
+          expiresAt={device.reservation?.expiresAt}
+          lastActivityAt={device.reservation?.lastActivityAt}
+        />
+      )}
       {mine ? (
         <DeviceConsole
           deviceId={deviceId}

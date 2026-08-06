@@ -379,12 +379,19 @@ async fn current_display(
 }
 
 async fn handle_client_message(
-    _state: &ServerState,
+    state: &ServerState,
     device: &Arc<crate::supervisor::Device>,
     video: &crate::video::VideoHandle,
     msg: ClientMessage,
 ) -> Option<ServerMessage> {
     let backend = &device.backend;
+
+    // Anything a viewer sends that reaches the device is use of it. Reported
+    // (rate-limited) so an idle timeout measures the device rather than the
+    // tab: a session driven entirely from adb looks identical from here.
+    if msg.is_interaction() {
+        state.supervisor.note_activity(&device.id).await;
+    }
 
     let result = match msg {
         ClientMessage::PointerDown { pointer_id, at } => {
@@ -623,6 +630,8 @@ async fn install(
     };
 
     info!(device = %device_id, %filename, size, "installing upload");
+
+    state.supervisor.note_activity(&device_id).await;
 
     let progress = LogProgress {
         device_id: device_id.clone(),

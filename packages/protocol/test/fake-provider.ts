@@ -163,6 +163,11 @@ export class FakeProvider {
     this.send({ type: "device.upsert", device: snapshot });
   }
 
+  /** Reports that someone drove a device, as the real provider does on input. */
+  noteActivity(deviceId: string, at = Date.now()) {
+    this.send({ type: "device.activity", deviceId, at });
+  }
+
   removeDevice(deviceId: string) {
     this.send({ type: "device.removed", deviceId });
   }

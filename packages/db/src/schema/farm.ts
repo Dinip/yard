@@ -135,6 +135,13 @@ export const reservation = pgTable(
     state: reservationStateEnum("state").notNull().default("active"),
     startedAt: timestamp("started_at").notNull().defaultNow(),
     expiresAt: timestamp("expires_at").notNull(),
+    /**
+     * Last time anyone actually drove this device, from either of two sources:
+     * the provider, which sees input and installs (including through an exposed
+     * adb transport), and the browser, which can vouch for a tab being used
+     * while no frames flow. Neither may move it backwards — see the idle reaper.
+     */
+    lastActivityAt: timestamp("last_activity_at").notNull().defaultNow(),
     releasedAt: timestamp("released_at"),
     releasedBy: text("released_by").references(() => user.id, { onDelete: "set null" }),
     reason: text("reason"),
@@ -145,6 +152,9 @@ export const reservation = pgTable(
       .where(sql`${t.state} = 'active'`),
     index("reservation_user_idx").on(t.userId),
     index("reservation_expires_idx").on(t.expiresAt).where(sql`${t.state} = 'active'`),
+    // The idle sweep runs beside the expiry one, on the same cadence, and wants
+    // the same shape of index.
+    index("reservation_activity_idx").on(t.lastActivityAt).where(sql`${t.state} = 'active'`),
   ],
 );
 

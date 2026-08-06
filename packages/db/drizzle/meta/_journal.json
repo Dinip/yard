@@ -22,6 +22,13 @@
       "when": 1785974451191,
       "tag": "0002_thankful_proudstar",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1785974768417,
+      "tag": "0003_lucky_celestials",
+      "breakpoints": true
     }
   ]
 }

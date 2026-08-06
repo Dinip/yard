@@ -6,8 +6,8 @@
 //! containers, N ZMQ connections and N config files collapse into one.
 
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
 use farm_protocol::{
@@ -17,17 +17,49 @@ use tokio::sync::RwLock;
 use tracing::{info, warn};
 
 use crate::backend::{DeviceBackend, DeviceInfo};
-use crate::control::{CommandHandler, ControlSender};
+use crate::control::{now_millis, CommandHandler, ControlSender};
 use crate::session::{Authorization, SessionRegistry};
 
 /// How often each device's info is re-read and pushed up if it changed.
 const POLL_INTERVAL: Duration = Duration::from_secs(15);
+
+/// At most one activity report per device per this long.
+///
+/// A drag is hundreds of pointer events a second and every one of them is
+/// activity; the coordinator only needs to know the reservation is not idle,
+/// so this is deliberately coarse relative to any idle timeout worth setting.
+const ACTIVITY_INTERVAL: Duration = Duration::from_secs(30);
+
+/// Lets one report through per [`ACTIVITY_INTERVAL`].
+///
+/// A plain mutex rather than an async one: this sits on the pointer-move path,
+/// where a drag is hundreds of events a second, and the critical section is a
+/// comparison of two instants.
+#[derive(Default)]
+struct ActivityThrottle {
+    last: Mutex<Option<Instant>>,
+}
+
+impl ActivityThrottle {
+    fn claim(&self, now: Instant) -> bool {
+        let mut last = self.last.lock().unwrap_or_else(|err| err.into_inner());
+        match *last {
+            Some(previous) if now.duration_since(previous) < ACTIVITY_INTERVAL => false,
+            _ => {
+                *last = Some(now);
+                true
+            }
+        }
+    }
+}
 
 pub struct Device {
     pub id: String,
     pub backend: Arc<dyn DeviceBackend>,
     status: RwLock<DeviceStatus>,
     info: RwLock<Option<DeviceInfo>>,
+    /// Rate limiter for activity reports, not a record of activity itself.
+    activity: ActivityThrottle,
 }
 
 impl Device {
@@ -42,6 +74,8 @@ impl Device {
     pub async fn info(&self) -> Option<DeviceInfo> {
         self.info.read().await.clone()
     }
+
+
 
     pub async fn snapshot(&self) -> DeviceSnapshot {
         let info = self.info.read().await.clone();
@@ -135,6 +169,7 @@ impl Supervisor {
                 backend,
                 status: RwLock::new(DeviceStatus::Preparing),
                 info: RwLock::new(None),
+                activity: ActivityThrottle::default(),
             }),
         );
     }
@@ -229,6 +264,26 @@ impl Supervisor {
             })
             .await;
         }
+    }
+
+    /// Reports that someone drove a device, at most once per 30s per device.
+    ///
+    /// The provider is the authoritative source for this: it sees input on the
+    /// session plane and installs on the artifact plane, and it is the only
+    /// thing that can see a device being used through an exposed adb transport
+    /// at all — none of which the browser can vouch for.
+    pub async fn note_activity(&self, device_id: &str) {
+        let Some(device) = self.devices.get(device_id) else {
+            return;
+        };
+        if !device.activity.claim(Instant::now()) {
+            return;
+        }
+        self.push(ProviderMessage::DeviceActivity {
+            device_id: device_id.to_owned(),
+            at: now_millis(),
+        })
+        .await;
     }
 
     /// Reports an install upstream.
@@ -376,5 +431,25 @@ impl CommandHandler for Supervisor {
                 Ok(None)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn one_report_per_interval() {
+        let throttle = ActivityThrottle::default();
+        let start = Instant::now();
+
+        // A drag is hundreds of events; the coordinator needs to see one.
+        assert!(throttle.claim(start));
+        for step in 1..50 {
+            assert!(!throttle.claim(start + Duration::from_millis(step * 10)));
+        }
+
+        assert!(throttle.claim(start + ACTIVITY_INTERVAL));
+        assert!(!throttle.claim(start + ACTIVITY_INTERVAL));
     }
 }

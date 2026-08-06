@@ -3,11 +3,12 @@
  * the same device at once, even when they race. Requires a Postgres at
  * DATABASE_URL (docker compose -f docker-compose.dev.yml up -d).
  */
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { device, provider, reservation, user } from "@farm/db";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { device, provider, reservation, setting, user } from "@farm/db";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { db } from "../src/db.ts";
 import { startReservationReaper } from "../src/lib/reservations.ts";
+import { invalidateSettings, setSetting } from "../src/lib/settings.ts";
 import {
   caller as callerFor,
   closePoolOnExit,
@@ -181,5 +182,114 @@ describe("the reaper", () => {
 
     const [row] = await db.select().from(reservation).where(eq(reservation.id, held.id)).limit(1);
     expect(row?.state).toBe("active");
+  });
+});
+
+/**
+ * The idle policy is the one that reclaims a device from someone who left a tab
+ * open over a weekend, so what matters is that a *renewing* reservation is
+ * still released when nobody is driving the device — the whole reason expiry
+ * alone was not enough.
+ */
+describe("the idle timeout", () => {
+  beforeEach(async () => {
+    await db.delete(setting);
+    invalidateSettings();
+  });
+
+  afterAll(async () => {
+    await db.delete(setting);
+    invalidateSettings();
+  });
+
+  test("releases a live-but-untouched reservation, and says why", async () => {
+    await resetDevice();
+    await setSetting(db, "reservation.idleTimeoutSeconds", 60, USERS[0]);
+
+    const caller = callerFor(USERS[0]);
+    const held = await caller.device.reserve({ deviceId: DEVICE_ID });
+
+    // Renewed, so `expiresAt` is far away: only the idle sweep can take this.
+    await db
+      .update(reservation)
+      .set({ lastActivityAt: new Date(Date.now() - 120_000) })
+      .where(eq(reservation.id, held.id));
+
+    const stop = startReservationReaper(db);
+    await Bun.sleep(200);
+    stop();
+
+    const [row] = await db.select().from(reservation).where(eq(reservation.id, held.id)).limit(1);
+    expect(row?.state).toBe("released");
+    expect(row?.reason).toBe("released after 1 minute without interaction");
+    expect(row?.releasedBy).toBeNull();
+  });
+
+  test("an interaction the browser reports holds it off", async () => {
+    await resetDevice();
+    await setSetting(db, "reservation.idleTimeoutSeconds", 60, USERS[0]);
+
+    const caller = callerFor(USERS[0]);
+    const held = await caller.device.reserve({ deviceId: DEVICE_ID });
+    await db
+      .update(reservation)
+      .set({ lastActivityAt: new Date(Date.now() - 120_000) })
+      .where(eq(reservation.id, held.id));
+
+    await caller.device.renew({ reservationId: held.id, interactedAt: Date.now() });
+
+    const stop = startReservationReaper(db);
+    await Bun.sleep(200);
+    stop();
+
+    const [row] = await db.select().from(reservation).where(eq(reservation.id, held.id)).limit(1);
+    expect(row?.state).toBe("active");
+  });
+
+  test("neither source can wind the activity clock backwards", async () => {
+    await resetDevice();
+    const caller = callerFor(USERS[0]);
+    const held = await caller.device.reserve({ deviceId: DEVICE_ID });
+
+    const recent = new Date(Date.now() - 5_000);
+    await db.update(reservation).set({ lastActivityAt: recent }).where(eq(reservation.id, held.id));
+
+    // A stale renewal — a tab that was backgrounded, or a clock behind ours.
+    await caller.device.renew({ reservationId: held.id, interactedAt: Date.now() - 600_000 });
+
+    const [row] = await db.select().from(reservation).where(eq(reservation.id, held.id)).limit(1);
+    expect(row?.lastActivityAt.getTime()).toBe(recent.getTime());
+  });
+
+  test("a browser clock running fast cannot buy extra time", async () => {
+    await resetDevice();
+    const caller = callerFor(USERS[0]);
+    const held = await caller.device.reserve({ deviceId: DEVICE_ID });
+
+    const before = Date.now();
+    await caller.device.renew({ reservationId: held.id, interactedAt: before + 3_600_000 });
+
+    const [row] = await db.select().from(reservation).where(eq(reservation.id, held.id)).limit(1);
+    expect(row?.lastActivityAt.getTime()).toBeLessThanOrEqual(Date.now());
+  });
+
+  test("the maximum session length releases a device however busy it is", async () => {
+    await resetDevice();
+    await setSetting(db, "reservation.maxDurationSeconds", 60, USERS[0]);
+
+    const caller = callerFor(USERS[0]);
+    const held = await caller.device.reserve({ deviceId: DEVICE_ID });
+    await db
+      .update(reservation)
+      .set({ startedAt: new Date(Date.now() - 120_000), lastActivityAt: new Date() })
+      .where(eq(reservation.id, held.id));
+
+    const stop = startReservationReaper(db);
+    await Bun.sleep(200);
+    stop();
+
+    const [row] = await db.select().from(reservation).where(eq(reservation.id, held.id)).limit(1);
+    expect(row?.state).toBe("released");
+    expect(row?.reason).toBe("released after the 1 minute session limit");
   });
 });

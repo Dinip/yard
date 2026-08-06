@@ -61,6 +61,18 @@ pub fn frame_au(kind: AuKind, au: &[u8]) -> Vec<u8> {
     out
 }
 
+impl ClientMessage {
+    /// Whether this message is a person driving the device, as opposed to the
+    /// viewer keeping itself alive.
+    ///
+    /// `keyframe` and `pong` are the stream asking for what it needs; they say
+    /// nothing about whether anyone is at the keyboard, and counting them would
+    /// make an idle timeout unreachable for as long as a tab stays open.
+    pub fn is_interaction(&self) -> bool {
+        !matches!(self, ClientMessage::Keyframe | ClientMessage::Pong { .. })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

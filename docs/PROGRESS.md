@@ -567,7 +567,7 @@ flows. Built in four parts, in this order, each its own commit.
 | Item | State | Where |
 |---|---|---|
 | 10.1 `setting` table + typed registry, admin page | ✅ | `coordinator/src/lib/settings.ts`, `web/.../admin.settings.tsx` |
-| 10.2 Idle timeout — provider activity, reaper, warning | ⬜ | |
+| 10.2 Idle timeout — provider activity, reaper, warning | ✅ | `provider-core/src/supervisor.rs`, `coordinator/src/lib/reservations.ts` |
 | 10.3 "You were kicked" dialog | ⬜ | |
 | 10.4 Admin joins a session | ⬜ | |
 
@@ -596,6 +596,49 @@ able to take the coordinator down.
 `settings.get`/`set` are admin-only; `settings.public` is the smaller subset the
 browser needs to render the idle countdown, a separate procedure rather than a
 branch inside `get`.
+
+### 10.2 Idle timeout ✅
+
+Nothing bounded a reservation but a browser tab staying open. `expiresAt` only
+ever caught a user who *closed* the tab; a tab left open on a device nobody was
+touching held it indefinitely, which is how the farm bleeds capacity.
+
+**The provider is authoritative about use, the browser is a floor under it.**
+Two sources, because neither is sufficient alone:
+
+- The provider sees every `ClientMessage` that reaches the device and every
+  install — including a session driven entirely through an exposed adb
+  transport, which the browser cannot see at all. New `device.activity` wire
+  message, rate-limited to one per device per 30s by an `ActivityThrottle`,
+  because a drag is hundreds of pointer events a second and the coordinator only
+  needs to know the reservation is not idle. `keyframe` and `pong` are
+  deliberately **not** interaction: they are the stream keeping itself alive,
+  and counting them would make the idle timeout unreachable for as long as a tab
+  is open.
+- The browser reports `interactedAt` on renewal, which covers the case the
+  renewal hook was always about — reading a crash log on a reserved device is
+  still using it, and nothing reaches the device while that happens.
+
+**Neither may move the clock backwards, and neither may move it forwards past
+now.** Both writes clamp to `now` and are guarded (`lt` on the gateway,
+`greatest()` on renew), so a provider host with a fast clock cannot buy an extra
+hour and a backgrounded tab replaying a stale timestamp cannot undo a real
+touch. There are tests for both directions.
+
+The reaper now sweeps three conditions in the same select-then-`releaseActive`
+shape: lapsed, idle (when configured), and a hard `maxDurationSeconds` cap.
+Every path still goes through `releaseActive`, which is what pushes
+`session.revoke` and writes the audit row — the reason string it stores is what
+the released user is told, so it is written for a person to read ("released
+after 30 minutes without interaction").
+
+**The warning is a dialog at 10% remaining**, in a `ReservationKeeper`
+component that both the device page and the popout render — renewal and the
+warning are one feature, and splitting them across routes is how they drift.
+Interacting anywhere in the tab dismisses it, and an interaction inside the
+warning band pushes a renewal **immediately** rather than waiting for the
+scheduled one: the reaper reads the database, and on a long TTL with a short
+idle timeout the next scheduled renewal can be minutes too late.
 
 ---
 

@@ -4,6 +4,7 @@ import { ArrowLeft } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { DeviceConsole } from "@/components/device-console";
+import { formatCountdown, ReservationKeeper } from "@/components/reservation-keeper";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -19,7 +20,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { usePopoutPresence } from "@/hooks/use-popout-presence";
-import { useReservationRenewal } from "@/hooks/use-reservation-renewal";
 import { trpc } from "@/lib/trpc";
 import { relativeTime } from "@/lib/utils";
 
@@ -36,17 +36,11 @@ function DevicePage() {
   const qc = useQueryClient();
   const { data: device } = useQuery(trpc.device.get.queryOptions({ id: deviceId }));
   const { data: me } = useQuery(trpc.user.me.queryOptions());
+  const { data: policy } = useQuery(trpc.settings.public.queryOptions());
   const mine = device?.reservation?.userId === me?.id;
 
   // A popout takes the stream; this tab keeps the reservation and the page.
   const { poppedOut, reclaim } = usePopoutPresence(deviceId);
-
-  // Only the holder renews. Another user's tab must not keep a device they do
-  // not hold alive.
-  useReservationRenewal(
-    mine ? device?.reservation?.id : undefined,
-    mine ? device?.reservation?.expiresAt : undefined,
-  );
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: trpc.device.get.queryKey({ id: deviceId }) });
@@ -87,6 +81,15 @@ function DevicePage() {
 
   return (
     <div className="flex flex-col gap-6">
+      {/* Only the holder renews. Another user's tab must not keep a device
+          they do not hold alive. */}
+      {mine && (
+        <ReservationKeeper
+          reservationId={device.reservation?.id}
+          expiresAt={device.reservation?.expiresAt}
+          lastActivityAt={device.reservation?.lastActivityAt}
+        />
+      )}
       <div className="flex items-center gap-3">
         <Button variant="ghost" size="icon" asChild>
           <Link to="/devices">
@@ -195,6 +198,16 @@ function DevicePage() {
               <Detail
                 label="Reserved until"
                 value={new Date(device.reservation.expiresAt).toLocaleTimeString()}
+              />
+            )}
+            {device.reservation && policy?.idleTimeoutSeconds != null && (
+              <Detail
+                label="Idle timeout"
+                value={`${Math.round(policy.idleTimeoutSeconds / 60)} min · releases in ${formatCountdown(
+                  new Date(device.reservation.lastActivityAt).getTime() +
+                    policy.idleTimeoutSeconds * 1000 -
+                    Date.now(),
+                )}`}
               />
             )}
 

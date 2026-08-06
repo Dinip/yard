@@ -306,6 +306,37 @@ describe("provider gateway", () => {
     await fake.close();
   });
 
+  test("reported activity lands on the active reservation, and cannot run backwards", async () => {
+    const fake = connectFake();
+    await fake.connect();
+    const target = devices[0]!.id;
+
+    const held = await caller(USER_A).device.reserve({ deviceId: target });
+
+    // Backdated first, so the report is unambiguously newer than the row.
+    await db
+      .update(reservation)
+      .set({ lastActivityAt: new Date(Date.now() - 600_000) })
+      .where(eq(reservation.id, held.id));
+
+    const at = Date.now();
+    fake.noteActivity(target, at);
+    await Bun.sleep(200);
+
+    const [updated] = await db.select().from(reservation).where(eq(reservation.id, held.id));
+    expect(updated?.lastActivityAt.getTime()).toBe(at);
+
+    // A provider whose clock is behind must not undo a later report.
+    fake.noteActivity(target, at - 60_000);
+    await Bun.sleep(200);
+
+    const [unchanged] = await db.select().from(reservation).where(eq(reservation.id, held.id));
+    expect(unchanged?.lastActivityAt.getTime()).toBe(at);
+
+    await caller(USER_A).device.release({ deviceId: target });
+    await fake.close();
+  });
+
   test("the JWKS the provider will verify against is published and usable", async () => {
     const res = await fetch(`${baseUrl}/.well-known/farm-jwks.json`);
     expect(res.ok).toBe(true);

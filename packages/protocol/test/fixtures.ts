@@ -77,6 +77,11 @@ export const controlFixtures = {
     deviceId: "R5CT10ABCDE",
     battery: { level: 0.11, state: "discharging" },
   },
+  deviceActivity: {
+    type: "device.activity",
+    deviceId: "R5CT10ABCDE",
+    at: 1_760_000_000_000,
+  },
   deviceStatus: { type: "device.status", deviceId: "R5CT10ABCDE", status: "ready" },
   deviceStatusWithNote: {
     type: "device.status",
