@@ -1,6 +1,7 @@
 import { auditLog, reservation, reservationObserver, user } from "@farm/db";
+import { AUDIT_ACTION_VALUES } from "@farm/protocol";
 import { TRPCError } from "@trpc/server";
-import { and, count, desc, eq, ilike, isNull, or } from "drizzle-orm";
+import { and, count, desc, eq, gte, ilike, inArray, isNull, lte, or } from "drizzle-orm";
 import { z } from "zod";
 import { audit } from "../../lib/audit.ts";
 import { deviceEvents } from "../../lib/events.ts";
@@ -133,34 +134,64 @@ export const adminRouter = router({
       return { ok: true };
     }),
 
+  /**
+   * The audit log, filtered.
+   *
+   * Returns a count alongside the page because the UI used to paginate by "was
+   * the page full?", which can neither show a total nor recognise the last
+   * page. The count runs the same predicate, so the two cannot disagree.
+   */
   audit: adminProcedure
     .input(
       z
         .object({
           limit: z.number().int().min(1).max(500).default(100),
           offset: z.number().int().min(0).default(0),
-          action: z.string().optional(),
+          /** Several at once: "every way a device came free" is one question. */
+          action: z.array(z.enum(AUDIT_ACTION_VALUES)).optional(),
+          actorUserId: z.string().optional(),
+          targetId: z.string().optional(),
+          targetType: z.string().optional(),
+          from: z.coerce.date().optional(),
+          to: z.coerce.date().optional(),
         })
         .default({ limit: 100, offset: 0 }),
     )
-    .query(({ ctx, input }) =>
-      ctx.db
-        .select({
-          id: auditLog.id,
-          action: auditLog.action,
-          targetType: auditLog.targetType,
-          targetId: auditLog.targetId,
-          metadata: auditLog.metadata,
-          at: auditLog.at,
-          actorUserId: auditLog.actorUserId,
-          actorName: user.name,
-          actorEmail: user.email,
-        })
-        .from(auditLog)
-        .leftJoin(user, eq(auditLog.actorUserId, user.id))
-        .where(input.action ? eq(auditLog.action, input.action) : undefined)
-        .orderBy(desc(auditLog.at))
-        .limit(input.limit)
-        .offset(input.offset),
-    ),
+    .query(async ({ ctx, input }) => {
+      const filters = [
+        input.action?.length ? inArray(auditLog.action, input.action) : undefined,
+        input.actorUserId ? eq(auditLog.actorUserId, input.actorUserId) : undefined,
+        // A prefix match, so a partial device id someone pasted still finds it.
+        input.targetId ? ilike(auditLog.targetId, `${input.targetId}%`) : undefined,
+        input.targetType ? eq(auditLog.targetType, input.targetType) : undefined,
+        input.from ? gte(auditLog.at, input.from) : undefined,
+        input.to ? lte(auditLog.at, input.to) : undefined,
+      ].filter((f) => f !== undefined);
+
+      const where = filters.length ? and(...filters) : undefined;
+
+      const [items, [total]] = await Promise.all([
+        ctx.db
+          .select({
+            id: auditLog.id,
+            action: auditLog.action,
+            targetType: auditLog.targetType,
+            targetId: auditLog.targetId,
+            metadata: auditLog.metadata,
+            at: auditLog.at,
+            actorUserId: auditLog.actorUserId,
+            actorName: user.name,
+            actorEmail: user.email,
+          })
+          .from(auditLog)
+          .leftJoin(user, eq(auditLog.actorUserId, user.id))
+          .where(where)
+          .orderBy(desc(auditLog.at))
+          .limit(input.limit)
+          .offset(input.offset),
+        ctx.db.select({ value: count() }).from(auditLog).where(where),
+      ]);
+
+      return { items, total: total?.value ?? 0 };
+    }),
 });

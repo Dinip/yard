@@ -1,3 +1,4 @@
+export * from "./audit.ts";
 export * from "./common.ts";
 export * from "./control.ts";
 export { named, nameOf, registry } from "./registry.ts";

@@ -228,7 +228,13 @@ export const auditLog = pgTable(
     metadata: jsonb("metadata").$type<Record<string, unknown>>(),
     at: timestamp("at").notNull().defaultNow(),
   },
-  (t) => [index("audit_log_at_idx").on(t.at), index("audit_log_actor_idx").on(t.actorUserId)],
+  (t) => [
+    index("audit_log_at_idx").on(t.at),
+    index("audit_log_actor_idx").on(t.actorUserId),
+    // "Everything that ever happened to this device" is the question an audit
+    // log is most often opened to answer.
+    index("audit_log_target_idx").on(t.targetId),
+  ],
 );
 
 export type Provider = typeof provider.$inferSelect;

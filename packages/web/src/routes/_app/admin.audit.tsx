@@ -1,12 +1,19 @@
+import { AUDIT_ACTION_VALUES, auditActionLabel, auditActionsByGroup } from "@farm/protocol";
 import { useQuery } from "@tanstack/react-query";
-import { createFileRoute, redirect } from "@tanstack/react-router";
-import { useState } from "react";
+import { createFileRoute, Link, redirect } from "@tanstack/react-router";
+import { X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { z } from "zod";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -24,72 +31,166 @@ import { relativeTime } from "@/lib/utils";
 
 const PAGE_SIZE = 100;
 
+/** Sentinel for "no filter": `<Select>` cannot carry an empty-string value. */
+const ANY = "any";
+
 /**
- * There is no artifact storage anywhere in this system: an APK is streamed to
- * the provider, installed, and deleted. These rows are the only record that an
- * install ever happened, which is why the digest is shown rather than hidden
- * behind a detail view.
+ * Filters live in the URL, not in component state, so a filtered view is
+ * something you can send to someone. That is most of the point of an audit log
+ * with filters at all — "look at what happened to this device" is a link.
  */
-const ACTIONS = [
-  { value: "", label: "All actions" },
-  { value: "device.install", label: "Installs" },
-  { value: "device.reserve", label: "Reservations" },
-  { value: "device.release", label: "Releases" },
-  { value: "device.force_release", label: "Force releases" },
-  { value: "device.reservation_expired", label: "Expired reservations" },
-  { value: "provider.token.create", label: "Tokens issued" },
-  { value: "provider.token.revoke", label: "Tokens revoked" },
-];
+const search = z.object({
+  action: z.enum(AUDIT_ACTION_VALUES).optional(),
+  actorUserId: z.string().optional(),
+  targetId: z.string().optional(),
+  from: z.string().optional(),
+  to: z.string().optional(),
+  page: z.number().int().min(0).catch(0).default(0),
+});
+
+type Search = z.infer<typeof search>;
 
 export const Route = createFileRoute("/_app/admin/audit")({
   beforeLoad: ({ context }) => {
     // A UX guard, not a security boundary — `adminProcedure` is the real one.
     if (context.user?.role !== "admin") throw redirect({ to: "/devices" });
   },
+  validateSearch: search,
   component: AuditPage,
 });
 
 function AuditPage() {
-  const [action, setAction] = useState("");
-  const [page, setPage] = useState(0);
+  const params = Route.useSearch();
+  const navigate = Route.useNavigate();
 
-  const { data: entries = [], isFetching } = useQuery(
+  /** Any filter change resets to the first page: page 4 of a new query is nothing. */
+  const setFilter = (patch: Partial<Search>) =>
+    navigate({ search: (current) => ({ ...current, ...patch, page: 0 }) });
+
+  const { data, isFetching } = useQuery(
     trpc.admin.audit.queryOptions({
       limit: PAGE_SIZE,
-      offset: page * PAGE_SIZE,
-      action: action || undefined,
+      offset: params.page * PAGE_SIZE,
+      action: params.action ? [params.action] : undefined,
+      actorUserId: params.actorUserId,
+      targetId: params.targetId,
+      from: params.from ? new Date(params.from) : undefined,
+      // A date input means the whole day, not midnight at its start.
+      to: params.to ? endOfDay(params.to) : undefined,
     }),
+  );
+
+  const { data: users } = useQuery(trpc.admin.users.queryOptions({ limit: 200, offset: 0 }));
+
+  const entries = data?.items ?? [];
+  const total = data?.total ?? 0;
+  const first = total === 0 ? 0 : params.page * PAGE_SIZE + 1;
+  const last = params.page * PAGE_SIZE + entries.length;
+  const filtered = Boolean(
+    params.action || params.actorUserId || params.targetId || params.from || params.to,
   );
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex items-center gap-3">
-        <div>
-          <h1 className="font-semibold text-2xl">Audit log</h1>
-          <p className="text-muted-foreground text-sm">
-            Every reservation, release and install. Installs carry the digest of a file that no
-            longer exists anywhere.
-          </p>
-        </div>
-        <div className="flex-1" />
-        <Select
-          value={action}
-          onValueChange={(value) => {
-            setAction(value);
-            setPage(0);
-          }}
-        >
-          <SelectTrigger className="w-56">
-            <SelectValue placeholder="All actions" />
-          </SelectTrigger>
-          <SelectContent>
-            {ACTIONS.map((option) => (
-              <SelectItem key={option.value || "all"} value={option.value}>
-                {option.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+      <div>
+        <h1 className="font-semibold text-2xl">Audit log</h1>
+        <p className="text-muted-foreground text-sm">
+          Every reservation, release and install. Installs carry the digest of a file that no longer
+          exists anywhere.
+        </p>
+      </div>
+
+      <div className="flex flex-wrap items-end gap-3">
+        <Field label="Who" htmlFor="filter-who">
+          <Select
+            value={params.actorUserId ?? ANY}
+            onValueChange={(value) => setFilter({ actorUserId: value === ANY ? undefined : value })}
+          >
+            <SelectTrigger id="filter-who" className="w-52">
+              <SelectValue placeholder="Anyone" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ANY}>Anyone</SelectItem>
+              {users?.users.map((u) => (
+                <SelectItem key={u.id} value={u.id}>
+                  {u.name ?? u.email}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </Field>
+
+        <Field label="Action" htmlFor="filter-action">
+          <Select
+            value={params.action ?? ANY}
+            onValueChange={(value) =>
+              setFilter({
+                action: value === ANY ? undefined : (value as NonNullable<Search["action"]>),
+              })
+            }
+          >
+            <SelectTrigger id="filter-action" className="w-60">
+              <SelectValue placeholder="All actions" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ANY}>All actions</SelectItem>
+              {auditActionsByGroup().map(({ group, actions }) => (
+                <SelectGroup key={group}>
+                  <SelectLabel>{group}</SelectLabel>
+                  {actions.map((action) => (
+                    <SelectItem key={action.value} value={action.value}>
+                      {action.label}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              ))}
+            </SelectContent>
+          </Select>
+        </Field>
+
+        <TargetFilter value={params.targetId} onChange={(targetId) => setFilter({ targetId })} />
+
+        <Field label="From" htmlFor="filter-from">
+          <Input
+            id="filter-from"
+            type="date"
+            className="w-40"
+            value={params.from ?? ""}
+            onChange={(e) => setFilter({ from: e.target.value || undefined })}
+          />
+        </Field>
+
+        <Field label="To" htmlFor="filter-to">
+          <Input
+            id="filter-to"
+            type="date"
+            className="w-40"
+            value={params.to ?? ""}
+            onChange={(e) => setFilter({ to: e.target.value || undefined })}
+          />
+        </Field>
+
+        {filtered && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() =>
+              navigate({
+                search: {
+                  page: 0,
+                  action: undefined,
+                  actorUserId: undefined,
+                  targetId: undefined,
+                  from: undefined,
+                  to: undefined,
+                },
+              })
+            }
+          >
+            <X className="size-4" />
+            Clear
+          </Button>
+        )}
       </div>
 
       <Table>
@@ -112,11 +213,13 @@ function AuditPage() {
                 <Actor entry={entry} />
               </TableCell>
               <TableCell>
-                <Badge variant="outline" className="font-mono text-xs">
-                  {entry.action}
+                <Badge variant="outline" title={entry.action}>
+                  {auditActionLabel(entry.action)}
                 </Badge>
               </TableCell>
-              <TableCell className="font-mono text-xs">{entry.targetId ?? "—"}</TableCell>
+              <TableCell className="font-mono text-xs">
+                <Target entry={entry} />
+              </TableCell>
               <TableCell className="max-w-md">
                 <Detail entry={entry} />
               </TableCell>
@@ -125,7 +228,11 @@ function AuditPage() {
           {entries.length === 0 && (
             <TableRow>
               <TableCell colSpan={5} className="py-10 text-center text-muted-foreground">
-                {isFetching ? "Loading…" : "Nothing recorded yet."}
+                {isFetching
+                  ? "Loading…"
+                  : filtered
+                    ? "Nothing matches these filters."
+                    : "Nothing recorded yet."}
               </TableCell>
             </TableRow>
           )}
@@ -134,24 +241,22 @@ function AuditPage() {
 
       <div className="flex items-center justify-between">
         <span className="text-muted-foreground text-sm">
-          {page > 0 && `Page ${page + 1} · `}
-          {entries.length} entries
+          {total === 0 ? "No entries" : `${first}–${last} of ${total}`}
         </span>
         <div className="flex gap-2">
           <Button
             variant="outline"
             size="sm"
-            disabled={page === 0}
-            onClick={() => setPage((current) => current - 1)}
+            disabled={params.page === 0}
+            onClick={() => navigate({ search: (c) => ({ ...c, page: c.page - 1 }) })}
           >
             Previous
           </Button>
           <Button
             variant="outline"
             size="sm"
-            // A full page probably means there is another; a short one cannot.
-            disabled={entries.length < PAGE_SIZE}
-            onClick={() => setPage((current) => current + 1)}
+            disabled={last >= total}
+            onClick={() => navigate({ search: (c) => ({ ...c, page: c.page + 1 }) })}
           >
             Next
           </Button>
@@ -159,6 +264,68 @@ function AuditPage() {
       </div>
     </div>
   );
+}
+
+/**
+ * Debounced, because this one is typed rather than picked: a request per
+ * keystroke would also mean a URL history entry per keystroke.
+ */
+function TargetFilter({
+  value,
+  onChange,
+}: {
+  value: string | undefined;
+  onChange: (value: string | undefined) => void;
+}) {
+  const [draft, setDraft] = useState(value ?? "");
+
+  // Follow the URL when it changes from outside — Clear, or a pasted link.
+  useEffect(() => setDraft(value ?? ""), [value]);
+
+  useEffect(() => {
+    const current = value ?? "";
+    if (draft === current) return;
+    const timer = setTimeout(() => onChange(draft.trim() || undefined), 300);
+    return () => clearTimeout(timer);
+  }, [draft, value, onChange]);
+
+  return (
+    <Field label="Target" htmlFor="filter-target">
+      <Input
+        id="filter-target"
+        className="w-56"
+        placeholder="Device or provider id"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+      />
+    </Field>
+  );
+}
+
+function Field({
+  label,
+  htmlFor,
+  children,
+}: {
+  label: string;
+  htmlFor: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="grid gap-1.5">
+      <Label htmlFor={htmlFor} className="text-muted-foreground text-xs">
+        {label}
+      </Label>
+      {children}
+    </div>
+  );
+}
+
+/** The last moment of the given day, so "to: today" includes today. */
+function endOfDay(date: string): Date {
+  const end = new Date(date);
+  end.setHours(23, 59, 59, 999);
+  return end;
 }
 
 /**
@@ -179,6 +346,17 @@ function Actor({ entry }: { entry: AuditEntry }) {
     );
   }
   return <span className="text-muted-foreground">system</span>;
+}
+
+/** A device target is a link: the row is usually the start of a question. */
+function Target({ entry }: { entry: AuditEntry }) {
+  if (!entry.targetId) return <span className="text-muted-foreground">—</span>;
+  if (entry.targetType !== "device") return <span>{entry.targetId}</span>;
+  return (
+    <Link to="/devices/$deviceId" params={{ deviceId: entry.targetId }} className="hover:underline">
+      {entry.targetId}
+    </Link>
+  );
 }
 
 function Detail({ entry }: { entry: AuditEntry }) {

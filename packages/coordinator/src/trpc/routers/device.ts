@@ -5,6 +5,7 @@ import { z } from "zod";
 import { providers } from "../../gateway/registry.ts";
 import { audit } from "../../lib/audit.ts";
 import { deviceEvents } from "../../lib/events.ts";
+import { isUniqueViolation } from "../../lib/pg-errors.ts";
 import { releaseActive } from "../../lib/reservations.ts";
 import { signSessionToken } from "../../lib/session-token.ts";
 import { getSetting } from "../../lib/settings.ts";
@@ -519,8 +520,4 @@ async function isObserver(db: import("@farm/db").Database, reservationId: string
     )
     .limit(1);
   return Boolean(row);
-}
-
-function isUniqueViolation(err: unknown): boolean {
-  return typeof err === "object" && err !== null && "code" in err && err.code === "23505";
 }

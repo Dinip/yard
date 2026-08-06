@@ -1,5 +1,6 @@
 import type { Database } from "@farm/db";
 import { device, reservation, reservationObserver } from "@farm/db";
+import type { AuditAction } from "@farm/protocol";
 import { and, eq, inArray, isNull, lt } from "drizzle-orm";
 import { providers } from "../gateway/registry.ts";
 import { audit } from "./audit.ts";
@@ -25,7 +26,7 @@ export interface ReleaseOptions {
    */
   revoke?: boolean;
   /** Written to the audit log; omit to skip the entry. */
-  auditAction?: string;
+  auditAction?: AuditAction;
 }
 
 /**
@@ -133,7 +134,7 @@ function describeDuration(seconds: number): string {
 async function sweepCondition(
   db: Database,
   condition: ReturnType<typeof lt>,
-  options: { reason: string; auditAction: string },
+  options: { reason: string; auditAction: AuditAction },
 ) {
   const matched = await db
     .select({ deviceId: reservation.deviceId })
