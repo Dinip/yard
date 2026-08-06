@@ -3,11 +3,12 @@
  * the same device at once, even when they race. Requires a Postgres at
  * DATABASE_URL (docker compose -f docker-compose.dev.yml up -d).
  */
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { device, provider, reservation, user } from "@farm/db";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { device, provider, reservation, reservationObserver, setting, user } from "@farm/db";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { db } from "../src/db.ts";
 import { startReservationReaper } from "../src/lib/reservations.ts";
+import { invalidateSettings, setSetting } from "../src/lib/settings.ts";
 import {
   caller as callerFor,
   closePoolOnExit,
@@ -181,5 +182,252 @@ describe("the reaper", () => {
 
     const [row] = await db.select().from(reservation).where(eq(reservation.id, held.id)).limit(1);
     expect(row?.state).toBe("active");
+  });
+});
+
+/**
+ * An admin joining a session is the gentler alternative to taking the device
+ * away. The provider needs no change for it — it matches on `reservationId` —
+ * so what has to hold is that the coordinator mints a token carrying *the
+ * holder's* reservation, and only for an admin who openly joined.
+ */
+describe("joining someone else's session", () => {
+  test("an admin who joins gets a token against the holder's reservation", async () => {
+    await resetDevice();
+    const holder = callerFor(USERS[0]);
+    const held = await holder.device.reserve({ deviceId: DEVICE_ID });
+
+    const admin = callerFor(USERS[1], "admin");
+    // Before joining, an admin is just somebody else.
+    await expect(admin.device.sessionToken({ deviceId: DEVICE_ID })).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
+
+    const joined = await admin.admin.joinSession({ deviceId: DEVICE_ID });
+    expect(joined.reservationId).toBe(held.id);
+
+    const token = await admin.device.sessionToken({ deviceId: DEVICE_ID });
+    const claims = JSON.parse(atob(token.token.split(".")[1]!.replace(/-/g, "+")));
+    expect(claims.reservationId).toBe(held.id);
+    // The admin's own identity, against the holder's reservation.
+    expect(claims.userId).toBe(USERS[1]);
+
+    // The holder's own session is untouched — this is a join, not a takeover.
+    await expect(holder.device.sessionToken({ deviceId: DEVICE_ID })).resolves.toBeDefined();
+  });
+
+  test("a non-admin cannot join, and neither can the holder", async () => {
+    await resetDevice();
+    await callerFor(USERS[0]).device.reserve({ deviceId: DEVICE_ID });
+
+    await expect(
+      callerFor(USERS[1]).admin.joinSession({ deviceId: DEVICE_ID }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+    await expect(
+      callerFor(USERS[0], "admin").admin.joinSession({ deviceId: DEVICE_ID }),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+
+  test("leaving withdraws the token, and the holder sees who is present", async () => {
+    await resetDevice();
+    const holder = callerFor(USERS[0]);
+    await holder.device.reserve({ deviceId: DEVICE_ID });
+
+    const admin = callerFor(USERS[1], "admin");
+    await admin.admin.joinSession({ deviceId: DEVICE_ID });
+
+    const seen = await holder.device.get({ id: DEVICE_ID });
+    expect(seen.reservation?.observers.map((o) => o.userId)).toEqual([USERS[1]]);
+
+    await admin.admin.leaveSession({ deviceId: DEVICE_ID });
+    await expect(admin.device.sessionToken({ deviceId: DEVICE_ID })).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
+
+    const after = await holder.device.get({ id: DEVICE_ID });
+    expect(after.reservation?.observers).toEqual([]);
+  });
+
+  test("releasing the device closes every observer row with it", async () => {
+    await resetDevice();
+    const holder = callerFor(USERS[0]);
+    const held = await holder.device.reserve({ deviceId: DEVICE_ID });
+    const admin = callerFor(USERS[1], "admin");
+    await admin.admin.joinSession({ deviceId: DEVICE_ID });
+
+    await holder.device.release({ deviceId: DEVICE_ID });
+
+    const rows = await db
+      .select()
+      .from(reservationObserver)
+      .where(eq(reservationObserver.reservationId, held.id));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.leftAt).not.toBeNull();
+  });
+});
+
+/**
+ * A force-released user could not tell they had been kicked: the reason string
+ * was clobbered and rendered under a spinner. The wire carries only a string,
+ * so the name comes from here.
+ */
+describe("reservation outcomes", () => {
+  test("name and reason survive a force release, for the person it happened to", async () => {
+    await resetDevice();
+    const holder = callerFor(USERS[0]);
+    const held = await holder.device.reserve({ deviceId: DEVICE_ID });
+
+    await callerFor(USERS[1], "admin").admin.forceRelease({
+      deviceId: DEVICE_ID,
+      reason: "needed for a release build",
+    });
+
+    const outcome = await holder.device.reservationOutcome({ reservationId: held.id });
+    expect(outcome.state).toBe("released");
+    expect(outcome.reason).toBe("needed for a release build");
+    expect(outcome.releasedByName).toBe(USERS[1]);
+    expect(outcome.releasedAt).not.toBeNull();
+  });
+
+  test("an expiry has no actor, because nobody did it", async () => {
+    await resetDevice();
+    const holder = callerFor(USERS[0]);
+    const held = await holder.device.reserve({ deviceId: DEVICE_ID });
+
+    await db
+      .update(reservation)
+      .set({ expiresAt: new Date(Date.now() - 1000) })
+      .where(eq(reservation.id, held.id));
+
+    const stop = startReservationReaper(db);
+    await Bun.sleep(200);
+    stop();
+
+    const outcome = await holder.device.reservationOutcome({ reservationId: held.id });
+    expect(outcome.releasedByName).toBeNull();
+    expect(outcome.reason).toBe("reservation expired");
+  });
+
+  test("only the holder and an admin may read one", async () => {
+    await resetDevice();
+    const held = await callerFor(USERS[0]).device.reserve({ deviceId: DEVICE_ID });
+
+    await expect(
+      callerFor(USERS[2]).device.reservationOutcome({ reservationId: held.id }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+    await expect(
+      callerFor(USERS[2], "admin").device.reservationOutcome({ reservationId: held.id }),
+    ).resolves.toBeDefined();
+  });
+});
+
+/**
+ * The idle policy is the one that reclaims a device from someone who left a tab
+ * open over a weekend, so what matters is that a *renewing* reservation is
+ * still released when nobody is driving the device — the whole reason expiry
+ * alone was not enough.
+ */
+describe("the idle timeout", () => {
+  beforeEach(async () => {
+    await db.delete(setting);
+    invalidateSettings();
+  });
+
+  afterAll(async () => {
+    await db.delete(setting);
+    invalidateSettings();
+  });
+
+  test("releases a live-but-untouched reservation, and says why", async () => {
+    await resetDevice();
+    await setSetting(db, "reservation.idleTimeoutSeconds", 60, USERS[0]);
+
+    const caller = callerFor(USERS[0]);
+    const held = await caller.device.reserve({ deviceId: DEVICE_ID });
+
+    // Renewed, so `expiresAt` is far away: only the idle sweep can take this.
+    await db
+      .update(reservation)
+      .set({ lastActivityAt: new Date(Date.now() - 120_000) })
+      .where(eq(reservation.id, held.id));
+
+    const stop = startReservationReaper(db);
+    await Bun.sleep(200);
+    stop();
+
+    const [row] = await db.select().from(reservation).where(eq(reservation.id, held.id)).limit(1);
+    expect(row?.state).toBe("released");
+    expect(row?.reason).toBe("released after 1 minute without interaction");
+    expect(row?.releasedBy).toBeNull();
+  });
+
+  test("an interaction the browser reports holds it off", async () => {
+    await resetDevice();
+    await setSetting(db, "reservation.idleTimeoutSeconds", 60, USERS[0]);
+
+    const caller = callerFor(USERS[0]);
+    const held = await caller.device.reserve({ deviceId: DEVICE_ID });
+    await db
+      .update(reservation)
+      .set({ lastActivityAt: new Date(Date.now() - 120_000) })
+      .where(eq(reservation.id, held.id));
+
+    await caller.device.renew({ reservationId: held.id, interactedAt: Date.now() });
+
+    const stop = startReservationReaper(db);
+    await Bun.sleep(200);
+    stop();
+
+    const [row] = await db.select().from(reservation).where(eq(reservation.id, held.id)).limit(1);
+    expect(row?.state).toBe("active");
+  });
+
+  test("neither source can wind the activity clock backwards", async () => {
+    await resetDevice();
+    const caller = callerFor(USERS[0]);
+    const held = await caller.device.reserve({ deviceId: DEVICE_ID });
+
+    const recent = new Date(Date.now() - 5_000);
+    await db.update(reservation).set({ lastActivityAt: recent }).where(eq(reservation.id, held.id));
+
+    // A stale renewal — a tab that was backgrounded, or a clock behind ours.
+    await caller.device.renew({ reservationId: held.id, interactedAt: Date.now() - 600_000 });
+
+    const [row] = await db.select().from(reservation).where(eq(reservation.id, held.id)).limit(1);
+    expect(row?.lastActivityAt.getTime()).toBe(recent.getTime());
+  });
+
+  test("a browser clock running fast cannot buy extra time", async () => {
+    await resetDevice();
+    const caller = callerFor(USERS[0]);
+    const held = await caller.device.reserve({ deviceId: DEVICE_ID });
+
+    const before = Date.now();
+    await caller.device.renew({ reservationId: held.id, interactedAt: before + 3_600_000 });
+
+    const [row] = await db.select().from(reservation).where(eq(reservation.id, held.id)).limit(1);
+    expect(row?.lastActivityAt.getTime()).toBeLessThanOrEqual(Date.now());
+  });
+
+  test("the maximum session length releases a device however busy it is", async () => {
+    await resetDevice();
+    await setSetting(db, "reservation.maxDurationSeconds", 60, USERS[0]);
+
+    const caller = callerFor(USERS[0]);
+    const held = await caller.device.reserve({ deviceId: DEVICE_ID });
+    await db
+      .update(reservation)
+      .set({ startedAt: new Date(Date.now() - 120_000), lastActivityAt: new Date() })
+      .where(eq(reservation.id, held.id));
+
+    const stop = startReservationReaper(db);
+    await Bun.sleep(200);
+    stop();
+
+    const [row] = await db.select().from(reservation).where(eq(reservation.id, held.id)).limit(1);
+    expect(row?.state).toBe("released");
+    expect(row?.reason).toBe("released after the 1 minute session limit");
   });
 });

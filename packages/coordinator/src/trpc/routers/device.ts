@@ -1,16 +1,27 @@
-import { device, provider, reservation, user } from "@farm/db";
+import { device, provider, reservation, reservationObserver, user } from "@farm/db";
 import { TRPCError } from "@trpc/server";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
-import { env } from "../../env.ts";
 import { providers } from "../../gateway/registry.ts";
 import { audit } from "../../lib/audit.ts";
 import { deviceEvents } from "../../lib/events.ts";
 import { releaseActive } from "../../lib/reservations.ts";
 import { signSessionToken } from "../../lib/session-token.ts";
+import { getSetting } from "../../lib/settings.ts";
 import { protectedProcedure, router } from "../init.ts";
 
 const RESERVABLE: ReadonlyArray<"ready" | "present"> = ["ready", "present"];
+
+/**
+ * When a reservation taken (or renewed) now should lapse.
+ *
+ * The TTL is admin-configurable policy rather than an env var, so it is read
+ * per call — the settings cache makes that a memory lookup almost every time.
+ */
+async function expiryFromNow(db: import("@farm/db").Database) {
+  const ttl = await getSetting(db, "reservation.ttlSeconds");
+  return new Date(Date.now() + ttl * 1000);
+}
 
 /** Device rows joined with their provider and current owner, shaped for the UI. */
 async function listDevices(db: import("@farm/db").Database) {
@@ -33,6 +44,27 @@ async function listDevices(db: import("@farm/db").Database) {
     .leftJoin(user, eq(reservation.userId, user.id))
     .orderBy(device.platform, device.name);
 
+  // One extra query rather than a second join: observers are a rare
+  // one-to-many, and joining them would multiply every device row.
+  const reservationIds = rows.map((r) => r.reservation?.id).filter((id) => id !== null);
+  const observers = reservationIds.length
+    ? await db
+        .select({
+          reservationId: reservationObserver.reservationId,
+          userId: reservationObserver.userId,
+          joinedAt: reservationObserver.joinedAt,
+          name: user.name,
+        })
+        .from(reservationObserver)
+        .innerJoin(user, eq(reservationObserver.userId, user.id))
+        .where(
+          and(
+            inArray(reservationObserver.reservationId, reservationIds as string[]),
+            isNull(reservationObserver.leftAt),
+          ),
+        )
+    : [];
+
   return rows.map((r) => ({
     ...r.device,
     provider: {
@@ -49,6 +81,11 @@ async function listDevices(db: import("@farm/db").Database) {
           ownerEmail: r.ownerEmail,
           startedAt: r.reservation.startedAt,
           expiresAt: r.reservation.expiresAt,
+          lastActivityAt: r.reservation.lastActivityAt,
+          /** Admins who have openly joined. The holder's UI names them. */
+          observers: observers
+            .filter((o) => o.reservationId === r.reservation?.id)
+            .map(({ userId, name, joinedAt }) => ({ userId, name, joinedAt })),
         }
       : null,
   }));
@@ -95,7 +132,7 @@ export const deviceRouter = router({
         }
         const [renewed] = await ctx.db
           .update(reservation)
-          .set({ expiresAt: new Date(Date.now() + env.RESERVATION_TTL * 1000) })
+          .set({ expiresAt: await expiryFromNow(ctx.db) })
           .where(eq(reservation.id, existing.id))
           .returning();
         return renewed!;
@@ -122,7 +159,7 @@ export const deviceRouter = router({
             deviceId: input.deviceId,
             userId: ctx.user.id,
             state: "active",
-            expiresAt: new Date(Date.now() + env.RESERVATION_TTL * 1000),
+            expiresAt: await expiryFromNow(ctx.db),
           })
           .returning();
         created = row!;
@@ -183,7 +220,15 @@ export const deviceRouter = router({
       // Reservation is per user+device, so every tab and the popout window get
       // their own token against the same reservation.
       if (row.reservationUserId !== ctx.user.id) {
-        throw new TRPCError({ code: "FORBIDDEN", message: "Someone else holds this device" });
+        // ...and so does an admin who has openly joined this session. The token
+        // carries *the holder's* reservationId and the admin's own userId:
+        // nothing else about it changes, and the provider — which matches on
+        // reservationId — treats it as one more viewer.
+        const joined =
+          ctx.user.role === "admin" && (await isObserver(ctx.db, row.reservationId, ctx.user.id));
+        if (!joined) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Someone else holds this device" });
+        }
       }
 
       const { token, expiresAt } = await signSessionToken({
@@ -202,12 +247,33 @@ export const deviceRouter = router({
       };
     }),
 
+  /**
+   * Keep a reservation alive, and optionally say when the tab was last used.
+   *
+   * `interactedAt` is the browser's floor under the provider's authoritative
+   * reporting: reading a crash log on a reserved device is still using it, and
+   * nothing reaches the device while that happens. It is clamped both ways —
+   * never into the future, never backwards — because two sources write this
+   * column and neither may be able to move the other's clock.
+   */
   renew: protectedProcedure
-    .input(z.object({ reservationId: z.string() }))
+    .input(z.object({ reservationId: z.string(), interactedAt: z.number().int().optional() }))
     .mutation(async ({ ctx, input }) => {
+      const interacted =
+        input.interactedAt === undefined
+          ? undefined
+          : new Date(Math.min(input.interactedAt, Date.now()));
+
       const [updated] = await ctx.db
         .update(reservation)
-        .set({ expiresAt: new Date(Date.now() + env.RESERVATION_TTL * 1000) })
+        .set({
+          expiresAt: await expiryFromNow(ctx.db),
+          ...(interacted
+            ? {
+                lastActivityAt: sql`greatest(${reservation.lastActivityAt}, ${interacted})`,
+              }
+            : {}),
+        })
         .where(
           and(
             eq(reservation.id, input.reservationId),
@@ -246,6 +312,45 @@ export const deviceRouter = router({
       });
       if (!released) throw new TRPCError({ code: "NOT_FOUND" });
       return released;
+    }),
+
+  /**
+   * How a reservation ended, for the person it was taken from.
+   *
+   * `session.closed` carries a reason string and nothing else — the actor's
+   * name is not on the wire and does not belong there, since the provider has
+   * no notion of users. Every column this needs is already on the row, written
+   * by `releaseActive`; this is the read that turns them into a sentence.
+   */
+  reservationOutcome: protectedProcedure
+    .input(z.object({ reservationId: z.string() }))
+    .query(async ({ ctx, input }) => {
+      const [row] = await ctx.db
+        .select({
+          state: reservation.state,
+          reason: reservation.reason,
+          releasedAt: reservation.releasedAt,
+          userId: reservation.userId,
+          releasedByName: user.name,
+        })
+        .from(reservation)
+        .leftJoin(user, eq(reservation.releasedBy, user.id))
+        .where(eq(reservation.id, input.reservationId))
+        .limit(1);
+
+      if (!row) throw new TRPCError({ code: "NOT_FOUND" });
+      if (row.userId !== ctx.user.id && ctx.user.role !== "admin") {
+        throw new TRPCError({ code: "FORBIDDEN" });
+      }
+
+      return {
+        state: row.state,
+        reason: row.reason,
+        releasedAt: row.releasedAt,
+        // Null for the reaper, which is nobody — an idle expiry must not read
+        // as a person having taken the device.
+        releasedByName: row.releasedByName,
+      };
     }),
 
   myReservations: protectedProcedure.query(({ ctx }) =>
@@ -398,6 +503,22 @@ async function requireOwnedDevice(
   }
 
   return { row, conn: providers.require(row.providerId) };
+}
+
+/** An open observer row on this reservation — an admin who joined, and stayed. */
+async function isObserver(db: import("@farm/db").Database, reservationId: string, userId: string) {
+  const [row] = await db
+    .select({ id: reservationObserver.id })
+    .from(reservationObserver)
+    .where(
+      and(
+        eq(reservationObserver.reservationId, reservationId),
+        eq(reservationObserver.userId, userId),
+        isNull(reservationObserver.leftAt),
+      ),
+    )
+    .limit(1);
+  return Boolean(row);
 }
 
 function isUniqueViolation(err: unknown): boolean {

@@ -94,6 +94,16 @@ export const ProviderMessage = named(
     }),
     z.object({ type: z.literal("device.display"), deviceId: z.string(), display: Display }),
     z.object({ type: z.literal("device.battery"), deviceId: z.string(), battery: Battery }),
+    /**
+     * Someone drove this device. The provider is authoritative about it: it
+     * sees input arriving on the session plane *and* installs, which is more
+     * than the browser can vouch for, and it is the only thing that can see a
+     * device being used through an exposed adb transport at all.
+     *
+     * Rate-limited by the provider — this exists to hold an idle timeout off,
+     * not to be a log of every touch.
+     */
+    z.object({ type: z.literal("device.activity"), deviceId: z.string(), at: Timestamp }),
     z.object({
       type: z.literal("command.result"),
       /** Correlates with CoordinatorMessage.command.id. */

@@ -559,6 +559,182 @@ reload the parent while the popout is open and confirm it comes back suspended.
 
 ---
 
+## Phase 10 — Session governance ✅
+
+The largest of the post-launch phases: schema, policy, and two new interaction
+flows. Built in four parts, in this order, each its own commit.
+
+| Item | State | Where |
+|---|---|---|
+| 10.1 `setting` table + typed registry, admin page | ✅ | `coordinator/src/lib/settings.ts`, `web/.../admin.settings.tsx` |
+| 10.2 Idle timeout — provider activity, reaper, warning | ✅ | `provider-core/src/supervisor.rs`, `coordinator/src/lib/reservations.ts` |
+| 10.3 "You were kicked" dialog | ✅ | `web/src/components/session-ended-dialog.tsx` |
+| 10.4 Admin joins a session | ✅ | `db/src/schema/farm.ts`, `coordinator/.../admin.ts` |
+
+### 10.1 Settings ✅
+
+The first DB-backed configuration in the project, so it had to establish the
+pattern rather than just add a knob: a typed registry declares every key with a
+zod schema and a default, reads are cached for five seconds because reserve,
+renew and every reaper sweep consult them, and **defaults are the env vars they
+replace** — `RESERVATION_TTL` is now a seed, so an existing deployment behaves
+exactly as it did until an admin changes something.
+
+Two decisions worth keeping:
+
+- **An absent row means "use the default".** Nothing is seeded, a fresh database
+  needs no migration data, and resetting a setting is deleting a row.
+- **`value` is nullable.** `null` is a real value for the two timeouts — it
+  means the policy is off — and jsonb `NOT NULL` cannot express it. Absence of
+  the *row* is what means unset; the two are different questions.
+
+A bad row (hand-edited, or left from an older shape) is logged and ignored in
+favour of the default rather than propagating a wrong type into policy. So is a
+failed read: reserve and renew both go through here, and settings must not be
+able to take the coordinator down.
+
+`settings.get`/`set` are admin-only; `settings.public` is the smaller subset the
+browser needs to render the idle countdown, a separate procedure rather than a
+branch inside `get`.
+
+**Two bugs found by using it, both fixed:**
+
+- **The detail page needed a reload to see an observer arrive.** `useDeviceStream`
+  invalidated `device.list` and `provider.list` but not `device.get`, so the page
+  10.3 had just subscribed to still refetched nothing — a join, a release from
+  another tab, and its own status all went unseen. It invalidates
+  `device.get.pathKey()` now.
+- **`ObserverDisclosure` looped, once an observer was actually present.** It
+  tracked who had been announced in *state* with `observers` in the dependency
+  array: the effect set the state, the state was a dependency, round it went.
+  It survived at all only because react-query's structural sharing happened to
+  keep the array's identity stable — far too subtle a thing to rest a render
+  loop on. It now keys the effect on a sorted id **string** and keeps the seen
+  set in a ref, so the effect re-runs when the people change and never merely
+  because a new array arrived saying the same thing.
+
+- **Letting go of a device announced itself as being kicked.** Release revokes
+  the session like every other path, so the console reported it exactly as it
+  reports an admin taking the device — "Session ended", naming the user to
+  themselves. The device page now flags a release it initiated *before* the
+  request goes out, since the revoke can arrive over the socket first, and
+  navigates back to the device list: there is nothing left on the page to look
+  at.
+
+**Five new audit actions** land with this phase and the admin UI's hand-written
+`ACTIONS` list does not know about them yet: `device.reservation_idle`,
+`device.reservation_max_duration`, `device.session_join`, `device.session_leave`
+and `settings.update`. Phase 11 replaces that list with one exported constant,
+which is the actual fix.
+
+**Verification still manual and outstanding:** two browsers (one admin, one
+normal user) — reserve as the user, join as the admin, confirm both paint frames
+and both can drive the device and that the user gets the disclosure; force
+release and confirm the "Session ended" dialog names the admin; set the idle
+timeout to two minutes and leave a session alone, confirming the warning appears
+at ~12s remaining and the reaper's own reason explains the release afterwards.
+
+### 10.4 Admin joins a session ✅
+
+Force-release was the only thing an admin could do to a session in progress, and
+it is a blunt instrument: the holder loses the device mid-task. Joining is the
+gentler option — full control, and the holder is told.
+
+**The provider needed no change at all.** `SessionRegistry::check` matches on
+`reservationId`, and `authorize` deliberately does not disturb existing viewers
+when re-authorizing the same reservation — behaviour written for the popout,
+with a test. So an admin holding a token minted against *the holder's*
+reservation is accepted exactly like the holder's second tab. The only
+coordinator change is which callers `device.sessionToken` will mint one for:
+an admin with an open observer row now gets a token carrying the holder's
+`reservationId` and their own `userId`. Same TTL, same claims, same provider
+check.
+
+`reservation_observer` is a table rather than a jsonb column because join and
+leave are events worth querying, and because the holder's UI names who is
+present. A partial unique index on `(reservationId, userId) where left_at is
+null` means rejoining after a reload cannot leave two open rows for one person.
+`releaseActive` closes every open row with the session it belongs to.
+
+**The holder's disclosure is non-blocking on purpose.** A modal they must clear
+would be theatre: by the time it renders, the admin is already in the session
+and already has control. So it is a one-shot dialog on the transition from
+nobody to somebody, plus a persistent badge in the header for as long as an
+observer is present — a refresh does not re-announce an observer who has been
+there for an hour.
+
+### 10.3 "You were kicked" ✅
+
+A force-released user could not tell an administrative action from a dropped
+network: both showed a spinner over a frozen last frame. Two bugs in
+`use-device-session.ts` made that unavoidable —
+
+- **`session.closed` set the reason but not the state.** The closed state
+  arrived later from `onclose`, whose handler then **overwrote the reason with
+  `event.reason || undefined`**, turning "taken back by Ana Silva" back into
+  "Session closed". The revocation reason now lives in a ref that `onState`
+  prefers over the socket's, and the state is set at revoke time.
+- **Nothing invalidated `device.get` on revoke**, so the header carried on
+  offering "Release" for a device the user no longer had.
+
+The canvas is cleared with the renderer, because a frozen frame under a dialog
+still reads as a live session.
+
+**The actor's name is not on the wire and should not be** — the provider has no
+notion of users, and `session.closed` is a string. `device.reservationOutcome`
+reads it back from the reservation row, every column of which `releaseActive`
+already wrote. A reaper release has `releasedBy = null` and is phrased without
+an actor, because saying a person did it would be false and "system" says
+nothing.
+
+The device page also subscribes to `useDeviceStream` for the first time. It
+never did, so the detail page got no live updates at all.
+
+### 10.2 Idle timeout ✅
+
+Nothing bounded a reservation but a browser tab staying open. `expiresAt` only
+ever caught a user who *closed* the tab; a tab left open on a device nobody was
+touching held it indefinitely, which is how the farm bleeds capacity.
+
+**The provider is authoritative about use, the browser is a floor under it.**
+Two sources, because neither is sufficient alone:
+
+- The provider sees every `ClientMessage` that reaches the device and every
+  install — including a session driven entirely through an exposed adb
+  transport, which the browser cannot see at all. New `device.activity` wire
+  message, rate-limited to one per device per 30s by an `ActivityThrottle`,
+  because a drag is hundreds of pointer events a second and the coordinator only
+  needs to know the reservation is not idle. `keyframe` and `pong` are
+  deliberately **not** interaction: they are the stream keeping itself alive,
+  and counting them would make the idle timeout unreachable for as long as a tab
+  is open.
+- The browser reports `interactedAt` on renewal, which covers the case the
+  renewal hook was always about — reading a crash log on a reserved device is
+  still using it, and nothing reaches the device while that happens.
+
+**Neither may move the clock backwards, and neither may move it forwards past
+now.** Both writes clamp to `now` and are guarded (`lt` on the gateway,
+`greatest()` on renew), so a provider host with a fast clock cannot buy an extra
+hour and a backgrounded tab replaying a stale timestamp cannot undo a real
+touch. There are tests for both directions.
+
+The reaper now sweeps three conditions in the same select-then-`releaseActive`
+shape: lapsed, idle (when configured), and a hard `maxDurationSeconds` cap.
+Every path still goes through `releaseActive`, which is what pushes
+`session.revoke` and writes the audit row — the reason string it stores is what
+the released user is told, so it is written for a person to read ("released
+after 30 minutes without interaction").
+
+**The warning is a dialog at 10% remaining**, in a `ReservationKeeper`
+component that both the device page and the popout render — renewal and the
+warning are one feature, and splitting them across routes is how they drift.
+Interacting anywhere in the tab dismisses it, and an interaction inside the
+warning band pushes a renewal **immediately** rather than waiting for the
+scheduled one: the reaper reads the database, and on a long TTL with a short
+idle timeout the next scheduled renewal can be minutes too late.
+
+---
+
 ## Open decisions
 
 - **Name.** The project is "Device Farm" as a placeholder. See

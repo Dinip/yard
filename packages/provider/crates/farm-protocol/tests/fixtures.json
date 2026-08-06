@@ -92,6 +92,11 @@
         "state": "discharging"
       }
     },
+    "deviceActivity": {
+      "type": "device.activity",
+      "deviceId": "R5CT10ABCDE",
+      "at": 1760000000000
+    },
     "deviceStatus": {
       "type": "device.status",
       "deviceId": "R5CT10ABCDE",

@@ -15,6 +15,27 @@
       "when": 1785966661771,
       "tag": "0001_icy_frightful_four",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1785974451191,
+      "tag": "0002_thankful_proudstar",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1785974768417,
+      "tag": "0003_lucky_celestials",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1785975199787,
+      "tag": "0004_lovely_king_cobra",
+      "breakpoints": true
     }
   ]
 }

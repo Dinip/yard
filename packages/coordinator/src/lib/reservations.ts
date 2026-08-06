@@ -1,9 +1,10 @@
 import type { Database } from "@farm/db";
-import { device, reservation } from "@farm/db";
-import { and, eq, inArray, lt } from "drizzle-orm";
+import { device, reservation, reservationObserver } from "@farm/db";
+import { and, eq, inArray, isNull, lt } from "drizzle-orm";
 import { providers } from "../gateway/registry.ts";
 import { audit } from "./audit.ts";
 import { deviceEvents } from "./events.ts";
+import { getSettings } from "./settings.ts";
 
 /**
  * Releasing a reservation, in one place.
@@ -58,6 +59,21 @@ export async function releaseActive(
 
   if (released.length === 0) return [];
 
+  // An observer's presence is scoped to the session they joined; the session
+  // is over.
+  await db
+    .update(reservationObserver)
+    .set({ leftAt: new Date() })
+    .where(
+      and(
+        inArray(
+          reservationObserver.reservationId,
+          released.map((row) => row.id),
+        ),
+        isNull(reservationObserver.leftAt),
+      ),
+    );
+
   const ids = released.map((row) => row.deviceId);
   await db
     .update(device)
@@ -97,15 +113,59 @@ export async function releaseActive(
 /** How often the reaper looks. */
 const SWEEP_INTERVAL = 30_000;
 
+/** Minutes, or hours and minutes — this ends up in a message a user reads. */
+function describeDuration(seconds: number): string {
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest === 0 ? `${hours} hour${hours === 1 ? "" : "s"}` : `${hours}h ${rest}m`;
+}
+
 /**
- * Expire reservations whose `expiresAt` has passed.
+ * Release every active reservation matching one sweep condition.
  *
- * The client renews while a session is open, so a lapsed reservation means the
- * holder is gone — closed the tab, lost the network, went home. Without this a
- * device stays `busy` forever and the farm bleeds capacity one abandoned tab at
- * a time.
+ * Selecting first and releasing by device id keeps every path through
+ * `releaseActive`, which is what pushes `session.revoke` and writes the audit
+ * row. The select's predicate is the same one the release runs under, so a
+ * reservation renewed in between is simply not found by the update.
+ */
+async function sweepCondition(
+  db: Database,
+  condition: ReturnType<typeof lt>,
+  options: { reason: string; auditAction: string },
+) {
+  const matched = await db
+    .select({ deviceId: reservation.deviceId })
+    .from(reservation)
+    .where(and(eq(reservation.state, "active"), condition));
+
+  if (matched.length === 0) return;
+
+  const released = await releaseActive(
+    db,
+    matched.map((row) => row.deviceId),
+    { actorUserId: null, ...options },
+  );
+
+  if (released.length) {
+    console.log(`[reaper] ${options.reason}: released ${released.length} reservation(s)`);
+  }
+}
+
+/**
+ * Reclaim reservations nobody is using, on three conditions.
  *
- * The sweep is a single UPDATE with a `WHERE expires_at < now()`, so two
+ * - **Lapsed** (`expiresAt`): the client renews while a session is open, so a
+ *   lapsed reservation means the holder is gone — closed the tab, lost the
+ *   network, went home.
+ * - **Idle** (`lastActivityAt`, when configured): the tab is open and renewing
+ *   but nobody has driven the device. This is what reclaims the device someone
+ *   left reserved over a long weekend.
+ * - **Too long** (`startedAt`, when configured): a hard cap however busy the
+ *   session is.
+ *
+ * Each sweep is a select and a single UPDATE under the same predicate, so two
  * coordinators running it would not double-release: the second finds no rows.
  * That is worth keeping true even though only one coordinator is supported
  * today.
@@ -113,25 +173,34 @@ const SWEEP_INTERVAL = 30_000;
 export function startReservationReaper(db: Database) {
   const sweep = async () => {
     try {
-      const lapsed = await db
-        .select({ deviceId: reservation.deviceId })
-        .from(reservation)
-        .where(and(eq(reservation.state, "active"), lt(reservation.expiresAt, new Date())));
+      const settings = await getSettings(db);
+      const now = new Date();
 
-      if (lapsed.length === 0) return;
+      await sweepCondition(db, lt(reservation.expiresAt, now), {
+        reason: "reservation expired",
+        auditAction: "device.reservation_expired",
+      });
 
-      const released = await releaseActive(
-        db,
-        lapsed.map((row) => row.deviceId),
-        {
-          actorUserId: null,
-          reason: "reservation expired",
-          auditAction: "device.reservation_expired",
-        },
-      );
+      // The two policies below are off unless an admin turned them on, so the
+      // condition is built only when there is one to build.
+      const idle = settings["reservation.idleTimeoutSeconds"];
+      if (idle !== null) {
+        await sweepCondition(
+          db,
+          lt(reservation.lastActivityAt, new Date(now.getTime() - idle * 1000)),
+          {
+            reason: `released after ${describeDuration(idle)} without interaction`,
+            auditAction: "device.reservation_idle",
+          },
+        );
+      }
 
-      if (released.length) {
-        console.log(`[reaper] released ${released.length} lapsed reservation(s)`);
+      const max = settings["reservation.maxDurationSeconds"];
+      if (max !== null) {
+        await sweepCondition(db, lt(reservation.startedAt, new Date(now.getTime() - max * 1000)), {
+          reason: `released after the ${describeDuration(max)} session limit`,
+          auditAction: "device.reservation_max_duration",
+        });
       }
     } catch (error) {
       // A failed sweep must not kill the timer: the next one will find the

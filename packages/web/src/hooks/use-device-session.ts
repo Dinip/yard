@@ -10,6 +10,12 @@ export interface DeviceSessionApi {
   display: Display | null;
   /** Decoded frame geometry — what the canvas box is actually shaped by. */
   frameSize: { width: number; height: number } | null;
+  /**
+   * The reservation was withdrawn — released elsewhere, taken back by an admin,
+   * or reclaimed by the idle policy. Terminal: unlike `closed`, there is no
+   * reconnect coming, and the caller owes the user an explanation.
+   */
+  revoked: boolean;
   /** The browser cannot decode this stream: no WebCodecs, or an insecure origin. */
   unsupported: boolean;
   /**
@@ -30,6 +36,11 @@ export interface DeviceSessionApi {
 
 /** Long enough for a slow device, short enough to not look hung. */
 const CLIPBOARD_TIMEOUT = 5_000;
+
+function clearCanvas(canvas: HTMLCanvasElement | null) {
+  if (!canvas) return;
+  canvas.getContext("2d")?.clearRect(0, 0, canvas.width, canvas.height);
+}
 
 /**
  * `?fallback=1` forces the degraded path.
@@ -56,12 +67,19 @@ export function useDeviceSession(
 ): DeviceSessionApi {
   const [state, setState] = useState<SessionState>("idle");
   const [detail, setDetail] = useState<string | undefined>();
+  const [revoked, setRevoked] = useState(false);
   const [display, setDisplay] = useState<Display | null>(null);
   const [frameSize, setFrameSize] = useState<{ width: number; height: number } | null>(null);
   const [unsupported, setUnsupported] = useState(false);
   const [fallbackUrl, setFallbackUrl] = useState<string | null>(null);
 
   const sessionRef = useRef<DeviceSession | null>(null);
+  /**
+   * The revocation reason, held outside React state because `onclose` fires
+   * after it and would otherwise overwrite it with the socket's generic one —
+   * turning "taken back by Ana Silva" into "Session closed".
+   */
+  const revokedReason = useRef<string | undefined>(undefined);
   const rendererRef = useRef<ScreenRenderer | null>(null);
   const clipboardWaiters = useRef<((text: string | null) => void)[]>([]);
 
@@ -94,13 +112,19 @@ export function useDeviceSession(
     if (!enabled) return;
 
     let disposed = false;
+    // A fresh session is not revoked, whatever the last one ended as.
+    revokedReason.current = undefined;
+    setRevoked(false);
+
     const requestKeyframe = () => sessionRef.current?.send({ type: "keyframe" });
 
     const session = new DeviceSession(deviceId, {
       onState: (next, why) => {
         if (disposed) return;
         setState(next);
-        setDetail(why);
+        // A reason that came from the provider on the wire beats the socket's,
+        // which is empty or generic for a close the coordinator caused.
+        setDetail(revokedReason.current ?? why);
         if (next === "closed" || next === "idle") {
           rendererRef.current?.destroy();
           rendererRef.current = null;
@@ -168,8 +192,21 @@ export function useDeviceSession(
           }
           case "session.closed":
             // Revocation, not a blip — stop the reconnect loop and say why.
+            //
+            // `state` is set here rather than left to `onclose`: the socket
+            // close arrives later, and until it did the UI showed a spinner
+            // over a frozen last frame, which reads as a stall rather than as
+            // somebody having taken the device.
             session.markRevoked();
+            revokedReason.current = message.reason;
+            setRevoked(true);
             setDetail(message.reason);
+            setState("closed");
+            // A frozen frame under a dialog looks like the session is still
+            // there. It is not.
+            rendererRef.current?.destroy();
+            rendererRef.current = null;
+            clearCanvas(canvasRef.current);
             break;
           case "error":
             console.warn("[session] provider error:", message.message);
@@ -196,5 +233,15 @@ export function useDeviceSession(
     };
   }, [deviceId, enabled, canvasRef]);
 
-  return { state, detail, display, frameSize, unsupported, fallbackUrl, readClipboard, send };
+  return {
+    state,
+    detail,
+    revoked,
+    display,
+    frameSize,
+    unsupported,
+    fallbackUrl,
+    readClipboard,
+    send,
+  };
 }

@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useRouter } from "@tanstack/react-router";
-import { LogOut, ScrollText, Server, Shield, Smartphone } from "lucide-react";
+import { LogOut, ScrollText, Server, Shield, SlidersHorizontal, Smartphone } from "lucide-react";
 import type { ReactNode } from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -47,6 +47,9 @@ export function AppShell({ children }: { children: ReactNode }) {
               </NavLink>
               <NavLink to="/admin/audit" icon={<ScrollText className="size-4" />}>
                 Audit
+              </NavLink>
+              <NavLink to="/admin/settings" icon={<SlidersHorizontal className="size-4" />}>
+                Settings
               </NavLink>
             </>
           )}

@@ -199,6 +199,8 @@ pub enum ProviderMessage {
     DeviceDisplay { device_id: String, display: Display },
     #[serde(rename = "device.battery", rename_all = "camelCase")]
     DeviceBattery { device_id: String, battery: Battery },
+    #[serde(rename = "device.activity", rename_all = "camelCase")]
+    DeviceActivity { device_id: String, at: i64 },
     #[serde(rename = "command.result", rename_all = "camelCase")]
     CommandResult {
         id: String,

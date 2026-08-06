@@ -22,6 +22,10 @@ export function useDeviceStream() {
     trpc.stream.devices.subscriptionOptions(undefined, {
       onData: () => {
         queryClient.invalidateQueries({ queryKey: trpc.device.list.queryKey() });
+        // `pathKey`, so every open `device.get` refreshes too and not just the
+        // list. A detail page is a subscriber like any other — it was missing
+        // observers joining, a release from another tab, and its own status.
+        queryClient.invalidateQueries({ queryKey: trpc.device.get.pathKey() });
         queryClient.invalidateQueries({ queryKey: trpc.provider.list.queryKey() });
       },
       onError: (err) => {

@@ -135,6 +135,13 @@ export const reservation = pgTable(
     state: reservationStateEnum("state").notNull().default("active"),
     startedAt: timestamp("started_at").notNull().defaultNow(),
     expiresAt: timestamp("expires_at").notNull(),
+    /**
+     * Last time anyone actually drove this device, from either of two sources:
+     * the provider, which sees input and installs (including through an exposed
+     * adb transport), and the browser, which can vouch for a tab being used
+     * while no frames flow. Neither may move it backwards — see the idle reaper.
+     */
+    lastActivityAt: timestamp("last_activity_at").notNull().defaultNow(),
     releasedAt: timestamp("released_at"),
     releasedBy: text("released_by").references(() => user.id, { onDelete: "set null" }),
     reason: text("reason"),
@@ -145,8 +152,66 @@ export const reservation = pgTable(
       .where(sql`${t.state} = 'active'`),
     index("reservation_user_idx").on(t.userId),
     index("reservation_expires_idx").on(t.expiresAt).where(sql`${t.state} = 'active'`),
+    // The idle sweep runs beside the expiry one, on the same cadence, and wants
+    // the same shape of index.
+    index("reservation_activity_idx").on(t.lastActivityAt).where(sql`${t.state} = 'active'`),
   ],
 );
+
+/**
+ * An admin watching (and driving) somebody else's session.
+ *
+ * A table rather than a column on `reservation` because join and leave are
+ * events worth querying — "who was in this session, and when" is an audit
+ * question — and because the holder's UI names the people who are present.
+ *
+ * The provider needs no notion of this at all: it matches sessions on
+ * `reservationId`, so an admin holding a token minted against the holder's
+ * reservation is accepted exactly like the holder's second tab.
+ */
+export const reservationObserver = pgTable(
+  "reservation_observer",
+  {
+    id: text("id").primaryKey(),
+    reservationId: text("reservation_id")
+      .notNull()
+      .references(() => reservation.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    joinedAt: timestamp("joined_at").notNull().defaultNow(),
+    leftAt: timestamp("left_at"),
+  },
+  (t) => [
+    index("reservation_observer_reservation_idx").on(t.reservationId),
+    // "Who is in this session right now" is the read the holder's UI makes on
+    // every device fetch.
+    uniqueIndex("reservation_observer_one_open_per_user")
+      .on(t.reservationId, t.userId)
+      .where(sql`${t.leftAt} is null`),
+  ],
+);
+
+/**
+ * Global configuration an admin can change without a redeploy.
+ *
+ * Key/value rather than a column per knob: these are policy, they arrive one at
+ * a time, and a migration per setting would make adding one a deploy. Defaults
+ * live in the coordinator's typed registry, not here — an absent row means "use
+ * the default", so seeding is never required and a value can be reset by
+ * deleting it.
+ */
+export const setting = pgTable("setting", {
+  key: text("key").primaryKey(),
+  /**
+   * Nullable because `null` is a meaningful value for several keys — an idle
+   * timeout of `null` is "off", which is not the same as never having been
+   * configured. Absence of the *row* is what means unset.
+   */
+  value: jsonb("value"),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  updatedBy: text("updated_by").references(() => user.id, { onDelete: "set null" }),
+});
 
 /**
  * There is no artifact/app table by design — uploads are transient and deleted
@@ -171,5 +236,7 @@ export type ProviderToken = typeof providerToken.$inferSelect;
 export type Device = typeof device.$inferSelect;
 export type Reservation = typeof reservation.$inferSelect;
 export type AuditLog = typeof auditLog.$inferSelect;
+export type Setting = typeof setting.$inferSelect;
+export type ReservationObserver = typeof reservationObserver.$inferSelect;
 export type Platform = (typeof platformEnum.enumValues)[number];
 export type DeviceStatus = (typeof deviceStatusEnum.enumValues)[number];

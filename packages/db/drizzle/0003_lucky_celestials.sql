@@ -1,0 +1,2 @@
+ALTER TABLE "reservation" ADD COLUMN "last_activity_at" timestamp DEFAULT now() NOT NULL;--> statement-breakpoint
+CREATE INDEX "reservation_activity_idx" ON "reservation" USING btree ("last_activity_at") WHERE "reservation"."state" = 'active';

@@ -16,6 +16,7 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as AppProvidersRouteImport } from './routes/_app/providers'
 import { Route as AppAdminAuditRouteImport } from './routes/_app/admin.audit'
 import { Route as AppAdminProvidersRouteImport } from './routes/_app/admin.providers'
+import { Route as AppAdminSettingsRouteImport } from './routes/_app/admin.settings'
 import { Route as AppAdminUsersRouteImport } from './routes/_app/admin.users'
 import { Route as AppDevicesIndexRouteImport } from './routes/_app/devices.index'
 import { Route as AppDevicesDeviceIdRouteImport } from './routes/_app/devices.$deviceId'
@@ -54,6 +55,11 @@ const AppAdminProvidersRoute = AppAdminProvidersRouteImport.update({
   path: '/admin/providers',
   getParentRoute: () => AppRoute,
 } as any)
+const AppAdminSettingsRoute = AppAdminSettingsRouteImport.update({
+  id: '/admin/settings',
+  path: '/admin/settings',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppAdminUsersRoute = AppAdminUsersRouteImport.update({
   id: '/admin/users',
   path: '/admin/users',
@@ -82,6 +88,7 @@ export interface FileRoutesByFullPath {
   '/providers': typeof AppProvidersRoute
   '/admin/audit': typeof AppAdminAuditRoute
   '/admin/providers': typeof AppAdminProvidersRoute
+  '/admin/settings': typeof AppAdminSettingsRoute
   '/admin/users': typeof AppAdminUsersRoute
   '/devices/$deviceId': typeof AppDevicesDeviceIdRoute
   '/devices/': typeof AppDevicesIndexRoute
@@ -93,6 +100,7 @@ export interface FileRoutesByTo {
   '/providers': typeof AppProvidersRoute
   '/admin/audit': typeof AppAdminAuditRoute
   '/admin/providers': typeof AppAdminProvidersRoute
+  '/admin/settings': typeof AppAdminSettingsRoute
   '/admin/users': typeof AppAdminUsersRoute
   '/devices/$deviceId': typeof AppDevicesDeviceIdRoute
   '/devices': typeof AppDevicesIndexRoute
@@ -107,6 +115,7 @@ export interface FileRoutesById {
   '/_app/providers': typeof AppProvidersRoute
   '/_app/admin/audit': typeof AppAdminAuditRoute
   '/_app/admin/providers': typeof AppAdminProvidersRoute
+  '/_app/admin/settings': typeof AppAdminSettingsRoute
   '/_app/admin/users': typeof AppAdminUsersRoute
   '/_app/devices/$deviceId': typeof AppDevicesDeviceIdRoute
   '/_app/devices/': typeof AppDevicesIndexRoute
@@ -120,6 +129,7 @@ export interface FileRouteTypes {
     | '/providers'
     | '/admin/audit'
     | '/admin/providers'
+    | '/admin/settings'
     | '/admin/users'
     | '/devices/$deviceId'
     | '/devices/'
@@ -131,6 +141,7 @@ export interface FileRouteTypes {
     | '/providers'
     | '/admin/audit'
     | '/admin/providers'
+    | '/admin/settings'
     | '/admin/users'
     | '/devices/$deviceId'
     | '/devices'
@@ -144,6 +155,7 @@ export interface FileRouteTypes {
     | '/_app/providers'
     | '/_app/admin/audit'
     | '/_app/admin/providers'
+    | '/_app/admin/settings'
     | '/_app/admin/users'
     | '/_app/devices/$deviceId'
     | '/_app/devices/'
@@ -208,6 +220,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppAdminProvidersRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/admin/settings': {
+      id: '/_app/admin/settings'
+      path: '/admin/settings'
+      fullPath: '/admin/settings'
+      preLoaderRoute: typeof AppAdminSettingsRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/admin/users': {
       id: '/_app/admin/users'
       path: '/admin/users'
@@ -243,6 +262,7 @@ interface AppRouteChildren {
   AppProvidersRoute: typeof AppProvidersRoute
   AppAdminAuditRoute: typeof AppAdminAuditRoute
   AppAdminProvidersRoute: typeof AppAdminProvidersRoute
+  AppAdminSettingsRoute: typeof AppAdminSettingsRoute
   AppAdminUsersRoute: typeof AppAdminUsersRoute
   AppDevicesDeviceIdRoute: typeof AppDevicesDeviceIdRoute
   AppDevicesIndexRoute: typeof AppDevicesIndexRoute
@@ -252,6 +272,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppProvidersRoute: AppProvidersRoute,
   AppAdminAuditRoute: AppAdminAuditRoute,
   AppAdminProvidersRoute: AppAdminProvidersRoute,
+  AppAdminSettingsRoute: AppAdminSettingsRoute,
   AppAdminUsersRoute: AppAdminUsersRoute,
   AppDevicesDeviceIdRoute: AppDevicesDeviceIdRoute,
   AppDevicesIndexRoute: AppDevicesIndexRoute,

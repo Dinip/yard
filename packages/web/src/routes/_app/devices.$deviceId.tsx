@@ -1,9 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { ArrowLeft } from "lucide-react";
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { DeviceConsole } from "@/components/device-console";
+import { formatCountdown, ReservationKeeper } from "@/components/reservation-keeper";
+import { SessionEndedDialog } from "@/components/session-ended-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -18,8 +20,8 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useDeviceStream } from "@/hooks/use-device-stream";
 import { usePopoutPresence } from "@/hooks/use-popout-presence";
-import { useReservationRenewal } from "@/hooks/use-reservation-renewal";
 import { trpc } from "@/lib/trpc";
 import { relativeTime } from "@/lib/utils";
 
@@ -34,24 +36,55 @@ export const Route = createFileRoute("/_app/devices/$deviceId")({
 function DevicePage() {
   const { deviceId } = Route.useParams();
   const qc = useQueryClient();
-  const { data: device } = useQuery(trpc.device.get.queryOptions({ id: deviceId }));
+  const navigate = useNavigate();
+  // Without this the detail page got no live updates at all: a device released
+  // from elsewhere, or taken back, left this page showing a stale header.
+  const { pollInterval } = useDeviceStream();
+  const { data: device } = useQuery({
+    ...trpc.device.get.queryOptions({ id: deviceId }),
+    refetchInterval: pollInterval,
+  });
   const { data: me } = useQuery(trpc.user.me.queryOptions());
+  const { data: policy } = useQuery(trpc.settings.public.queryOptions());
   const mine = device?.reservation?.userId === me?.id;
+  /** An admin who has openly joined this session: full control, no reservation. */
+  const observing = Boolean(
+    me && device?.reservation?.observers.some((o) => o.userId === me.id) && !mine,
+  );
 
   // A popout takes the stream; this tab keeps the reservation and the page.
   const { poppedOut, reclaim } = usePopoutPresence(deviceId);
 
-  // Only the holder renews. Another user's tab must not keep a device they do
-  // not hold alive.
-  useReservationRenewal(
-    mine ? device?.reservation?.id : undefined,
-    mine ? device?.reservation?.expiresAt : undefined,
-  );
-
-  const invalidate = () => {
+  const invalidate = useCallback(() => {
     qc.invalidateQueries({ queryKey: trpc.device.get.queryKey({ id: deviceId }) });
     qc.invalidateQueries({ queryKey: trpc.device.list.queryKey() });
-  };
+  }, [qc, deviceId]);
+
+  // The reservation is gone from `device.get` by the time the revocation is
+  // explained, so the id has to be kept while it is still there.
+  const heldReservation = useRef<string | undefined>(undefined);
+  if (device?.reservation?.id) heldReservation.current = device.reservation.id;
+
+  /**
+   * Set before the release request goes out, not after it returns.
+   *
+   * Letting go of a device revokes the session like any other release, so the
+   * console reports it exactly as it reports being kicked — and the revoke can
+   * arrive over the socket before the mutation resolves. A user who clicked
+   * Release does not need to be told their session ended.
+   */
+  const releasedHere = useRef(false);
+
+  const [ended, setEnded] = useState<{ reason?: string } | null>(null);
+  const onRevoked = useCallback(
+    (reason?: string) => {
+      // The header still offered "Release" for a device the user no longer has.
+      invalidate();
+      if (releasedHere.current) return;
+      setEnded({ reason });
+    },
+    [invalidate],
+  );
 
   const reserve = useMutation(
     trpc.device.reserve.mutationOptions({
@@ -65,11 +98,20 @@ function DevicePage() {
 
   const release = useMutation(
     trpc.device.release.mutationOptions({
+      onMutate: () => {
+        releasedHere.current = true;
+      },
       onSuccess: () => {
         toast.success("Device released");
         invalidate();
+        // There is nothing left on this page to look at: no session, and a
+        // device anyone can now take.
+        navigate({ to: "/devices" });
       },
-      onError: (e) => toast.error(e.message),
+      onError: (e) => {
+        releasedHere.current = false;
+        toast.error(e.message);
+      },
     }),
   );
 
@@ -83,10 +125,47 @@ function DevicePage() {
     }),
   );
 
+  const joinSession = useMutation(
+    trpc.admin.joinSession.mutationOptions({
+      onSuccess: invalidate,
+      onError: (e) => toast.error(e.message),
+    }),
+  );
+
+  const leaveSession = useMutation(
+    trpc.admin.leaveSession.mutationOptions({
+      onSuccess: invalidate,
+      onError: (e) => toast.error(e.message),
+    }),
+  );
+
   if (!device) return null;
 
   return (
     <div className="flex flex-col gap-6">
+      {/* Only the holder renews. Another user's tab must not keep a device
+          they do not hold alive. */}
+      {mine && (
+        <ReservationKeeper
+          reservationId={device.reservation?.id}
+          expiresAt={device.reservation?.expiresAt}
+          lastActivityAt={device.reservation?.lastActivityAt}
+        />
+      )}
+      <SessionEndedDialog
+        reservationId={heldReservation.current}
+        fallbackReason={ended?.reason}
+        open={ended !== null}
+        onDismiss={() => navigate({ to: "/devices" })}
+      />
+
+      {/* Disclosure, not a gate: the admin is already in the session by the
+          time this renders, so blocking the holder would achieve nothing but
+          getting in their way. */}
+      {mine && device.reservation && (
+        <ObserverDisclosure observers={device.reservation.observers} />
+      )}
+
       <div className="flex items-center gap-3">
         <Button variant="ghost" size="icon" asChild>
           <Link to="/devices">
@@ -102,6 +181,11 @@ function DevicePage() {
         <Badge variant="outline" className="ml-2">
           {device.status}
         </Badge>
+        {mine && device.reservation && device.reservation.observers.length > 0 && (
+          <Badge variant="outline" className="border-warning/30 bg-warning/15 text-warning">
+            {describeObservers(device.reservation.observers)} in this session
+          </Badge>
+        )}
         <div className="flex-1" />
         {device.reservation ? (
           mine ? (
@@ -120,6 +204,28 @@ function DevicePage() {
               {/* Taking a device from someone mid-session is disruptive and
                   auditable, so it asks for a reason rather than being a
                   one-click action next to Release. */}
+              {/* Joining is the gentler of the two: the holder keeps the
+                  device and is told, rather than losing it mid-task. */}
+              {me?.isAdmin &&
+                (observing ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={leaveSession.isPending}
+                    onClick={() => leaveSession.mutate({ deviceId })}
+                  >
+                    Leave session
+                  </Button>
+                ) : (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={joinSession.isPending}
+                    onClick={() => joinSession.mutate({ deviceId })}
+                  >
+                    Join session
+                  </Button>
+                ))}
               {me?.isAdmin && (
                 <ForceReleaseDialog
                   owner={device.reservation.ownerName ?? "someone"}
@@ -139,8 +245,15 @@ function DevicePage() {
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
         <Card className="min-h-[480px]">
           <CardContent className="flex h-full min-h-0 items-center justify-center text-center text-muted-foreground text-sm">
-            {!mine ? (
+            {!mine && !observing ? (
               <p>Reserve this device to open a session.</p>
+            ) : observing ? (
+              <DeviceConsole
+                deviceId={deviceId}
+                active
+                className="h-[70svh] w-full"
+                onRevoked={onRevoked}
+              />
             ) : poppedOut ? (
               // Two decoders on one device is waste the user never asked for,
               // so this tab stands down while the popout has the stream.
@@ -151,7 +264,12 @@ function DevicePage() {
                 </Button>
               </div>
             ) : (
-              <DeviceConsole deviceId={deviceId} active className="h-[70svh] w-full" />
+              <DeviceConsole
+                deviceId={deviceId}
+                active
+                className="h-[70svh] w-full"
+                onRevoked={onRevoked}
+              />
             )}
           </CardContent>
         </Card>
@@ -197,6 +315,16 @@ function DevicePage() {
                 value={new Date(device.reservation.expiresAt).toLocaleTimeString()}
               />
             )}
+            {device.reservation && policy?.idleTimeoutSeconds != null && (
+              <Detail
+                label="Idle timeout"
+                value={`${Math.round(policy.idleTimeoutSeconds / 60)} min · releases in ${formatCountdown(
+                  new Date(device.reservation.lastActivityAt).getTime() +
+                    policy.idleTimeoutSeconds * 1000 -
+                    Date.now(),
+                )}`}
+              />
+            )}
 
             {/* Remote debugging is the holder's tool, not an admin one: it
                 hands out a live adb transport to whoever runs the command. */}
@@ -212,6 +340,77 @@ function DevicePage() {
         </Card>
       </div>
     </div>
+  );
+}
+
+type Observer = { userId: string; name: string | null; joinedAt: string | Date };
+
+/** "Ana Silva", or "Ana Silva and 2 others" — a badge, not a list. */
+function describeObservers(observers: Observer[]): string {
+  const [first, ...rest] = observers;
+  const name = first?.name ?? "An admin";
+  if (rest.length === 0) return name;
+  return `${name} and ${rest.length} other${rest.length === 1 ? "" : "s"}`;
+}
+
+/**
+ * Tells the holder, once, that somebody joined.
+ *
+ * Non-blocking on purpose: an admin who joined is already there and already has
+ * control, so a modal the holder must clear would be theatre. The badge in the
+ * header is the persistent half — this fires only on the transition from nobody
+ * to somebody, so a page refresh does not re-announce a session that has had an
+ * observer in it for an hour.
+ */
+function ObserverDisclosure({ observers }: { observers: Observer[] }) {
+  const [open, setOpen] = useState(false);
+  const [arrival, setArrival] = useState<Observer | null>(null);
+
+  /**
+   * Who has already been announced, in a ref rather than state.
+   *
+   * The first version tracked this in state with `observers` in the dependency
+   * array, which loops the moment that array's identity churns between renders:
+   * the effect sets state, the state is a dependency, and round it goes. It
+   * only held together because react-query's structural sharing happened to
+   * keep the reference stable, which is far too subtle a thing to rest a render
+   * loop on.
+   */
+  const announced = useRef<string[]>([]);
+  const latest = useRef(observers);
+  latest.current = observers;
+
+  // A sorted id list: a primitive, so the effect re-runs when the *people*
+  // change and never merely because a new array arrived saying the same thing.
+  const present = observers
+    .map((o) => o.userId)
+    .sort()
+    .join(",");
+
+  useEffect(() => {
+    const fresh = latest.current.find((o) => !announced.current.includes(o.userId));
+    // Someone leaving makes them announceable again if they come back.
+    announced.current = present ? present.split(",") : [];
+    if (!fresh) return;
+    setArrival(fresh);
+    setOpen(true);
+  }, [present]);
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{arrival?.name ?? "An admin"} joined this session</DialogTitle>
+          <DialogDescription>
+            They can see the screen and control the device, the same as you. The device is still
+            yours — this is not a release.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button onClick={() => setOpen(false)}>Got it</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

@@ -1,7 +1,9 @@
-import { auditLog, user } from "@farm/db";
+import { auditLog, reservation, reservationObserver, user } from "@farm/db";
 import { TRPCError } from "@trpc/server";
-import { count, desc, eq, ilike, or } from "drizzle-orm";
+import { and, count, desc, eq, ilike, isNull, or } from "drizzle-orm";
 import { z } from "zod";
+import { audit } from "../../lib/audit.ts";
+import { deviceEvents } from "../../lib/events.ts";
 import { releaseActive } from "../../lib/reservations.ts";
 import { adminProcedure, router } from "../init.ts";
 
@@ -56,6 +58,79 @@ export const adminRouter = router({
       });
       if (!released) throw new TRPCError({ code: "NOT_FOUND", message: "No active reservation" });
       return released;
+    }),
+
+  /**
+   * Join somebody else's session, with full control.
+   *
+   * **The provider needs no change for this.** It matches sessions on
+   * `reservationId`, and re-authorizing the same reservation deliberately does
+   * not disturb existing viewers — behaviour written for the popout, and tested.
+   * So an admin holding a token minted against *the holder's* reservation is
+   * accepted exactly like the holder's second tab.
+   *
+   * Disclosure, not stealth: the observer row is what the holder's UI names, and
+   * the join is audited.
+   */
+  joinSession: adminProcedure
+    .input(z.object({ deviceId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const [held] = await ctx.db
+        .select({ id: reservation.id, userId: reservation.userId })
+        .from(reservation)
+        .where(and(eq(reservation.deviceId, input.deviceId), eq(reservation.state, "active")))
+        .limit(1);
+
+      if (!held) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Device is not reserved" });
+      }
+      if (held.userId === ctx.user.id) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "You already hold this device" });
+      }
+
+      await ctx.db
+        .insert(reservationObserver)
+        .values({
+          id: crypto.randomUUID(),
+          reservationId: held.id,
+          userId: ctx.user.id,
+        })
+        // Rejoining after a reload is not an error, and must not leave two open
+        // rows for one person.
+        .onConflictDoNothing();
+
+      await audit(ctx.db, ctx.user.id, "device.session_join", "device", input.deviceId, {
+        reservationId: held.id,
+        holder: held.userId,
+      });
+      deviceEvents.publish();
+      return { reservationId: held.id };
+    }),
+
+  leaveSession: adminProcedure
+    .input(z.object({ deviceId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const [held] = await ctx.db
+        .select({ id: reservation.id })
+        .from(reservation)
+        .where(and(eq(reservation.deviceId, input.deviceId), eq(reservation.state, "active")))
+        .limit(1);
+      if (!held) throw new TRPCError({ code: "NOT_FOUND" });
+
+      await ctx.db
+        .update(reservationObserver)
+        .set({ leftAt: new Date() })
+        .where(
+          and(
+            eq(reservationObserver.reservationId, held.id),
+            eq(reservationObserver.userId, ctx.user.id),
+            isNull(reservationObserver.leftAt),
+          ),
+        );
+
+      await audit(ctx.db, ctx.user.id, "device.session_leave", "device", input.deviceId);
+      deviceEvents.publish();
+      return { ok: true };
     }),
 
   audit: adminProcedure

@@ -18,6 +18,7 @@ target/
 # The provider's real configuration: device serials and host addresses are
 # specific to one machine. provider.example.yaml is the one that ships.
 packages/provider/provider.yaml
+packages/provider/provider.local.yaml
 
 # logs
 logs/
