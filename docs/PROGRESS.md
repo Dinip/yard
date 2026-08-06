@@ -735,6 +735,58 @@ idle timeout the next scheduled renewal can be minutes too late.
 
 ---
 
+## Phase 11 — Audit filtering ✅
+
+The audit log had one filter, on action, over a hand-maintained list of options
+that had already drifted twice — and it paginated by "was the page full?", which
+can neither show a count nor recognise the last page.
+
+| Item | State | Where |
+|---|---|---|
+| `AUDIT_ACTIONS` — one list, in the protocol package | ✅ | `protocol/src/audit.ts` |
+| `admin.audit` filters + `{ items, total }` | ✅ | `coordinator/.../admin.ts` |
+| Index on `audit_log(target_id)` | ✅ | `db/drizzle/0005_*.sql` |
+| Filter row in search params, count, target links | ✅ | `web/.../admin.audit.tsx` |
+
+**The action list lives in `packages/protocol`**, not the coordinator, because
+the web app needs the *values* and the working agreement is that `packages/web`
+imports coordinator **types** only. It is deliberately a plain const rather than
+a `named()` zod schema, so the Rust generator does not emit it: a provider has
+no notion of audit actions. `audit()` and `ReleaseOptions.auditAction` now take
+the union, so an action written any other way does not compile — which is what
+stops the list drifting a third time. Typing them turned up no unknown actions,
+confirming the list is complete at 20; the UI's copy had known about 8.
+
+`auditActionLabel` falls back to the raw value rather than rendering nothing for
+an action retired from the list. The audit log is a historical record, and an
+action nobody writes any more has not stopped having happened.
+
+**Filters live in the URL.** "Look at what happened to this device" should be a
+link, which is most of the reason to have filters at all — so they are route
+search params via `validateSearch`, `page` moved there too, and any filter
+change resets to page 0. The target filter is a prefix match so a partially
+pasted id still finds it, and debounced, because a request per keystroke would
+also mean a history entry per keystroke.
+
+`total` is a second `count()` over the same predicate, built once and passed to
+both queries so the two cannot disagree about what they are counting.
+
+### A latent bug this surfaced
+
+**The `23505` → `CONFLICT` translation had stopped working.** `isUniqueViolation`
+read `err.code` directly, and drizzle now wraps query failures in an error
+carrying the driver's as its `cause` — so the loser of a concurrent reserve got
+a 500 with the whole INSERT in the message instead of "Device is in use".
+
+Invisible because losing that race is rare enough that a 500 there reads as a
+flake. The phase-1 concurrency test only caught it once this phase's settings
+read shifted the timing enough for both callers to reach the insert reliably. It
+now walks the cause chain, lives in `lib/pg-errors.ts` rather than inside a
+router, and has a test per error shape. It is the one function standing between
+the database's exclusivity guarantee and what a user sees.
+
+---
+
 ## Open decisions
 
 - **Name.** The project is "Device Farm" as a placeholder. See
