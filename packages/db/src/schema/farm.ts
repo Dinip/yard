@@ -149,6 +149,27 @@ export const reservation = pgTable(
 );
 
 /**
+ * Global configuration an admin can change without a redeploy.
+ *
+ * Key/value rather than a column per knob: these are policy, they arrive one at
+ * a time, and a migration per setting would make adding one a deploy. Defaults
+ * live in the coordinator's typed registry, not here — an absent row means "use
+ * the default", so seeding is never required and a value can be reset by
+ * deleting it.
+ */
+export const setting = pgTable("setting", {
+  key: text("key").primaryKey(),
+  /**
+   * Nullable because `null` is a meaningful value for several keys — an idle
+   * timeout of `null` is "off", which is not the same as never having been
+   * configured. Absence of the *row* is what means unset.
+   */
+  value: jsonb("value"),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  updatedBy: text("updated_by").references(() => user.id, { onDelete: "set null" }),
+});
+
+/**
  * There is no artifact/app table by design — uploads are transient and deleted
  * after install. An install therefore leaves its only trace here.
  */
@@ -171,5 +192,6 @@ export type ProviderToken = typeof providerToken.$inferSelect;
 export type Device = typeof device.$inferSelect;
 export type Reservation = typeof reservation.$inferSelect;
 export type AuditLog = typeof auditLog.$inferSelect;
+export type Setting = typeof setting.$inferSelect;
 export type Platform = (typeof platformEnum.enumValues)[number];
 export type DeviceStatus = (typeof deviceStatusEnum.enumValues)[number];

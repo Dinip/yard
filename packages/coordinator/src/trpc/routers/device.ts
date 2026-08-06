@@ -2,15 +2,26 @@ import { device, provider, reservation, user } from "@farm/db";
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
-import { env } from "../../env.ts";
 import { providers } from "../../gateway/registry.ts";
 import { audit } from "../../lib/audit.ts";
 import { deviceEvents } from "../../lib/events.ts";
 import { releaseActive } from "../../lib/reservations.ts";
 import { signSessionToken } from "../../lib/session-token.ts";
+import { getSetting } from "../../lib/settings.ts";
 import { protectedProcedure, router } from "../init.ts";
 
 const RESERVABLE: ReadonlyArray<"ready" | "present"> = ["ready", "present"];
+
+/**
+ * When a reservation taken (or renewed) now should lapse.
+ *
+ * The TTL is admin-configurable policy rather than an env var, so it is read
+ * per call — the settings cache makes that a memory lookup almost every time.
+ */
+async function expiryFromNow(db: import("@farm/db").Database) {
+  const ttl = await getSetting(db, "reservation.ttlSeconds");
+  return new Date(Date.now() + ttl * 1000);
+}
 
 /** Device rows joined with their provider and current owner, shaped for the UI. */
 async function listDevices(db: import("@farm/db").Database) {
@@ -95,7 +106,7 @@ export const deviceRouter = router({
         }
         const [renewed] = await ctx.db
           .update(reservation)
-          .set({ expiresAt: new Date(Date.now() + env.RESERVATION_TTL * 1000) })
+          .set({ expiresAt: await expiryFromNow(ctx.db) })
           .where(eq(reservation.id, existing.id))
           .returning();
         return renewed!;
@@ -122,7 +133,7 @@ export const deviceRouter = router({
             deviceId: input.deviceId,
             userId: ctx.user.id,
             state: "active",
-            expiresAt: new Date(Date.now() + env.RESERVATION_TTL * 1000),
+            expiresAt: await expiryFromNow(ctx.db),
           })
           .returning();
         created = row!;
@@ -207,7 +218,7 @@ export const deviceRouter = router({
     .mutation(async ({ ctx, input }) => {
       const [updated] = await ctx.db
         .update(reservation)
-        .set({ expiresAt: new Date(Date.now() + env.RESERVATION_TTL * 1000) })
+        .set({ expiresAt: await expiryFromNow(ctx.db) })
         .where(
           and(
             eq(reservation.id, input.reservationId),

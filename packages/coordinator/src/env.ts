@@ -38,7 +38,11 @@ export const env = createEnv({
     /** Session-token lifetime in seconds. Short: the client refreshes. */
     SESSION_TOKEN_TTL: z.coerce.number().int().default(60),
 
-    /** Default reservation lifetime in seconds, renewed while the tab is open. */
+    /**
+     * Seed for `reservation.ttlSeconds`, the admin-editable setting that
+     * replaced it. Read only when no row exists, so an existing deployment
+     * keeps the lifetime it was configured with until an admin changes it.
+     */
     RESERVATION_TTL: z.coerce.number().int().default(900),
 
     /** Display name of the product. Centralised here so a rename is one variable. */

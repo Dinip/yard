@@ -15,6 +15,13 @@
       "when": 1785966661771,
       "tag": "0001_icy_frightful_four",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1785974451191,
+      "tag": "0002_thankful_proudstar",
+      "breakpoints": true
     }
   ]
 }

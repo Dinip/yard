@@ -559,6 +559,46 @@ reload the parent while the popout is open and confirm it comes back suspended.
 
 ---
 
+## Phase 10 — Session governance 🚧
+
+The largest of the post-launch phases: schema, policy, and two new interaction
+flows. Built in four parts, in this order, each its own commit.
+
+| Item | State | Where |
+|---|---|---|
+| 10.1 `setting` table + typed registry, admin page | ✅ | `coordinator/src/lib/settings.ts`, `web/.../admin.settings.tsx` |
+| 10.2 Idle timeout — provider activity, reaper, warning | ⬜ | |
+| 10.3 "You were kicked" dialog | ⬜ | |
+| 10.4 Admin joins a session | ⬜ | |
+
+### 10.1 Settings ✅
+
+The first DB-backed configuration in the project, so it had to establish the
+pattern rather than just add a knob: a typed registry declares every key with a
+zod schema and a default, reads are cached for five seconds because reserve,
+renew and every reaper sweep consult them, and **defaults are the env vars they
+replace** — `RESERVATION_TTL` is now a seed, so an existing deployment behaves
+exactly as it did until an admin changes something.
+
+Two decisions worth keeping:
+
+- **An absent row means "use the default".** Nothing is seeded, a fresh database
+  needs no migration data, and resetting a setting is deleting a row.
+- **`value` is nullable.** `null` is a real value for the two timeouts — it
+  means the policy is off — and jsonb `NOT NULL` cannot express it. Absence of
+  the *row* is what means unset; the two are different questions.
+
+A bad row (hand-edited, or left from an older shape) is logged and ignored in
+favour of the default rather than propagating a wrong type into policy. So is a
+failed read: reserve and renew both go through here, and settings must not be
+able to take the coordinator down.
+
+`settings.get`/`set` are admin-only; `settings.public` is the smaller subset the
+browser needs to render the idle countdown, a separate procedure rather than a
+branch inside `get`.
+
+---
+
 ## Open decisions
 
 - **Name.** The project is "Device Farm" as a placeholder. See
