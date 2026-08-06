@@ -559,7 +559,7 @@ reload the parent while the popout is open and confirm it comes back suspended.
 
 ---
 
-## Phase 10 — Session governance 🚧
+## Phase 10 — Session governance ✅
 
 The largest of the post-launch phases: schema, policy, and two new interaction
 flows. Built in four parts, in this order, each its own commit.
@@ -596,6 +596,19 @@ able to take the coordinator down.
 `settings.get`/`set` are admin-only; `settings.public` is the smaller subset the
 browser needs to render the idle countdown, a separate procedure rather than a
 branch inside `get`.
+
+**Five new audit actions** land with this phase and the admin UI's hand-written
+`ACTIONS` list does not know about them yet: `device.reservation_idle`,
+`device.reservation_max_duration`, `device.session_join`, `device.session_leave`
+and `settings.update`. Phase 11 replaces that list with one exported constant,
+which is the actual fix.
+
+**Verification still manual and outstanding:** two browsers (one admin, one
+normal user) — reserve as the user, join as the admin, confirm both paint frames
+and both can drive the device and that the user gets the disclosure; force
+release and confirm the "Session ended" dialog names the admin; set the idle
+timeout to two minutes and leave a session alone, confirming the warning appears
+at ~12s remaining and the reaper's own reason explains the release afterwards.
 
 ### 10.4 Admin joins a session ✅
 
