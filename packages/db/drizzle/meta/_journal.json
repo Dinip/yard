@@ -29,6 +29,13 @@
       "when": 1785974768417,
       "tag": "0003_lucky_celestials",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1785975199787,
+      "tag": "0004_lovely_king_cobra",
+      "breakpoints": true
     }
   ]
 }

@@ -1,6 +1,6 @@
 import type { Database } from "@farm/db";
-import { device, reservation } from "@farm/db";
-import { and, eq, inArray, lt } from "drizzle-orm";
+import { device, reservation, reservationObserver } from "@farm/db";
+import { and, eq, inArray, isNull, lt } from "drizzle-orm";
 import { providers } from "../gateway/registry.ts";
 import { audit } from "./audit.ts";
 import { deviceEvents } from "./events.ts";
@@ -58,6 +58,21 @@ export async function releaseActive(
     .returning();
 
   if (released.length === 0) return [];
+
+  // An observer's presence is scoped to the session they joined; the session
+  // is over.
+  await db
+    .update(reservationObserver)
+    .set({ leftAt: new Date() })
+    .where(
+      and(
+        inArray(
+          reservationObserver.reservationId,
+          released.map((row) => row.id),
+        ),
+        isNull(reservationObserver.leftAt),
+      ),
+    );
 
   const ids = released.map((row) => row.deviceId);
   await db

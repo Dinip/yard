@@ -4,7 +4,7 @@
  * DATABASE_URL (docker compose -f docker-compose.dev.yml up -d).
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { device, provider, reservation, setting, user } from "@farm/db";
+import { device, provider, reservation, reservationObserver, setting, user } from "@farm/db";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { db } from "../src/db.ts";
 import { startReservationReaper } from "../src/lib/reservations.ts";
@@ -182,6 +182,88 @@ describe("the reaper", () => {
 
     const [row] = await db.select().from(reservation).where(eq(reservation.id, held.id)).limit(1);
     expect(row?.state).toBe("active");
+  });
+});
+
+/**
+ * An admin joining a session is the gentler alternative to taking the device
+ * away. The provider needs no change for it — it matches on `reservationId` —
+ * so what has to hold is that the coordinator mints a token carrying *the
+ * holder's* reservation, and only for an admin who openly joined.
+ */
+describe("joining someone else's session", () => {
+  test("an admin who joins gets a token against the holder's reservation", async () => {
+    await resetDevice();
+    const holder = callerFor(USERS[0]);
+    const held = await holder.device.reserve({ deviceId: DEVICE_ID });
+
+    const admin = callerFor(USERS[1], "admin");
+    // Before joining, an admin is just somebody else.
+    await expect(admin.device.sessionToken({ deviceId: DEVICE_ID })).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
+
+    const joined = await admin.admin.joinSession({ deviceId: DEVICE_ID });
+    expect(joined.reservationId).toBe(held.id);
+
+    const token = await admin.device.sessionToken({ deviceId: DEVICE_ID });
+    const claims = JSON.parse(atob(token.token.split(".")[1]!.replace(/-/g, "+")));
+    expect(claims.reservationId).toBe(held.id);
+    // The admin's own identity, against the holder's reservation.
+    expect(claims.userId).toBe(USERS[1]);
+
+    // The holder's own session is untouched — this is a join, not a takeover.
+    await expect(holder.device.sessionToken({ deviceId: DEVICE_ID })).resolves.toBeDefined();
+  });
+
+  test("a non-admin cannot join, and neither can the holder", async () => {
+    await resetDevice();
+    await callerFor(USERS[0]).device.reserve({ deviceId: DEVICE_ID });
+
+    await expect(
+      callerFor(USERS[1]).admin.joinSession({ deviceId: DEVICE_ID }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+    await expect(
+      callerFor(USERS[0], "admin").admin.joinSession({ deviceId: DEVICE_ID }),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+
+  test("leaving withdraws the token, and the holder sees who is present", async () => {
+    await resetDevice();
+    const holder = callerFor(USERS[0]);
+    await holder.device.reserve({ deviceId: DEVICE_ID });
+
+    const admin = callerFor(USERS[1], "admin");
+    await admin.admin.joinSession({ deviceId: DEVICE_ID });
+
+    const seen = await holder.device.get({ id: DEVICE_ID });
+    expect(seen.reservation?.observers.map((o) => o.userId)).toEqual([USERS[1]]);
+
+    await admin.admin.leaveSession({ deviceId: DEVICE_ID });
+    await expect(admin.device.sessionToken({ deviceId: DEVICE_ID })).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
+
+    const after = await holder.device.get({ id: DEVICE_ID });
+    expect(after.reservation?.observers).toEqual([]);
+  });
+
+  test("releasing the device closes every observer row with it", async () => {
+    await resetDevice();
+    const holder = callerFor(USERS[0]);
+    const held = await holder.device.reserve({ deviceId: DEVICE_ID });
+    const admin = callerFor(USERS[1], "admin");
+    await admin.admin.joinSession({ deviceId: DEVICE_ID });
+
+    await holder.device.release({ deviceId: DEVICE_ID });
+
+    const rows = await db
+      .select()
+      .from(reservationObserver)
+      .where(eq(reservationObserver.reservationId, held.id));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.leftAt).not.toBeNull();
   });
 });
 

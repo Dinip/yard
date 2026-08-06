@@ -1,6 +1,6 @@
-import { device, provider, reservation, user } from "@farm/db";
+import { device, provider, reservation, reservationObserver, user } from "@farm/db";
 import { TRPCError } from "@trpc/server";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { providers } from "../../gateway/registry.ts";
 import { audit } from "../../lib/audit.ts";
@@ -44,6 +44,27 @@ async function listDevices(db: import("@farm/db").Database) {
     .leftJoin(user, eq(reservation.userId, user.id))
     .orderBy(device.platform, device.name);
 
+  // One extra query rather than a second join: observers are a rare
+  // one-to-many, and joining them would multiply every device row.
+  const reservationIds = rows.map((r) => r.reservation?.id).filter((id) => id !== null);
+  const observers = reservationIds.length
+    ? await db
+        .select({
+          reservationId: reservationObserver.reservationId,
+          userId: reservationObserver.userId,
+          joinedAt: reservationObserver.joinedAt,
+          name: user.name,
+        })
+        .from(reservationObserver)
+        .innerJoin(user, eq(reservationObserver.userId, user.id))
+        .where(
+          and(
+            inArray(reservationObserver.reservationId, reservationIds as string[]),
+            isNull(reservationObserver.leftAt),
+          ),
+        )
+    : [];
+
   return rows.map((r) => ({
     ...r.device,
     provider: {
@@ -61,6 +82,10 @@ async function listDevices(db: import("@farm/db").Database) {
           startedAt: r.reservation.startedAt,
           expiresAt: r.reservation.expiresAt,
           lastActivityAt: r.reservation.lastActivityAt,
+          /** Admins who have openly joined. The holder's UI names them. */
+          observers: observers
+            .filter((o) => o.reservationId === r.reservation?.id)
+            .map(({ userId, name, joinedAt }) => ({ userId, name, joinedAt })),
         }
       : null,
   }));
@@ -195,7 +220,15 @@ export const deviceRouter = router({
       // Reservation is per user+device, so every tab and the popout window get
       // their own token against the same reservation.
       if (row.reservationUserId !== ctx.user.id) {
-        throw new TRPCError({ code: "FORBIDDEN", message: "Someone else holds this device" });
+        // ...and so does an admin who has openly joined this session. The token
+        // carries *the holder's* reservationId and the admin's own userId:
+        // nothing else about it changes, and the provider — which matches on
+        // reservationId — treats it as one more viewer.
+        const joined =
+          ctx.user.role === "admin" && (await isObserver(ctx.db, row.reservationId, ctx.user.id));
+        if (!joined) {
+          throw new TRPCError({ code: "FORBIDDEN", message: "Someone else holds this device" });
+        }
       }
 
       const { token, expiresAt } = await signSessionToken({
@@ -470,6 +503,22 @@ async function requireOwnedDevice(
   }
 
   return { row, conn: providers.require(row.providerId) };
+}
+
+/** An open observer row on this reservation — an admin who joined, and stayed. */
+async function isObserver(db: import("@farm/db").Database, reservationId: string, userId: string) {
+  const [row] = await db
+    .select({ id: reservationObserver.id })
+    .from(reservationObserver)
+    .where(
+      and(
+        eq(reservationObserver.reservationId, reservationId),
+        eq(reservationObserver.userId, userId),
+        isNull(reservationObserver.leftAt),
+      ),
+    )
+    .limit(1);
+  return Boolean(row);
 }
 
 function isUniqueViolation(err: unknown): boolean {

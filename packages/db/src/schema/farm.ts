@@ -159,6 +159,40 @@ export const reservation = pgTable(
 );
 
 /**
+ * An admin watching (and driving) somebody else's session.
+ *
+ * A table rather than a column on `reservation` because join and leave are
+ * events worth querying — "who was in this session, and when" is an audit
+ * question — and because the holder's UI names the people who are present.
+ *
+ * The provider needs no notion of this at all: it matches sessions on
+ * `reservationId`, so an admin holding a token minted against the holder's
+ * reservation is accepted exactly like the holder's second tab.
+ */
+export const reservationObserver = pgTable(
+  "reservation_observer",
+  {
+    id: text("id").primaryKey(),
+    reservationId: text("reservation_id")
+      .notNull()
+      .references(() => reservation.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    joinedAt: timestamp("joined_at").notNull().defaultNow(),
+    leftAt: timestamp("left_at"),
+  },
+  (t) => [
+    index("reservation_observer_reservation_idx").on(t.reservationId),
+    // "Who is in this session right now" is the read the holder's UI makes on
+    // every device fetch.
+    uniqueIndex("reservation_observer_one_open_per_user")
+      .on(t.reservationId, t.userId)
+      .where(sql`${t.leftAt} is null`),
+  ],
+);
+
+/**
  * Global configuration an admin can change without a redeploy.
  *
  * Key/value rather than a column per knob: these are policy, they arrive one at
@@ -203,5 +237,6 @@ export type Device = typeof device.$inferSelect;
 export type Reservation = typeof reservation.$inferSelect;
 export type AuditLog = typeof auditLog.$inferSelect;
 export type Setting = typeof setting.$inferSelect;
+export type ReservationObserver = typeof reservationObserver.$inferSelect;
 export type Platform = (typeof platformEnum.enumValues)[number];
 export type DeviceStatus = (typeof deviceStatusEnum.enumValues)[number];

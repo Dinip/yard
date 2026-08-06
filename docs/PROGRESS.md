@@ -569,7 +569,7 @@ flows. Built in four parts, in this order, each its own commit.
 | 10.1 `setting` table + typed registry, admin page | ✅ | `coordinator/src/lib/settings.ts`, `web/.../admin.settings.tsx` |
 | 10.2 Idle timeout — provider activity, reaper, warning | ✅ | `provider-core/src/supervisor.rs`, `coordinator/src/lib/reservations.ts` |
 | 10.3 "You were kicked" dialog | ✅ | `web/src/components/session-ended-dialog.tsx` |
-| 10.4 Admin joins a session | ⬜ | |
+| 10.4 Admin joins a session | ✅ | `db/src/schema/farm.ts`, `coordinator/.../admin.ts` |
 
 ### 10.1 Settings ✅
 
@@ -596,6 +596,35 @@ able to take the coordinator down.
 `settings.get`/`set` are admin-only; `settings.public` is the smaller subset the
 browser needs to render the idle countdown, a separate procedure rather than a
 branch inside `get`.
+
+### 10.4 Admin joins a session ✅
+
+Force-release was the only thing an admin could do to a session in progress, and
+it is a blunt instrument: the holder loses the device mid-task. Joining is the
+gentler option — full control, and the holder is told.
+
+**The provider needed no change at all.** `SessionRegistry::check` matches on
+`reservationId`, and `authorize` deliberately does not disturb existing viewers
+when re-authorizing the same reservation — behaviour written for the popout,
+with a test. So an admin holding a token minted against *the holder's*
+reservation is accepted exactly like the holder's second tab. The only
+coordinator change is which callers `device.sessionToken` will mint one for:
+an admin with an open observer row now gets a token carrying the holder's
+`reservationId` and their own `userId`. Same TTL, same claims, same provider
+check.
+
+`reservation_observer` is a table rather than a jsonb column because join and
+leave are events worth querying, and because the holder's UI names who is
+present. A partial unique index on `(reservationId, userId) where left_at is
+null` means rejoining after a reload cannot leave two open rows for one person.
+`releaseActive` closes every open row with the session it belongs to.
+
+**The holder's disclosure is non-blocking on purpose.** A modal they must clear
+would be theatre: by the time it renders, the admin is already in the session
+and already has control. So it is a one-shot dialog on the transition from
+nobody to somebody, plus a persistent badge in the header for as long as an
+observer is present — a refresh does not re-announce an observer who has been
+there for an hour.
 
 ### 10.3 "You were kicked" ✅
 
