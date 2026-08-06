@@ -343,24 +343,38 @@ function describeObservers(observers: Observer[]): string {
  * observer in it for an hour.
  */
 function ObserverDisclosure({ observers }: { observers: Observer[] }) {
-  const [announced, setAnnounced] = useState<string[]>([]);
   const [open, setOpen] = useState(false);
   const [arrival, setArrival] = useState<Observer | null>(null);
 
+  /**
+   * Who has already been announced, in a ref rather than state.
+   *
+   * The first version tracked this in state with `observers` in the dependency
+   * array, which loops the moment that array's identity churns between renders:
+   * the effect sets state, the state is a dependency, and round it goes. It
+   * only held together because react-query's structural sharing happened to
+   * keep the reference stable, which is far too subtle a thing to rest a render
+   * loop on.
+   */
+  const announced = useRef<string[]>([]);
+  const latest = useRef(observers);
+  latest.current = observers;
+
+  // A sorted id list: a primitive, so the effect re-runs when the *people*
+  // change and never merely because a new array arrived saying the same thing.
+  const present = observers
+    .map((o) => o.userId)
+    .sort()
+    .join(",");
+
   useEffect(() => {
-    const fresh = observers.find((o) => !announced.includes(o.userId));
-    if (!fresh) {
-      // Someone leaving makes them announceable again if they come back.
-      const present = observers.map((o) => o.userId);
-      setAnnounced((current) =>
-        current.length === present.length ? current : current.filter((id) => present.includes(id)),
-      );
-      return;
-    }
-    setAnnounced((current) => [...current, fresh.userId]);
+    const fresh = latest.current.find((o) => !announced.current.includes(o.userId));
+    // Someone leaving makes them announceable again if they come back.
+    announced.current = present ? present.split(",") : [];
+    if (!fresh) return;
     setArrival(fresh);
     setOpen(true);
-  }, [observers, announced]);
+  }, [present]);
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>

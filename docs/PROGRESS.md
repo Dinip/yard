@@ -597,6 +597,22 @@ able to take the coordinator down.
 browser needs to render the idle countdown, a separate procedure rather than a
 branch inside `get`.
 
+**Two bugs found by using it, both fixed:**
+
+- **The detail page needed a reload to see an observer arrive.** `useDeviceStream`
+  invalidated `device.list` and `provider.list` but not `device.get`, so the page
+  10.3 had just subscribed to still refetched nothing — a join, a release from
+  another tab, and its own status all went unseen. It invalidates
+  `device.get.pathKey()` now.
+- **`ObserverDisclosure` looped, once an observer was actually present.** It
+  tracked who had been announced in *state* with `observers` in the dependency
+  array: the effect set the state, the state was a dependency, round it went.
+  It survived at all only because react-query's structural sharing happened to
+  keep the array's identity stable — far too subtle a thing to rest a render
+  loop on. It now keys the effect on a sorted id **string** and keeps the seen
+  set in a ref, so the effect re-runs when the people change and never merely
+  because a new array arrived saying the same thing.
+
 **Five new audit actions** land with this phase and the admin UI's hand-written
 `ACTIONS` list does not know about them yet: `device.reservation_idle`,
 `device.reservation_max_duration`, `device.session_join`, `device.session_leave`
