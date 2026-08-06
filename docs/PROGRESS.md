@@ -613,6 +613,14 @@ branch inside `get`.
   set in a ref, so the effect re-runs when the people change and never merely
   because a new array arrived saying the same thing.
 
+- **Letting go of a device announced itself as being kicked.** Release revokes
+  the session like every other path, so the console reported it exactly as it
+  reports an admin taking the device — "Session ended", naming the user to
+  themselves. The device page now flags a release it initiated *before* the
+  request goes out, since the revoke can arrive over the socket first, and
+  navigates back to the device list: there is nothing left on the page to look
+  at.
+
 **Five new audit actions** land with this phase and the admin UI's hand-written
 `ACTIONS` list does not know about them yet: `device.reservation_idle`,
 `device.reservation_max_duration`, `device.session_join`, `device.session_leave`

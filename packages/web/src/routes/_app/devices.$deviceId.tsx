@@ -65,12 +65,23 @@ function DevicePage() {
   const heldReservation = useRef<string | undefined>(undefined);
   if (device?.reservation?.id) heldReservation.current = device.reservation.id;
 
+  /**
+   * Set before the release request goes out, not after it returns.
+   *
+   * Letting go of a device revokes the session like any other release, so the
+   * console reports it exactly as it reports being kicked — and the revoke can
+   * arrive over the socket before the mutation resolves. A user who clicked
+   * Release does not need to be told their session ended.
+   */
+  const releasedHere = useRef(false);
+
   const [ended, setEnded] = useState<{ reason?: string } | null>(null);
   const onRevoked = useCallback(
     (reason?: string) => {
-      setEnded({ reason });
       // The header still offered "Release" for a device the user no longer has.
       invalidate();
+      if (releasedHere.current) return;
+      setEnded({ reason });
     },
     [invalidate],
   );
@@ -87,11 +98,20 @@ function DevicePage() {
 
   const release = useMutation(
     trpc.device.release.mutationOptions({
+      onMutate: () => {
+        releasedHere.current = true;
+      },
       onSuccess: () => {
         toast.success("Device released");
         invalidate();
+        // There is nothing left on this page to look at: no session, and a
+        // device anyone can now take.
+        navigate({ to: "/devices" });
       },
-      onError: (e) => toast.error(e.message),
+      onError: (e) => {
+        releasedHere.current = false;
+        toast.error(e.message);
+      },
     }),
   );
 
