@@ -1,10 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { ArrowLeft } from "lucide-react";
-import { useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
 import { DeviceConsole } from "@/components/device-console";
 import { formatCountdown, ReservationKeeper } from "@/components/reservation-keeper";
+import { SessionEndedDialog } from "@/components/session-ended-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -19,6 +20,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useDeviceStream } from "@/hooks/use-device-stream";
 import { usePopoutPresence } from "@/hooks/use-popout-presence";
 import { trpc } from "@/lib/trpc";
 import { relativeTime } from "@/lib/utils";
@@ -34,7 +36,14 @@ export const Route = createFileRoute("/_app/devices/$deviceId")({
 function DevicePage() {
   const { deviceId } = Route.useParams();
   const qc = useQueryClient();
-  const { data: device } = useQuery(trpc.device.get.queryOptions({ id: deviceId }));
+  const navigate = useNavigate();
+  // Without this the detail page got no live updates at all: a device released
+  // from elsewhere, or taken back, left this page showing a stale header.
+  const { pollInterval } = useDeviceStream();
+  const { data: device } = useQuery({
+    ...trpc.device.get.queryOptions({ id: deviceId }),
+    refetchInterval: pollInterval,
+  });
   const { data: me } = useQuery(trpc.user.me.queryOptions());
   const { data: policy } = useQuery(trpc.settings.public.queryOptions());
   const mine = device?.reservation?.userId === me?.id;
@@ -42,10 +51,25 @@ function DevicePage() {
   // A popout takes the stream; this tab keeps the reservation and the page.
   const { poppedOut, reclaim } = usePopoutPresence(deviceId);
 
-  const invalidate = () => {
+  const invalidate = useCallback(() => {
     qc.invalidateQueries({ queryKey: trpc.device.get.queryKey({ id: deviceId }) });
     qc.invalidateQueries({ queryKey: trpc.device.list.queryKey() });
-  };
+  }, [qc, deviceId]);
+
+  // The reservation is gone from `device.get` by the time the revocation is
+  // explained, so the id has to be kept while it is still there.
+  const heldReservation = useRef<string | undefined>(undefined);
+  if (device?.reservation?.id) heldReservation.current = device.reservation.id;
+
+  const [ended, setEnded] = useState<{ reason?: string } | null>(null);
+  const onRevoked = useCallback(
+    (reason?: string) => {
+      setEnded({ reason });
+      // The header still offered "Release" for a device the user no longer has.
+      invalidate();
+    },
+    [invalidate],
+  );
 
   const reserve = useMutation(
     trpc.device.reserve.mutationOptions({
@@ -90,6 +114,13 @@ function DevicePage() {
           lastActivityAt={device.reservation?.lastActivityAt}
         />
       )}
+      <SessionEndedDialog
+        reservationId={heldReservation.current}
+        fallbackReason={ended?.reason}
+        open={ended !== null}
+        onDismiss={() => navigate({ to: "/devices" })}
+      />
+
       <div className="flex items-center gap-3">
         <Button variant="ghost" size="icon" asChild>
           <Link to="/devices">
@@ -154,7 +185,12 @@ function DevicePage() {
                 </Button>
               </div>
             ) : (
-              <DeviceConsole deviceId={deviceId} active className="h-[70svh] w-full" />
+              <DeviceConsole
+                deviceId={deviceId}
+                active
+                className="h-[70svh] w-full"
+                onRevoked={onRevoked}
+              />
             )}
           </CardContent>
         </Card>

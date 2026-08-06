@@ -186,6 +186,62 @@ describe("the reaper", () => {
 });
 
 /**
+ * A force-released user could not tell they had been kicked: the reason string
+ * was clobbered and rendered under a spinner. The wire carries only a string,
+ * so the name comes from here.
+ */
+describe("reservation outcomes", () => {
+  test("name and reason survive a force release, for the person it happened to", async () => {
+    await resetDevice();
+    const holder = callerFor(USERS[0]);
+    const held = await holder.device.reserve({ deviceId: DEVICE_ID });
+
+    await callerFor(USERS[1], "admin").admin.forceRelease({
+      deviceId: DEVICE_ID,
+      reason: "needed for a release build",
+    });
+
+    const outcome = await holder.device.reservationOutcome({ reservationId: held.id });
+    expect(outcome.state).toBe("released");
+    expect(outcome.reason).toBe("needed for a release build");
+    expect(outcome.releasedByName).toBe(USERS[1]);
+    expect(outcome.releasedAt).not.toBeNull();
+  });
+
+  test("an expiry has no actor, because nobody did it", async () => {
+    await resetDevice();
+    const holder = callerFor(USERS[0]);
+    const held = await holder.device.reserve({ deviceId: DEVICE_ID });
+
+    await db
+      .update(reservation)
+      .set({ expiresAt: new Date(Date.now() - 1000) })
+      .where(eq(reservation.id, held.id));
+
+    const stop = startReservationReaper(db);
+    await Bun.sleep(200);
+    stop();
+
+    const outcome = await holder.device.reservationOutcome({ reservationId: held.id });
+    expect(outcome.releasedByName).toBeNull();
+    expect(outcome.reason).toBe("reservation expired");
+  });
+
+  test("only the holder and an admin may read one", async () => {
+    await resetDevice();
+    const held = await callerFor(USERS[0]).device.reserve({ deviceId: DEVICE_ID });
+
+    await expect(
+      callerFor(USERS[2]).device.reservationOutcome({ reservationId: held.id }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+    await expect(
+      callerFor(USERS[2], "admin").device.reservationOutcome({ reservationId: held.id }),
+    ).resolves.toBeDefined();
+  });
+});
+
+/**
  * The idle policy is the one that reclaims a device from someone who left a tab
  * open over a weekend, so what matters is that a *renewing* reservation is
  * still released when nobody is driving the device — the whole reason expiry

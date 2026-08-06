@@ -568,7 +568,7 @@ flows. Built in four parts, in this order, each its own commit.
 |---|---|---|
 | 10.1 `setting` table + typed registry, admin page | ✅ | `coordinator/src/lib/settings.ts`, `web/.../admin.settings.tsx` |
 | 10.2 Idle timeout — provider activity, reaper, warning | ✅ | `provider-core/src/supervisor.rs`, `coordinator/src/lib/reservations.ts` |
-| 10.3 "You were kicked" dialog | ⬜ | |
+| 10.3 "You were kicked" dialog | ✅ | `web/src/components/session-ended-dialog.tsx` |
 | 10.4 Admin joins a session | ⬜ | |
 
 ### 10.1 Settings ✅
@@ -596,6 +596,33 @@ able to take the coordinator down.
 `settings.get`/`set` are admin-only; `settings.public` is the smaller subset the
 browser needs to render the idle countdown, a separate procedure rather than a
 branch inside `get`.
+
+### 10.3 "You were kicked" ✅
+
+A force-released user could not tell an administrative action from a dropped
+network: both showed a spinner over a frozen last frame. Two bugs in
+`use-device-session.ts` made that unavoidable —
+
+- **`session.closed` set the reason but not the state.** The closed state
+  arrived later from `onclose`, whose handler then **overwrote the reason with
+  `event.reason || undefined`**, turning "taken back by Ana Silva" back into
+  "Session closed". The revocation reason now lives in a ref that `onState`
+  prefers over the socket's, and the state is set at revoke time.
+- **Nothing invalidated `device.get` on revoke**, so the header carried on
+  offering "Release" for a device the user no longer had.
+
+The canvas is cleared with the renderer, because a frozen frame under a dialog
+still reads as a live session.
+
+**The actor's name is not on the wire and should not be** — the provider has no
+notion of users, and `session.closed` is a string. `device.reservationOutcome`
+reads it back from the reservation row, every column of which `releaseActive`
+already wrote. A reaper release has `releasedBy = null` and is phrased without
+an actor, because saying a person did it would be false and "system" says
+nothing.
+
+The device page also subscribes to `useDeviceStream` for the first time. It
+never did, so the detail page got no live updates at all.
 
 ### 10.2 Idle timeout ✅
 

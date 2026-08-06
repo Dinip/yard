@@ -8,7 +8,13 @@ import {
   RotateCw,
   Upload,
 } from "lucide-react";
-import { type DragEvent, type PointerEvent as ReactPointerEvent, useRef, useState } from "react";
+import {
+  type DragEvent,
+  type PointerEvent as ReactPointerEvent,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { toast } from "sonner";
 import { DeviceScreen } from "@/components/device-screen";
 import { Button } from "@/components/ui/button";
@@ -37,6 +43,7 @@ export function DeviceConsole({
   className,
   showPopout = true,
   controls = "toolbar",
+  onRevoked,
 }: {
   deviceId: string;
   /** False when the device is not reserved by this user — no session is opened. */
@@ -50,9 +57,24 @@ export function DeviceConsole({
    * a feature.
    */
   controls?: "toolbar" | "overlay";
+  /**
+   * The reservation was withdrawn mid-session. The console has no route to
+   * navigate to and no reservation id to explain it with, so the page that
+   * owns both is told once, rather than watching session state itself.
+   */
+  onRevoked?: (reason?: string) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const session = useDeviceSession(deviceId, canvasRef, active);
+
+  const revokedRef = useRef(false);
+  useEffect(() => {
+    if (session.revoked && !revokedRef.current) {
+      revokedRef.current = true;
+      onRevoked?.(session.detail);
+    }
+    if (!session.revoked) revokedRef.current = false;
+  }, [session.revoked, session.detail, onRevoked]);
   const [install, setInstall] = useState<{ name: string; fraction: number } | null>(null);
   const [dragging, setDragging] = useState(false);
   // Overlay only: the corner handle is expanded while hovered or focused, and

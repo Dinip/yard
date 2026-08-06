@@ -1,8 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { DeviceConsole } from "@/components/device-console";
 import { ReservationKeeper } from "@/components/reservation-keeper";
+import { SessionEndedDialog } from "@/components/session-ended-dialog";
 import { usePopoutHeartbeat } from "@/hooks/use-popout-presence";
 import { trpc } from "@/lib/trpc";
 
@@ -32,6 +33,14 @@ function PopoutPage() {
 
   const mine = device?.reservation?.userId === me?.id;
 
+  // Kept while the reservation still exists: it is gone from `device.get` by
+  // the time the revocation needs explaining.
+  const heldReservation = useRef<string | undefined>(undefined);
+  if (device?.reservation?.id) heldReservation.current = device.reservation.id;
+
+  const [ended, setEnded] = useState<{ reason?: string } | null>(null);
+  const onRevoked = useCallback((reason?: string) => setEnded({ reason }), []);
+
   // Tells the parent tab to stand down, and closes this window when it asks
   // for the stream back.
   usePopoutHeartbeat(deviceId, Boolean(mine));
@@ -40,6 +49,15 @@ function PopoutPage() {
 
   return (
     <div className="flex h-svh flex-col bg-background">
+      {/* This window has nowhere to navigate to, so it offers to close itself.
+          A popout left showing a dead console is worse than none. */}
+      <SessionEndedDialog
+        reservationId={heldReservation.current}
+        fallbackReason={ended?.reason}
+        open={ended !== null}
+        onDismiss={() => window.close()}
+        dismissLabel="Close window"
+      />
       {/* Whichever window is streaming keeps the reservation. Phase 6
           deliberately did the opposite — a popout left open should not hold a
           device nobody is watching — but that guard cost a user who closed the
@@ -59,6 +77,7 @@ function PopoutPage() {
           className="flex-1"
           showPopout={false}
           controls="overlay"
+          onRevoked={onRevoked}
         />
       ) : (
         <div className="flex flex-1 items-center justify-center text-center text-muted-foreground text-sm">

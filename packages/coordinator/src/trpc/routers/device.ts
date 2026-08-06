@@ -281,6 +281,45 @@ export const deviceRouter = router({
       return released;
     }),
 
+  /**
+   * How a reservation ended, for the person it was taken from.
+   *
+   * `session.closed` carries a reason string and nothing else — the actor's
+   * name is not on the wire and does not belong there, since the provider has
+   * no notion of users. Every column this needs is already on the row, written
+   * by `releaseActive`; this is the read that turns them into a sentence.
+   */
+  reservationOutcome: protectedProcedure
+    .input(z.object({ reservationId: z.string() }))
+    .query(async ({ ctx, input }) => {
+      const [row] = await ctx.db
+        .select({
+          state: reservation.state,
+          reason: reservation.reason,
+          releasedAt: reservation.releasedAt,
+          userId: reservation.userId,
+          releasedByName: user.name,
+        })
+        .from(reservation)
+        .leftJoin(user, eq(reservation.releasedBy, user.id))
+        .where(eq(reservation.id, input.reservationId))
+        .limit(1);
+
+      if (!row) throw new TRPCError({ code: "NOT_FOUND" });
+      if (row.userId !== ctx.user.id && ctx.user.role !== "admin") {
+        throw new TRPCError({ code: "FORBIDDEN" });
+      }
+
+      return {
+        state: row.state,
+        reason: row.reason,
+        releasedAt: row.releasedAt,
+        // Null for the reaper, which is nobody — an idle expiry must not read
+        // as a person having taken the device.
+        releasedByName: row.releasedByName,
+      };
+    }),
+
   myReservations: protectedProcedure.query(({ ctx }) =>
     ctx.db
       .select()
