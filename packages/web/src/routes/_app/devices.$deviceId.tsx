@@ -347,6 +347,7 @@ function DevicePage() {
             ) : observing ? (
               <DeviceConsole
                 deviceId={deviceId}
+                platform={device.platform}
                 active
                 className="h-[70svh] w-full"
                 onRevoked={onRevoked}
@@ -363,6 +364,7 @@ function DevicePage() {
             ) : (
               <DeviceConsole
                 deviceId={deviceId}
+                platform={device.platform}
                 active
                 className="h-[70svh] w-full"
                 onRevoked={onRevoked}

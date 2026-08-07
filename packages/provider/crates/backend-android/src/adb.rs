@@ -30,6 +30,18 @@ use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::TcpStream;
 use tracing::debug;
 
+/// Reads the message body of a sync-protocol `FAIL` whose id has been consumed.
+///
+/// The device's own words — "Permission denied", "No such file or directory" —
+/// and the only thing that tells an unreadable directory from an empty one.
+async fn read_fail(socket: &mut TcpStream) -> Result<String> {
+    let mut length = [0u8; 4];
+    socket.read_exact(&mut length).await?;
+    let mut message = vec![0u8; u32::from_le_bytes(length) as usize];
+    socket.read_exact(&mut message).await?;
+    Ok(String::from_utf8_lossy(&message).trim().to_owned())
+}
+
 /// The adb server's own port, and the default everywhere.
 pub const DEFAULT_ADB_SERVER: &str = "127.0.0.1:5037";
 
@@ -41,6 +53,34 @@ const DEVICE_ADB_PORT_STR: &str = "5555";
 
 /// How long to wait for the server to answer a request.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// One `DENT` record from the sync protocol's `LIST`.
+///
+/// `mode` is a POSIX `st_mode`, which is what makes a directory tellable from a
+/// file without a second round-trip per entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyncDirEntry {
+    pub name: String,
+    pub mode: u32,
+    pub size: u32,
+    /// Seconds since the epoch. Zero on a filesystem that does not track it.
+    pub mtime: u32,
+}
+
+/// `S_IFMT` — the bits of `st_mode` that say what kind of thing this is.
+const S_IFMT: u32 = 0o170000;
+const S_IFDIR: u32 = 0o040000;
+const S_IFREG: u32 = 0o100000;
+
+impl SyncDirEntry {
+    pub fn is_dir(&self) -> bool {
+        self.mode & S_IFMT == S_IFDIR
+    }
+
+    pub fn is_file(&self) -> bool {
+        self.mode & S_IFMT == S_IFREG
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AdbDevice {
@@ -260,6 +300,130 @@ impl Adb {
             }
             other => bail!("unexpected sync reply {:?}", String::from_utf8_lossy(other)),
         }
+    }
+
+    /// One directory, over the sync subprotocol's `LIST`.
+    ///
+    /// `adb shell ls -la` would be the obvious alternative and is a trap: its
+    /// output differs between toybox and toolbox builds and has to be
+    /// re-guessed per device. `LIST` answers fixed-width records, and carries
+    /// the mode and size with them — so a listing costs no extra `stat` calls.
+    ///
+    /// The 32-bit `size` and `mtime` are what the v1 protocol offers; a file
+    /// over 4 GiB reports a truncated size here. Universally supported beats
+    /// `LIS2` for a directory listing on a farm phone.
+    pub async fn list(&self, serial: &str, path: &str) -> Result<Vec<SyncDirEntry>> {
+        let mut stream = self.transport(serial).await?;
+        stream.request("sync:").await?;
+        let socket = stream.inner_mut();
+
+        socket.write_all(b"LIST").await?;
+        socket.write_all(&(path.len() as u32).to_le_bytes()).await?;
+        socket.write_all(path.as_bytes()).await?;
+        socket.flush().await?;
+
+        let mut entries = Vec::new();
+        loop {
+            let mut id = [0u8; 4];
+            socket.read_exact(&mut id).await?;
+            match &id {
+                b"DENT" => {
+                    let mut header = [0u8; 16];
+                    socket.read_exact(&mut header).await?;
+                    let mode = u32::from_le_bytes(header[0..4].try_into().unwrap());
+                    let size = u32::from_le_bytes(header[4..8].try_into().unwrap());
+                    let mtime = u32::from_le_bytes(header[8..12].try_into().unwrap());
+                    let name_len = u32::from_le_bytes(header[12..16].try_into().unwrap()) as usize;
+
+                    let mut name = vec![0u8; name_len];
+                    socket.read_exact(&mut name).await?;
+                    let name = String::from_utf8_lossy(&name).into_owned();
+
+                    // `.` and `..` are the caller's business, not the listing's
+                    // — the browser gets `parent` for that.
+                    if name == "." || name == ".." {
+                        continue;
+                    }
+                    entries.push(SyncDirEntry {
+                        name,
+                        mode,
+                        size,
+                        mtime,
+                    });
+                }
+                b"DONE" => {
+                    // DONE carries a 16-byte empty stat block.
+                    let mut trailer = [0u8; 16];
+                    socket.read_exact(&mut trailer).await?;
+                    break;
+                }
+                // An unreadable directory answers FAIL rather than an empty
+                // DONE, which is the only reason a permission problem is
+                // distinguishable from an empty folder.
+                b"FAIL" => bail!("adb refused to list {path}: {}", read_fail(socket).await?),
+                other => bail!("unexpected sync reply {:?}", String::from_utf8_lossy(other)),
+            }
+        }
+        Ok(entries)
+    }
+
+    /// Copy a file off the device into `dest`, over the sync subprotocol's
+    /// `RECV`. The mirror of [`Self::push`].
+    ///
+    /// Written straight to the file as it arrives: this is the path a 400 MB
+    /// screen recording takes off a phone, and buffering it would put it in the
+    /// provider's memory for no reason.
+    pub async fn pull(&self, serial: &str, remote_path: &str, dest: &std::path::Path) -> Result<u64> {
+        let mut stream = self.transport(serial).await?;
+        stream.request("sync:").await?;
+        let socket = stream.inner_mut();
+
+        socket.write_all(b"RECV").await?;
+        socket
+            .write_all(&(remote_path.len() as u32).to_le_bytes())
+            .await?;
+        socket.write_all(remote_path.as_bytes()).await?;
+        socket.flush().await?;
+
+        let mut file = tokio::fs::File::create(dest)
+            .await
+            .with_context(|| format!("creating {}", dest.display()))?;
+        let mut written: u64 = 0;
+        let mut buf = vec![0u8; SYNC_CHUNK];
+
+        loop {
+            let mut header = [0u8; 8];
+            socket.read_exact(&mut header).await?;
+            let length = u32::from_le_bytes(header[4..8].try_into().unwrap()) as usize;
+
+            match &header[..4] {
+                b"DATA" => {
+                    let mut remaining = length;
+                    while remaining > 0 {
+                        let take = remaining.min(buf.len());
+                        socket.read_exact(&mut buf[..take]).await?;
+                        file.write_all(&buf[..take]).await?;
+                        written += take as u64;
+                        remaining -= take;
+                    }
+                }
+                // DONE's "length" is the mtime, not a payload.
+                b"DONE" => break,
+                b"FAIL" => {
+                    let mut message = vec![0u8; length];
+                    socket.read_exact(&mut message).await?;
+                    bail!(
+                        "adb refused to read {remote_path}: {}",
+                        String::from_utf8_lossy(&message).trim()
+                    )
+                }
+                other => bail!("unexpected sync reply {:?}", String::from_utf8_lossy(other)),
+            }
+        }
+
+        file.flush().await?;
+        debug!(serial, remote_path, written, "pulled from device");
+        Ok(written)
     }
 
     /// Ask the device to listen on `remote` and forward to the provider.
@@ -490,5 +654,159 @@ mod tests {
         // An empty value is a real answer, not a missing key.
         assert_eq!(props.get("persist.sys.locale").unwrap(), "");
         assert_eq!(props.get("nonsense"), None);
+    }
+}
+
+#[cfg(test)]
+mod sync_tests {
+    use super::*;
+
+    /// A fake adb server that answers one `host:transport:` and one `sync:`,
+    /// then plays back a canned reply.
+    ///
+    /// **It writes one byte at a time.** The scrcpy reader in this crate was
+    /// first written assuming a single `read()` returns a whole header, which
+    /// is not something a socket promises — the bug that caused took a black
+    /// screen and a 3.9 GB allocation to find. Framing readers get tested
+    /// against the hostile case here.
+    async fn fake_adb(reply: Vec<u8>) -> (String, tokio::task::JoinHandle<Vec<u8>>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+
+        let handle = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+
+            // Two hex-framed host requests, each answered OKAY.
+            for _ in 0..1 {
+                let mut length = [0u8; 4];
+                socket.read_exact(&mut length).await.unwrap();
+                let n = usize::from_str_radix(std::str::from_utf8(&length).unwrap(), 16).unwrap();
+                let mut service = vec![0u8; n];
+                socket.read_exact(&mut service).await.unwrap();
+                socket.write_all(b"OKAY").await.unwrap();
+            }
+            // `sync:` is also hex-framed and status-answered.
+            let mut length = [0u8; 4];
+            socket.read_exact(&mut length).await.unwrap();
+            let n = usize::from_str_radix(std::str::from_utf8(&length).unwrap(), 16).unwrap();
+            let mut service = vec![0u8; n];
+            socket.read_exact(&mut service).await.unwrap();
+            socket.write_all(b"OKAY").await.unwrap();
+
+            // The sync command the client sends: id + le32 length + path.
+            let mut header = [0u8; 8];
+            socket.read_exact(&mut header).await.unwrap();
+            let path_len = u32::from_le_bytes(header[4..8].try_into().unwrap()) as usize;
+            let mut path = vec![0u8; path_len];
+            socket.read_exact(&mut path).await.unwrap();
+
+            for byte in &reply {
+                socket.write_all(&[*byte]).await.unwrap();
+                socket.flush().await.unwrap();
+            }
+            let _ = socket.shutdown().await;
+            path
+        });
+
+        (addr, handle)
+    }
+
+    fn dent(mode: u32, size: u32, mtime: u32, name: &str) -> Vec<u8> {
+        let mut out = b"DENT".to_vec();
+        out.extend_from_slice(&mode.to_le_bytes());
+        out.extend_from_slice(&size.to_le_bytes());
+        out.extend_from_slice(&mtime.to_le_bytes());
+        out.extend_from_slice(&(name.len() as u32).to_le_bytes());
+        out.extend_from_slice(name.as_bytes());
+        out
+    }
+
+    #[tokio::test]
+    async fn list_reads_dents_a_byte_at_a_time_and_drops_dot_entries() {
+        let mut reply = Vec::new();
+        reply.extend(dent(0o040755, 0, 0, "."));
+        reply.extend(dent(0o040755, 0, 0, ".."));
+        reply.extend(dent(0o040755, 4096, 1_754_524_800, "Camera"));
+        reply.extend(dent(0o100644, 2_489_301, 1_754_524_801, "IMG_0001.jpg"));
+        reply.extend(b"DONE");
+        reply.extend([0u8; 16]);
+
+        let (addr, server) = fake_adb(reply).await;
+        let entries = Adb::new(addr).list("serial", "/sdcard/DCIM").await.unwrap();
+
+        assert_eq!(server.await.unwrap(), b"/sdcard/DCIM");
+        assert_eq!(entries.len(), 2, "`.` and `..` must not reach the browser");
+
+        assert!(entries[0].is_dir());
+        assert_eq!(entries[0].name, "Camera");
+
+        assert!(entries[1].is_file());
+        assert_eq!(entries[1].size, 2_489_301);
+        assert_eq!(entries[1].mtime, 1_754_524_801);
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_directory_surfaces_the_devices_own_message() {
+        let message = b"Permission denied";
+        let mut reply = b"FAIL".to_vec();
+        reply.extend_from_slice(&(message.len() as u32).to_le_bytes());
+        reply.extend_from_slice(message);
+
+        let (addr, _server) = fake_adb(reply).await;
+        let err = Adb::new(addr)
+            .list("serial", "/data/data")
+            .await
+            .expect_err("an unreadable directory must not read as an empty one");
+
+        assert!(format!("{err:#}").contains("Permission denied"), "{err:#}");
+    }
+
+    #[tokio::test]
+    async fn pull_reassembles_data_chunks_into_the_file() {
+        let first = vec![0xABu8; 300];
+        let second = vec![0xCDu8; 120];
+
+        let mut reply = b"DATA".to_vec();
+        reply.extend_from_slice(&(first.len() as u32).to_le_bytes());
+        reply.extend_from_slice(&first);
+        reply.extend_from_slice(b"DATA");
+        reply.extend_from_slice(&(second.len() as u32).to_le_bytes());
+        reply.extend_from_slice(&second);
+        // DONE's trailing 4 bytes are an mtime, not a payload — reading them as
+        // a length would swallow the next reply.
+        reply.extend_from_slice(b"DONE");
+        reply.extend_from_slice(&1_754_524_801u32.to_le_bytes());
+
+        let dest = std::env::temp_dir().join(format!("farm-pull-test-{}", std::process::id()));
+        let (addr, _server) = fake_adb(reply).await;
+        let written = Adb::new(addr)
+            .pull("serial", "/sdcard/x.bin", &dest)
+            .await
+            .unwrap();
+
+        assert_eq!(written, 420);
+        let contents = std::fs::read(&dest).unwrap();
+        std::fs::remove_file(&dest).ok();
+        assert_eq!(contents.len(), 420);
+        assert_eq!(&contents[..300], &first[..]);
+        assert_eq!(&contents[300..], &second[..]);
+    }
+
+    #[tokio::test]
+    async fn a_refused_pull_leaves_an_error_not_a_truncated_file() {
+        let message = b"remote object '/data/data/x' does not exist";
+        let mut reply = b"FAIL".to_vec();
+        reply.extend_from_slice(&(message.len() as u32).to_le_bytes());
+        reply.extend_from_slice(message);
+
+        let dest = std::env::temp_dir().join(format!("farm-pull-fail-{}", std::process::id()));
+        let (addr, _server) = fake_adb(reply).await;
+        let err = Adb::new(addr)
+            .pull("serial", "/data/data/x", &dest)
+            .await
+            .expect_err("a refused pull must not look like an empty file");
+
+        std::fs::remove_file(&dest).ok();
+        assert!(format!("{err:#}").contains("does not exist"), "{err:#}");
     }
 }

@@ -1,21 +1,26 @@
 import type { Display } from "@farm/protocol";
 import {
   Camera,
+  Circle,
   ClipboardCopy,
   ClipboardPaste,
   ExternalLink,
+  FolderOpen,
   MoreHorizontal,
   RotateCw,
+  Square,
   Upload,
 } from "lucide-react";
 import {
   type DragEvent,
   type PointerEvent as ReactPointerEvent,
+  useCallback,
   useEffect,
   useRef,
   useState,
 } from "react";
 import { toast } from "sonner";
+import { DeviceFilesDialog } from "@/components/device-files-dialog";
 import { DeviceScreen } from "@/components/device-screen";
 import { Button } from "@/components/ui/button";
 import { useDeviceSession } from "@/hooks/use-device-session";
@@ -26,6 +31,13 @@ import {
   nearestCorner,
   saveCorner,
 } from "@/lib/controls-corner";
+import { fileStamp, saveBlob } from "@/lib/download";
+import {
+  extensionFor,
+  isRecordingSupported,
+  MAX_RECORDING_MS,
+  ScreenRecorder,
+} from "@/lib/screen/recorder";
 import { fetchScreenshot, installApp } from "@/lib/screen/session";
 import { cn } from "@/lib/utils";
 
@@ -39,6 +51,7 @@ const DRAG_SLOP = 4;
  */
 export function DeviceConsole({
   deviceId,
+  platform,
   active,
   className,
   showPopout = true,
@@ -46,6 +59,8 @@ export function DeviceConsole({
   onRevoked,
 }: {
   deviceId: string;
+  /** Only to phrase what the file browser can reach; nothing branches on it. */
+  platform?: string;
   /** False when the device is not reserved by this user — no session is opened. */
   active: boolean;
   className?: string;
@@ -77,6 +92,13 @@ export function DeviceConsole({
   }, [session.revoked, session.detail, onRevoked]);
   const [install, setInstall] = useState<{ name: string; fraction: number } | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [filesOpen, setFilesOpen] = useState(false);
+
+  // The recorder itself lives in a ref — it is not render state — while
+  // `elapsed` drives the label and is the only thing that needs to re-render.
+  const recorderRef = useRef<ScreenRecorder | null>(null);
+  const [elapsed, setElapsed] = useState<number | null>(null);
+  const recording = elapsed !== null;
   // Overlay only: the corner handle is expanded while hovered or focused, and
   // `pinned` keeps it open for anyone who clicked rather than hovered.
   const [hovering, setHovering] = useState(false);
@@ -154,17 +176,82 @@ export function DeviceConsole({
 
   const screenshot = async () => {
     try {
-      const blob = await fetchScreenshot(deviceId);
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `${deviceId}-${Date.now()}.png`;
-      link.click();
-      URL.revokeObjectURL(url);
+      saveBlob(await fetchScreenshot(deviceId), `${deviceId}_${fileStamp()}.png`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Screenshot failed");
     }
   };
+
+  /**
+   * Finalises whatever is recording and hands over the file.
+   *
+   * Everything that can end a recording funnels through here — the button, the
+   * two-minute cap, a revoked session, the tab standing down for a popout — so
+   * there is exactly one path on which the file gets saved. A recording that
+   * vanished because the window it was started in went quiet would be the worst
+   * way for this feature to fail.
+   */
+  const finishRecording = useCallback(async () => {
+    const recorder = recorderRef.current;
+    recorderRef.current = null;
+    setElapsed(null);
+    if (!recorder) return;
+
+    const { blob, mimeType, cappedOut } = await recorder.stop();
+    if (blob.size === 0) {
+      toast.error("The recording came back empty");
+      return;
+    }
+
+    const name = `${deviceId}_${fileStamp()}.${extensionFor(mimeType)}`;
+    saveBlob(blob, name);
+    if (cappedOut) toast.message(`Stopped at ${MAX_RECORDING_MS / 60_000} minutes — saved ${name}`);
+    else toast.success(`Saved ${name}`);
+  }, [deviceId]);
+
+  const toggleRecording = () => {
+    if (recorderRef.current) {
+      void finishRecording();
+      return;
+    }
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const recorder = ScreenRecorder.start(canvas);
+    if (!recorder) {
+      toast.error("Nothing has been painted yet — wait for the first frame");
+      return;
+    }
+    recorderRef.current = recorder;
+    setElapsed(0);
+  };
+
+  // The label's clock, and the only thing that notices the cap firing: the
+  // recorder stops itself at two minutes, and this is what turns that into a
+  // saved file and a settled button.
+  useEffect(() => {
+    if (!recording) return;
+    const timer = setInterval(() => {
+      const recorder = recorderRef.current;
+      if (!recorder) return;
+      if (recorder.elapsed() >= MAX_RECORDING_MS) void finishRecording();
+      else setElapsed(recorder.elapsed());
+    }, 500);
+    return () => clearInterval(timer);
+  }, [recording, finishRecording]);
+
+  // A session that is going away takes the picture with it, so save first.
+  // `active` covers the popout handover — this tab stands down when a popout
+  // opens — and unmount covers the tab simply closing.
+  useEffect(() => {
+    if (!active && recorderRef.current) void finishRecording();
+  }, [active, finishRecording]);
+
+  useEffect(() => {
+    return () => {
+      if (recorderRef.current) void finishRecording();
+    };
+  }, [finishRecording]);
 
   const rotate = () => {
     const next = (((session.display?.rotation ?? 0) + 90) % 360) as number;
@@ -201,6 +288,20 @@ export function DeviceConsole({
   const actions = [
     { key: "rotate", label: "Rotate", icon: RotateCw, run: rotate },
     { key: "screenshot", label: "Screenshot", icon: Camera, run: screenshot },
+    // Hidden rather than disabled where the browser cannot record at all: a
+    // permanently greyed button is a worse answer than no button.
+    ...(isRecordingSupported()
+      ? [
+          {
+            key: "record",
+            label: recording ? `Stop · ${formatElapsed(elapsed ?? 0)}` : "Record",
+            icon: recording ? Square : Circle,
+            danger: recording,
+            run: toggleRecording,
+          },
+        ]
+      : []),
+    { key: "files", label: "Files", icon: FolderOpen, run: () => setFilesOpen(true) },
     {
       key: "copy",
       label: "Copy from device",
@@ -275,8 +376,9 @@ export function DeviceConsole({
                     title={action.label}
                     aria-label={action.label}
                     onClick={action.run}
+                    className={cn(action.danger && "text-destructive")}
                   >
-                    <action.icon className="size-4" />
+                    <action.icon className={cn("size-4", action.danger && "fill-current")} />
                   </Button>
                 ))}
                 <InstallButton disabled={!active} onFile={upload} iconOnly />
@@ -307,6 +409,33 @@ export function DeviceConsole({
               <MoreHorizontal className="size-4" />
             </Button>
           </div>
+        )}
+
+        {/* The overlay's controls hide themselves, so a recording started there
+            would otherwise be running with nothing on screen to say so — and
+            the popout is exactly where a window gets left alone. This sits
+            outside the collapsing bar and is always visible while recording,
+            and stops it, so nobody has to expand the bar to get their file. */}
+        {controls === "overlay" && recording && (
+          <button
+            type="button"
+            onClick={() => void finishRecording()}
+            title="Stop recording"
+            className={cn(
+              "absolute flex h-7 items-center gap-1.5 rounded-full border border-destructive/40",
+              "bg-background/85 px-2.5 font-medium text-destructive text-xs shadow-sm backdrop-blur",
+              // The opposite side to the handle, so it never sits under the
+              // controls it is not part of.
+              corner.startsWith("t") ? "bottom-3" : "top-3",
+              corner.endsWith("l") ? "right-3" : "left-3",
+            )}
+          >
+            <span className="relative flex size-2">
+              <span className="absolute inline-flex size-full animate-ping rounded-full bg-destructive opacity-75" />
+              <span className="relative inline-flex size-2 rounded-full bg-destructive" />
+            </span>
+            <span className="tabular-nums">{formatElapsed(elapsed ?? 0)}</span>
+          </button>
         )}
 
         {dragging && (
@@ -344,8 +473,10 @@ export function DeviceConsole({
               size="sm"
               disabled={!active}
               onClick={action.run}
+              className={cn(action.danger && "border-destructive/40 text-destructive")}
             >
-              <action.icon className="size-4" /> {action.label}
+              <action.icon className={cn("size-4", action.danger && "fill-current")} />{" "}
+              {action.label}
             </Button>
           ))}
           <InstallButton disabled={!active} onFile={upload} />
@@ -361,8 +492,21 @@ export function DeviceConsole({
           )}
         </div>
       )}
+
+      <DeviceFilesDialog
+        deviceId={deviceId}
+        platform={platform}
+        open={filesOpen}
+        onOpenChange={setFilesOpen}
+      />
     </div>
   );
+}
+
+/** `m:ss`, which is all a two-minute cap ever needs. */
+function formatElapsed(ms: number): string {
+  const total = Math.floor(ms / 1000);
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
 }
 
 function InstallButton({

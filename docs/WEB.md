@@ -85,10 +85,13 @@ cd packages/web && bunx --bun shadcn@latest add <component>
 ```
 src/lib/screen/
 ├── renderer.ts     ScreenRenderer + isStreamSupported
-└── session.ts      DeviceSession (WS) + screenshot/install (artifact plane)
+├── recorder.ts     ScreenRecorder — canvas → MediaRecorder, capped at 2 min
+└── session.ts      DeviceSession (WS) + screenshot/install/files (artifact plane)
+src/lib/download.ts                    saveBlob + formatBytes
 src/hooks/use-device-session.ts
-src/components/device-screen.tsx    canvas + input capture
-src/components/device-console.tsx   screen + toolbar + drop target
+src/components/device-screen.tsx       canvas + input capture
+src/components/device-console.tsx      screen + toolbar + drop target
+src/components/device-files-dialog.tsx browse the device, download a file
 ```
 
 `DeviceConsole` is shared verbatim by `/devices/:id` and the popout, so there is
@@ -140,8 +143,34 @@ and mints a fresh token — the reservation is still the user's. A
 `session.closed` push is different: the reservation is gone, so retrying would
 only 403, and the loop stops and shows the reason.
 
-Each artifact-plane request (screenshot, install) mints its own token. Uploads
-go over `XMLHttpRequest` because `fetch` still has no portable upload progress.
+Each artifact-plane request (screenshot, install, file listing, file download)
+mints its own token. Uploads go over `XMLHttpRequest` because `fetch` still has
+no portable upload progress.
+
+### Recording is the exception: it involves nobody else
+
+`ScreenRecorder` has no server side at all. The frames are already decoded and
+already painted, so recording is the browser recording its own canvas — the same
+thing a user could do with any screen recorder, which is also why there is
+nothing here for the audit log to say. Two decisions carry it:
+
+- **MP4 where the browser will give one.** `MediaRecorder` grew MP4 output only
+  recently and Firefox still has WebM only, so the container is a preference
+  list resolved by `isTypeSupported`, and the file extension follows from what
+  was actually chosen. A recording named `.mp4` by a recorder that produced WebM
+  is worse than a `.webm`.
+- **It captures a fixed-size mirror of the canvas, not the canvas.**
+  `ScreenRenderer` reassigns `canvas.width`/`height` on every geometry change
+  and an MP4 track has one geometry for its whole length, so the size is fixed
+  at record-start and each frame is drawn into it aspect-fitted. Rotating
+  mid-recording letterboxes instead of ending the file, which is what someone
+  recording a rotation bug needs.
+
+The 2-minute cap **finalises and saves** rather than discarding — an accidental
+two minutes is still evidence. So does a revoked session, the tab standing down
+for a popout, and unmount: every one of those funnels through the same
+`finishRecording`, because a recording that vanished when its window went quiet
+would be the worst way for this to fail.
 
 ### Popout
 

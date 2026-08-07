@@ -396,6 +396,147 @@ async fn screenshot_returns_a_real_png() {
 }
 
 #[tokio::test]
+async fn listing_opens_at_the_backend_root_when_no_path_is_given() {
+    let h = start().await;
+    h.authorize().await;
+
+    let res = h
+        .get(&format!("/s/{DEVICE_ID}/files?token={}", h.token()))
+        .await;
+    assert_eq!(res.status(), 200);
+
+    let listing: farm_protocol::FileListing = res.json().await.unwrap();
+    assert_eq!(listing.path, "/sdcard");
+    // Null at the root is what makes the browser hide "..", so it is the
+    // assertion that matters more than the entries.
+    assert_eq!(listing.parent, None);
+    assert!(listing.entries.iter().any(|e| e.name == "DCIM"
+        && e.kind == farm_protocol::FileKind::Directory
+        && e.size.is_none()));
+}
+
+#[tokio::test]
+async fn listing_a_subdirectory_reports_sizes_and_a_parent() {
+    let h = start().await;
+    h.authorize().await;
+
+    let res = h
+        .get(&format!(
+            "/s/{DEVICE_ID}/files?path=/sdcard/DCIM&token={}",
+            h.token()
+        ))
+        .await;
+    assert_eq!(res.status(), 200);
+
+    let listing: farm_protocol::FileListing = res.json().await.unwrap();
+    assert_eq!(listing.parent.as_deref(), Some("/sdcard"));
+    let photo = listing
+        .entries
+        .iter()
+        .find(|e| e.name == "IMG_0001.png")
+        .expect("the synthetic photo");
+    assert_eq!(photo.kind, farm_protocol::FileKind::File);
+    assert!(photo.size.unwrap() > 0);
+}
+
+#[tokio::test]
+async fn a_directory_the_device_refuses_answers_502_with_its_own_message() {
+    let h = start().await;
+    h.authorize().await;
+
+    let res = h
+        .get(&format!(
+            "/s/{DEVICE_ID}/files?path=/data/data&token={}",
+            h.token()
+        ))
+        .await;
+    // The device said no — that is a gateway failure, not a 404, and the text
+    // is the device's own so a user can tell "permission denied" from "gone".
+    assert_eq!(res.status(), 502);
+    assert!(res.text().await.unwrap().contains("/data/data"));
+}
+
+#[tokio::test]
+async fn pulling_a_file_serves_its_bytes_then_deletes_the_staged_copy() {
+    let h = start().await;
+    h.authorize().await;
+
+    let res = h
+        .get(&format!(
+            "/s/{DEVICE_ID}/file?path=/sdcard/DCIM/IMG_0001.png&token={}",
+            h.token()
+        ))
+        .await;
+    assert_eq!(res.status(), 200);
+    assert_eq!(
+        res.headers()["content-disposition"],
+        "attachment; filename=\"IMG_0001.png\""
+    );
+
+    let body = res.bytes().await.unwrap();
+    assert_eq!(&body[..4], b"\x89PNG");
+
+    // The staged copy is dropped with the response body, which happens after
+    // the client has read it — so this asserts the guard actually fires rather
+    // than that it was never created.
+    for _ in 0..50 {
+        if h.scratch_files().is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(
+        h.scratch_files().is_empty(),
+        "the pulled file was left staged: {:?}",
+        h.scratch_files()
+    );
+}
+
+#[tokio::test]
+async fn pulling_needs_a_path() {
+    let h = start().await;
+    h.authorize().await;
+
+    let res = h
+        .get(&format!("/s/{DEVICE_ID}/file?token={}", h.token()))
+        .await;
+    assert_eq!(res.status(), 400);
+}
+
+#[tokio::test]
+async fn the_file_routes_refuse_the_same_tokens_everything_else_does() {
+    let h = start().await;
+    h.authorize().await;
+
+    for path in [
+        format!("/s/{DEVICE_ID}/files?token=not.a.jwt"),
+        format!("/s/{DEVICE_ID}/file?path=/sdcard/DCIM/IMG_0001.png&token=not.a.jwt"),
+    ] {
+        assert_eq!(h.get(&path).await.status(), 401, "{path}");
+    }
+
+    // A perfectly good token, minted for a different device.
+    let wrong = h.signer.token(&h.issuer, OTHER_DEVICE, RESERVATION, 60);
+    for path in [
+        format!("/s/{DEVICE_ID}/files?token={wrong}"),
+        format!("/s/{DEVICE_ID}/file?path=/sdcard/DCIM/IMG_0001.png&token={wrong}"),
+    ] {
+        assert_eq!(h.get(&path).await.status(), 403, "{path}");
+    }
+
+    // And once the reservation is gone, so is the access — a signed, unexpired
+    // token is not enough on its own.
+    let token = h.token();
+    h.sessions.revoke(DEVICE_ID, "reservation released").await;
+    assert_eq!(
+        h.get(&format!("/s/{DEVICE_ID}/files?token={token}"))
+            .await
+            .status(),
+        403
+    );
+}
+
+#[tokio::test]
 async fn upload_installs_then_deletes_the_staged_file() {
     let h = start().await;
     h.authorize().await;

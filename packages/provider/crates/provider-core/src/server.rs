@@ -58,6 +58,14 @@ pub struct TokenQuery {
     token: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct FileQuery {
+    token: String,
+    /// Absolute on the device. Absent means "wherever this backend opens",
+    /// so the browser never has to know what a device's root is called.
+    path: Option<String>,
+}
+
 pub fn router(state: ServerState) -> Router {
     let limit = state.config.max_upload_bytes() as usize;
 
@@ -66,6 +74,8 @@ pub fn router(state: ServerState) -> Router {
         .route("/s/{device_id}", get(session_ws))
         .route("/s/{device_id}/screenshot.png", get(screenshot))
         .route("/s/{device_id}/mjpeg", get(mjpeg))
+        .route("/s/{device_id}/files", get(list_files))
+        .route("/s/{device_id}/file", get(pull_file))
         .route(
             "/s/{device_id}/install",
             post(install).layer(DefaultBodyLimit::max(limit)),
@@ -665,6 +675,194 @@ async fn install(
         )
             .into_response(),
     }
+}
+
+/// How a backend refusal reads on the wire.
+///
+/// `Unsupported` is 501 rather than 502 on purpose: it is the difference
+/// between "this device cannot do that" and "it tried and failed", and the
+/// browser shows a different thing for each.
+fn backend_status(err: &crate::backend::BackendError) -> StatusCode {
+    match err {
+        crate::backend::BackendError::Unsupported(_) => StatusCode::NOT_IMPLEMENTED,
+        crate::backend::BackendError::Unavailable(_) => StatusCode::SERVICE_UNAVAILABLE,
+        crate::backend::BackendError::Failed(_) => StatusCode::BAD_GATEWAY,
+    }
+}
+
+/// `GET /s/{id}/files?path=…` — one directory, as JSON.
+///
+/// Not audited. A listing is a metadata read and one browse would write a row
+/// per click; the row worth having is the one that says bytes left the device,
+/// which [`pull_file`] writes.
+async fn list_files(
+    State(state): State<ServerState>,
+    Path(device_id): Path<String>,
+    Query(query): Query<FileQuery>,
+) -> Response {
+    if let Err(response) = authorize(&state, &device_id, &query.token).await {
+        return response;
+    }
+    let Some(device) = state.supervisor.device(&device_id) else {
+        return (StatusCode::NOT_FOUND, "unknown device").into_response();
+    };
+
+    let Some(root) = device.backend.files_root() else {
+        return (
+            StatusCode::NOT_IMPLEMENTED,
+            "this device does not offer file access",
+        )
+            .into_response();
+    };
+    let path = query.path.as_deref().unwrap_or(root);
+
+    match device.backend.list_files(path).await {
+        Ok(listing) => (
+            StatusCode::OK,
+            [(header::CACHE_CONTROL, "no-store")],
+            axum::Json(listing),
+        )
+            .into_response(),
+        // The device's own refusal, verbatim — "Permission denied" is the
+        // whole answer for an unrooted adb reading /data/data, and rewording it
+        // would only hide which directory said no.
+        Err(err) => (backend_status(&err), err.to_string()).into_response(),
+    }
+}
+
+/// `GET /s/{id}/file?path=…` — the bytes, as an attachment.
+///
+/// The file is copied off the device into the scratch directory and deleted
+/// when the response body is dropped. That staging is what keeps a large pull
+/// out of the provider's memory, and it is the same arrangement the install
+/// path uses in the other direction — there is still no artifact storage
+/// anywhere, and the only lasting trace is the audit row.
+async fn pull_file(
+    State(state): State<ServerState>,
+    Path(device_id): Path<String>,
+    Query(query): Query<FileQuery>,
+) -> Response {
+    let claims = match authorize(&state, &device_id, &query.token).await {
+        Ok(claims) => claims,
+        Err(response) => return response,
+    };
+    let Some(device) = state.supervisor.device(&device_id) else {
+        return (StatusCode::NOT_FOUND, "unknown device").into_response();
+    };
+    let Some(remote_path) = query.path.filter(|p| !p.is_empty()) else {
+        return (StatusCode::BAD_REQUEST, "path is required").into_response();
+    };
+
+    if let Err(err) = tokio::fs::create_dir_all(&state.config.scratch_dir).await {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("scratch dir unusable: {err}"),
+        )
+            .into_response();
+    }
+
+    // The device's path never becomes the staged name — a uuid does, with the
+    // sanitized basename only for legibility in a log or a stray temp file.
+    let filename = sanitize_filename(&remote_path);
+    let staged_path =
+        state
+            .config
+            .scratch_dir
+            .join(format!("{}-{}", uuid::Uuid::new_v4(), filename));
+    let staged = StagedFile(staged_path.clone());
+
+    let size = match device.backend.pull_file(&remote_path, &staged_path).await {
+        Ok(size) => size as i64,
+        Err(err) => return (backend_status(&err), err.to_string()).into_response(),
+    };
+
+    let sha256 = match hash_file(&staged_path).await {
+        Ok(digest) => digest,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("hashing the staged file: {err:#}"),
+            )
+                .into_response()
+        }
+    };
+
+    info!(device = %device_id, path = %remote_path, size, "serving a pulled file");
+    state.supervisor.note_activity(&device_id).await;
+
+    // Written before the body is sent, not after: a download the client aborts
+    // half way still took the bytes off the device, and an egress record that
+    // only lands on a clean finish is the wrong way for this to be wrong.
+    state
+        .supervisor
+        .push_file_pulled(&device_id, &claims.user_id, &remote_path, size, &sha256)
+        .await;
+
+    let mut file = match tokio::fs::File::open(&staged_path).await {
+        Ok(file) => file,
+        Err(err) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("staged file unreadable: {err}"),
+            )
+                .into_response()
+        }
+    };
+
+    let body = Body::from_stream(async_stream::stream! {
+        // Moved in so the file outlives the response exactly, and is deleted
+        // when the client is done with it — or when it gives up.
+        let _staged = staged;
+        let mut buf = vec![0u8; 64 * 1024];
+        loop {
+            match tokio::io::AsyncReadExt::read(&mut file, &mut buf).await {
+                Ok(0) => break,
+                Ok(n) => yield Ok::<_, std::io::Error>(buf[..n].to_vec()),
+                Err(err) => {
+                    yield Err(err);
+                    break;
+                }
+            }
+        }
+    });
+
+    (
+        StatusCode::OK,
+        [
+            (
+                header::CONTENT_TYPE,
+                "application/octet-stream".to_owned(),
+            ),
+            (
+                header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{filename}\""),
+            ),
+            (header::CONTENT_LENGTH, size.to_string()),
+            (header::CACHE_CONTROL, "no-store".to_owned()),
+        ],
+        body,
+    )
+        .into_response()
+}
+
+async fn hash_file(path: &std::path::Path) -> Result<String> {
+    use sha2::Digest as _;
+
+    let mut file = tokio::fs::File::open(path)
+        .await
+        .with_context(|| format!("opening {}", path.display()))?;
+    let mut hasher = sha2::Sha256::new();
+    let mut buf = vec![0u8; 64 * 1024];
+    loop {
+        let read = tokio::io::AsyncReadExt::read(&mut file, &mut buf)
+            .await
+            .context("reading the staged file")?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buf[..read]);
+    }
+    Ok(hex(&hasher.finalize()))
 }
 
 async fn stream_to_disk(body: Body, path: &std::path::Path) -> Result<(i64, String)> {

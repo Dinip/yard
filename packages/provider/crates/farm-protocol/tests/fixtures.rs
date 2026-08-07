@@ -7,7 +7,7 @@
 //!
 //! If this file is missing, run `bun test packages/protocol` first.
 
-use farm_protocol::{ClientMessage, CoordinatorMessage, ProviderMessage, ServerMessage};
+use farm_protocol::{ClientMessage, CoordinatorMessage, FileListing, ProviderMessage, ServerMessage};
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
 
@@ -82,4 +82,11 @@ fn client_messages_round_trip() {
 #[test]
 fn server_messages_round_trip() {
     round_trip::<ServerMessage>("server");
+}
+
+/// Not a message — the artifact plane's directory listing, which the provider
+/// serialises and the browser parses with the same schema.
+#[test]
+fn file_listings_round_trip() {
+    round_trip::<FileListing>("files");
 }

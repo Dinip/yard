@@ -312,6 +312,31 @@ impl Supervisor {
         .await;
     }
 
+    /// Reports a file taken off a device upstream.
+    ///
+    /// The same arrangement as [`Self::push_install_result`] and for the same
+    /// reason: the download went browser↔provider, so this event is the only
+    /// way the coordinator can know it happened. It matters more in this
+    /// direction — this is the one operation that carries data *out* of a
+    /// device — which is why the digest travels with it.
+    pub async fn push_file_pulled(
+        &self,
+        device_id: &str,
+        user_id: &str,
+        path: &str,
+        size: i64,
+        sha256: &str,
+    ) {
+        self.push(ProviderMessage::FilePulled {
+            device_id: device_id.to_owned(),
+            user_id: user_id.to_owned(),
+            path: path.to_owned(),
+            size,
+            sha256: sha256.to_owned(),
+        })
+        .await;
+    }
+
     /// Brings every device to its initial state and reports it once.
     pub async fn bootstrap(self: &Arc<Self>) {
         for device in self.devices.values() {

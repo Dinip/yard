@@ -8,7 +8,7 @@
 use std::path::Path;
 
 use async_trait::async_trait;
-use farm_protocol::{AppInfo, Display, Platform};
+use farm_protocol::{AppInfo, Display, FileListing, Platform};
 
 use crate::video::VideoHandle;
 
@@ -31,6 +31,29 @@ pub enum BackendError {
 impl From<anyhow::Error> for BackendError {
     fn from(err: anyhow::Error) -> Self {
         BackendError::Failed(format!("{err:#}"))
+    }
+}
+
+/// The directory part of an absolute device path, or `None` at `/`.
+///
+/// Device paths are always `/`-separated whatever the provider host runs on, so
+/// this is deliberately string arithmetic rather than [`std::path`] — a Windows
+/// host must not start answering `\` for an Android phone.
+pub fn parent_of(path: &str) -> Option<&str> {
+    match path.trim_end_matches('/').rfind('/') {
+        None => None,
+        Some(0) if path.trim_end_matches('/').is_empty() => None,
+        Some(0) => Some("/"),
+        Some(cut) => Some(&path[..cut]),
+    }
+}
+
+/// Joins a device path with a child name, for the same reason as above.
+pub fn join_path(parent: &str, name: &str) -> String {
+    if parent.ends_with('/') {
+        format!("{parent}{name}")
+    } else {
+        format!("{parent}/{name}")
     }
 }
 
@@ -139,6 +162,31 @@ pub trait DeviceBackend: Send + Sync + 'static {
     async fn uninstall(&self, app_id: &str) -> Result<()>;
     async fn launch(&self, app_id: &str, args: &[String]) -> Result<()>;
 
+    /// The directory a file browser opens on, or `None` for a backend with no
+    /// filesystem access at all.
+    ///
+    /// A backend answer rather than a platform check in the web app: what a
+    /// device exposes is a property of how the provider reaches it, not of the
+    /// logo on the front. `None` makes `/files` answer 501, which the browser
+    /// shows as "this device does not offer file access".
+    fn files_root(&self) -> Option<&'static str> {
+        None
+    }
+
+    async fn list_files(&self, _path: &str) -> Result<FileListing> {
+        Err(BackendError::Unsupported("file browsing"))
+    }
+
+    /// Copies a file off the device into `dest`, answering the bytes written.
+    ///
+    /// Takes a destination path rather than returning bytes for the same reason
+    /// `install` takes one: a video pulled off a phone can be hundreds of
+    /// megabytes, and the provider must never hold one in memory. The caller
+    /// deletes `dest` in a guard once it has been served.
+    async fn pull_file(&self, _path: &str, _dest: &Path) -> Result<u64> {
+        Err(BackendError::Unsupported("file browsing"))
+    }
+
     async fn rotate(&self, degrees: i64) -> Result<()>;
     async fn reboot(&self) -> Result<()>;
 
@@ -158,5 +206,32 @@ pub trait DeviceBackend: Send + Sync + 'static {
     /// decide when to report `unhealthy` upstream.
     async fn is_healthy(&self) -> bool {
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{join_path, parent_of};
+
+    #[test]
+    fn walking_up_stops_at_the_root() {
+        assert_eq!(parent_of("/sdcard/DCIM/Camera"), Some("/sdcard/DCIM"));
+        assert_eq!(parent_of("/sdcard/DCIM"), Some("/sdcard"));
+        // One level below the root's parent *is* the root, not nothing —
+        // getting this wrong hides ".." exactly one directory too early.
+        assert_eq!(parent_of("/sdcard"), Some("/"));
+        assert_eq!(parent_of("/"), None);
+        assert_eq!(parent_of(""), None);
+    }
+
+    #[test]
+    fn a_trailing_slash_does_not_shift_the_parent() {
+        assert_eq!(parent_of("/sdcard/DCIM/"), Some("/sdcard"));
+    }
+
+    #[test]
+    fn joining_never_doubles_the_separator() {
+        assert_eq!(join_path("/sdcard", "DCIM"), "/sdcard/DCIM");
+        assert_eq!(join_path("/", "DCIM"), "/DCIM");
     }
 }

@@ -18,9 +18,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use farm_protocol::{AppInfo, Display, Platform};
+use farm_protocol::{AppInfo, Display, FileEntry, FileKind, FileListing, Platform};
 use provider_core::backend::{
-    BackendError, DeviceBackend, DeviceInfo, InputEvent, ProgressSink, RemoteDebug, Result,
+    parent_of, BackendError, DeviceBackend, DeviceInfo, InputEvent, ProgressSink, RemoteDebug,
+    Result,
 };
 use provider_core::video::{
     channel, AccessUnit, CodecDescription, VideoGeometry, VideoHandle, VideoPublisher,
@@ -33,6 +34,36 @@ use tracing::{debug, info};
 const FRAME_INTERVAL: Duration = Duration::from_millis(100);
 /// One keyframe every 30 frames, as a real long-GOP encoder would.
 const GOP: u64 = 30;
+
+/// A real 1×1 PNG, so a browser that downloads it gets a valid image rather
+/// than a broken one. Serves as both the screenshot and the synthetic photo in
+/// the file tree below.
+const PNG: &[u8] = &[
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
+    0x89, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00,
+    0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae,
+    0x42, 0x60, 0x82,
+];
+
+/// Where the mock's file browser opens, mirroring Android's.
+const FILES_ROOT: &str = "/sdcard";
+
+/// A synthetic device filesystem: `(path, contents)`, `None` for a directory.
+///
+/// Small and static on purpose. It exists so the browse-and-download path —
+/// routes, auth, the audit push, the dialog, the download — is exercisable with
+/// nothing plugged in, which is what every other feature in this provider can
+/// already claim.
+const TREE: &[(&str, Option<&[u8]>)] = &[
+    ("/sdcard/DCIM", None),
+    ("/sdcard/DCIM/IMG_0001.png", Some(PNG)),
+    ("/sdcard/Download", None),
+    (
+        "/sdcard/Download/notes.txt",
+        Some(b"a synthetic file, from a synthetic device\n"),
+    ),
+];
 
 pub struct MockBackend {
     id: String,
@@ -236,15 +267,6 @@ impl DeviceBackend for MockBackend {
     }
 
     async fn screenshot(&self) -> Result<Vec<u8>> {
-        // A real 1×1 PNG, so a browser that downloads it gets a valid image
-        // rather than a broken one.
-        const PNG: &[u8] = &[
-            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48,
-            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
-            0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54, 0x78,
-            0x9c, 0x63, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00,
-            0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
-        ];
         Ok(PNG.to_vec())
     }
 
@@ -306,6 +328,55 @@ impl DeviceBackend for MockBackend {
             return Err(BackendError::Failed(format!("{app_id} is not installed")));
         }
         Ok(())
+    }
+
+    fn files_root(&self) -> Option<&'static str> {
+        Some(FILES_ROOT)
+    }
+
+    async fn list_files(&self, path: &str) -> Result<FileListing> {
+        let path = path.trim_end_matches('/');
+        let path = if path.is_empty() { "/" } else { path };
+
+        if path != FILES_ROOT && !TREE.iter().any(|(p, body)| *p == path && body.is_none()) {
+            return Err(BackendError::Failed(format!("{path}: no such directory")));
+        }
+
+        let entries = TREE
+            .iter()
+            .filter(|(p, _)| parent_of(p) == Some(path))
+            .map(|(p, body)| FileEntry {
+                name: p.rsplit('/').next().unwrap_or(p).to_owned(),
+                path: (*p).to_owned(),
+                kind: match body {
+                    Some(_) => FileKind::File,
+                    None => FileKind::Directory,
+                },
+                size: body.map(|b| b.len() as i64),
+                modified_at: None,
+            })
+            .collect();
+
+        Ok(FileListing {
+            path: path.to_owned(),
+            // Null at the root, so the browser hides "..". The mock does not
+            // pretend to have anything above /sdcard.
+            parent: (path != FILES_ROOT).then(|| parent_of(path).unwrap_or("/").to_owned()),
+            entries,
+        })
+    }
+
+    async fn pull_file(&self, path: &str, dest: &Path) -> Result<u64> {
+        let body = TREE
+            .iter()
+            .find(|(p, body)| *p == path && body.is_some())
+            .and_then(|(_, body)| *body)
+            .ok_or_else(|| BackendError::Failed(format!("{path}: no such file")))?;
+
+        tokio::fs::write(dest, body)
+            .await
+            .map_err(|e| BackendError::Failed(format!("staging {path}: {e}")))?;
+        Ok(body.len() as u64)
     }
 
     async fn rotate(&self, degrees: i64) -> Result<()> {

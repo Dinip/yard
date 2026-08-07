@@ -116,6 +116,7 @@ deploy. That is not hypothetical — it is exactly what happened when
 ### Session + artifact planes (`server.rs`)
 
 axum. `GET /s/:id` (WebSocket), `GET /s/:id/screenshot.png`,
+`GET /s/:id/mjpeg`, `GET /s/:id/files`, `GET /s/:id/file`,
 `POST /s/:id/install`, `GET /health`.
 
 Per-viewer fanout with backlog shedding, ported in spirit from `screen_ws.rs`:
@@ -245,6 +246,9 @@ pub trait DeviceBackend: Send + Sync + 'static {
     async fn install(&self, staged: &Path, progress: &dyn ProgressSink) -> Result<()>;
     async fn uninstall(&self, app_id: &str) -> Result<()>;
     async fn launch(&self, app_id: &str, args: &[String]) -> Result<()>;
+    fn files_root(&self) -> Option<&'static str>;              // None = no file access
+    async fn list_files(&self, path: &str) -> Result<FileListing>;
+    async fn pull_file(&self, path: &str, dest: &Path) -> Result<u64>;
     async fn rotate(&self, degrees: i64) -> Result<()>;
     async fn reboot(&self) -> Result<()>;
     async fn remote_debug(&self) -> Result<RemoteDebug>;      // android only
@@ -254,7 +258,34 @@ pub trait DeviceBackend: Send + Sync + 'static {
 ```
 
 `install` takes a **path**, not bytes, because the upload has already been
-streamed to disk. Pointer coordinates in `InputEvent` are **normalised 0..1**,
+streamed to disk. `pull_file` takes one for the mirror-image reason: it writes
+into the scratch directory rather than answering `Vec<u8>`, so a video coming
+off a phone never sits in the provider's memory. The handler serves that file
+and deletes it with the response body.
+
+`files_root` is what a backend says about its own reach, rather than the web app
+branching on a platform, and a backend that answers `None` makes `/files` a 501.
+
+**Android** opens at `/sdcard`, and navigation is *not* fenced to it: adb runs
+unrooted, so the device's own permissions are the real boundary and a second one
+drawn in the provider would only be decoration.
+
+**iOS has no single filesystem**, so its root is synthetic and its paths carry a
+scheme the browser treats as opaque:
+
+| Path | Service |
+|---|---|
+| `/` | Neither — a listing of the two trees below |
+| `media:/DCIM` | `com.apple.afc`: photos, downloads, books |
+| `app:<bundle>:/Documents` | `house_arrest` `VendDocuments`, per app |
+
+The app tree starts at `/Documents` rather than the container root because a
+`VendDocuments` session **answers `Afc(PermDenied)` for everything above it** —
+an error that reads exactly like a broken feature. Apps are listed by
+`UIFileSharingEnabled`, which is the same flag that decides whether they appear
+under "On My iPhone" in the Files app, so the browser shows the set the phone
+shows. Where an app suite ships several bundles under one display name, the
+ambiguous rows carry their bundle id and the rest stay clean. Pointer coordinates in `InputEvent` are **normalised 0..1**,
 so the browser needs no knowledge of the true resolution and a mid-gesture
 rotation cannot desynchronise an in-flight event.
 

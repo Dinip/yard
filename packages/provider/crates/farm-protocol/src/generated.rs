@@ -221,6 +221,14 @@ pub enum ProviderMessage {
         #[serde(skip_serializing_if = "Option::is_none", default)]
         error: Option<String>,
     },
+    #[serde(rename = "file.pulled", rename_all = "camelCase")]
+    FilePulled {
+        device_id: String,
+        user_id: String,
+        path: String,
+        size: i64,
+        sha256: String,
+    },
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -241,6 +249,37 @@ pub enum CoordinatorMessage {
     Command { id: String, payload: CommandPayload },
     #[serde(rename = "ping", rename_all = "camelCase")]
     Ping { at: i64 },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FileKind {
+    #[serde(rename = "file")]
+    File,
+    #[serde(rename = "directory")]
+    Directory,
+    #[serde(rename = "other")]
+    Other,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileEntry {
+    pub name: String,
+    pub path: String,
+    pub kind: FileKind,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub size: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub modified_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileListing {
+    pub path: String,
+    #[serde(default)]
+    pub parent: Option<String>,
+    pub entries: Vec<FileEntry>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

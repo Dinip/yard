@@ -10,7 +10,7 @@
  * not as an expiry. Each artifact-plane request mints a fresh one.
  */
 
-import type { ClientMessage, ServerMessage } from "@farm/protocol";
+import type { ClientMessage, FileListing, ServerMessage } from "@farm/protocol";
 import { trpcClient } from "@/lib/trpc";
 
 export type SessionState = "idle" | "connecting" | "open" | "closed";
@@ -158,6 +158,43 @@ export async function fetchScreenshot(deviceId: string): Promise<Blob> {
     `${grant.providerBaseUrl}/s/${deviceId}/screenshot.png?token=${encodeURIComponent(grant.token)}`,
   );
   if (!response.ok) throw new Error(await response.text());
+  return response.blob();
+}
+
+/**
+ * `GET /s/:deviceId/files` — one directory on the device.
+ *
+ * `path` absent opens wherever the backend starts, so the browser never has to
+ * know that Android means `/sdcard` and iOS means the AFC media root.
+ */
+export async function listDeviceFiles(deviceId: string, path?: string): Promise<FileListing> {
+  const grant = await mintToken(deviceId);
+  const url = new URL(`${grant.providerBaseUrl}/s/${deviceId}/files`);
+  url.searchParams.set("token", grant.token);
+  if (path) url.searchParams.set("path", path);
+
+  const response = await fetch(url);
+  if (!response.ok)
+    throw new Error((await response.text()) || `listing failed (${response.status})`);
+  return (await response.json()) as FileListing;
+}
+
+/**
+ * `GET /s/:deviceId/file` — the bytes of one file, straight from the provider.
+ *
+ * The provider stages it off the device, serves it, and deletes it; the only
+ * lasting trace is the coordinator's `device.file_pull` audit row. Nothing is
+ * stored, here or there.
+ */
+export async function fetchDeviceFile(deviceId: string, path: string): Promise<Blob> {
+  const grant = await mintToken(deviceId);
+  const url = new URL(`${grant.providerBaseUrl}/s/${deviceId}/file`);
+  url.searchParams.set("token", grant.token);
+  url.searchParams.set("path", path);
+
+  const response = await fetch(url);
+  if (!response.ok)
+    throw new Error((await response.text()) || `download failed (${response.status})`);
   return response.blob();
 }
 
