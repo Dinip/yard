@@ -1,7 +1,7 @@
-import { auditLog, reservation, reservationObserver, user } from "@farm/db";
+import { auditLog, reservation, user } from "@farm/db";
 import { AUDIT_ACTION_VALUES } from "@farm/protocol";
 import { TRPCError } from "@trpc/server";
-import { and, count, desc, eq, gte, ilike, inArray, isNull, lte, or } from "drizzle-orm";
+import { and, count, desc, eq, gte, ilike, inArray, lte, or } from "drizzle-orm";
 import { z } from "zod";
 import { audit } from "../../lib/audit.ts";
 import { deviceEvents } from "../../lib/events.ts";
@@ -97,32 +97,6 @@ export const adminRouter = router({
       });
       deviceEvents.publish();
       return { reservationId: held.id };
-    }),
-
-  leaveSession: adminProcedure
-    .input(z.object({ deviceId: z.string() }))
-    .mutation(async ({ ctx, input }) => {
-      const [held] = await ctx.db
-        .select({ id: reservation.id })
-        .from(reservation)
-        .where(and(eq(reservation.deviceId, input.deviceId), eq(reservation.state, "active")))
-        .limit(1);
-      if (!held) throw new TRPCError({ code: "NOT_FOUND" });
-
-      await ctx.db
-        .update(reservationObserver)
-        .set({ leftAt: new Date() })
-        .where(
-          and(
-            eq(reservationObserver.reservationId, held.id),
-            eq(reservationObserver.userId, ctx.user.id),
-            isNull(reservationObserver.leftAt),
-          ),
-        );
-
-      await audit(ctx.db, ctx.user.id, "device.session_leave", "device", input.deviceId);
-      deviceEvents.publish();
-      return { ok: true };
     }),
 
   /**

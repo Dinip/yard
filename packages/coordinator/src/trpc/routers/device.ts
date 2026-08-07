@@ -532,6 +532,43 @@ export const deviceRouter = router({
     }),
 
   /**
+   * Step out of a session you are in.
+   *
+   * Not an admin power, which is what it was when only admins could be in one:
+   * however somebody got in — letting themselves in, or being let in — leaving
+   * is closing your own row, and nobody else's.
+   */
+  leaveSession: protectedProcedure
+    .input(z.object({ deviceId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const [held] = await ctx.db
+        .select({ id: reservation.id })
+        .from(reservation)
+        .where(and(eq(reservation.deviceId, input.deviceId), eq(reservation.state, "active")))
+        .limit(1);
+      if (!held) throw new TRPCError({ code: "NOT_FOUND" });
+
+      const [left] = await ctx.db
+        .update(reservationObserver)
+        .set({ leftAt: new Date() })
+        .where(
+          and(
+            eq(reservationObserver.reservationId, held.id),
+            eq(reservationObserver.userId, ctx.user.id),
+            isNull(reservationObserver.leftAt),
+          ),
+        )
+        .returning({ id: reservationObserver.id });
+      // Leaving a session you are not in is a no-op worth reporting: the
+      // button should not have been there.
+      if (!left) throw new TRPCError({ code: "NOT_FOUND", message: "You are not in this session" });
+
+      await audit(ctx.db, ctx.user.id, "device.session_leave", "device", input.deviceId);
+      deviceEvents.publish();
+      return { ok: true };
+    }),
+
+  /**
    * The caller's own request against this device's current session.
    *
    * Any state, not just pending: this is how a requester learns they were

@@ -144,7 +144,7 @@ function DevicePage() {
   );
 
   const leaveSession = useMutation(
-    trpc.admin.leaveSession.mutationOptions({
+    trpc.device.leaveSession.mutationOptions({
       onSuccess: invalidate,
       onError: (e) => toast.error(e.message),
     }),

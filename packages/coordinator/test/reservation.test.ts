@@ -248,7 +248,7 @@ describe("joining someone else's session", () => {
     const seen = await holder.device.get({ id: DEVICE_ID });
     expect(seen.reservation?.observers.map((o) => o.userId)).toEqual([USERS[1]]);
 
-    await admin.admin.leaveSession({ deviceId: DEVICE_ID });
+    await admin.device.leaveSession({ deviceId: DEVICE_ID });
     await expect(admin.device.sessionToken({ deviceId: DEVICE_ID })).rejects.toMatchObject({
       code: "FORBIDDEN",
     });
@@ -312,6 +312,28 @@ describe("asking to join a session", () => {
     expect(after.reservation?.userId).toBe(USERS[0]);
     expect(after.reservation?.observers.map((o) => o.userId)).toEqual([USERS[1]]);
     expect(after.reservation?.joinRequests).toEqual([]);
+  });
+
+  test("somebody who was let in can leave again", async () => {
+    await resetDevice();
+    const holder = callerFor(USERS[0]);
+    await holder.device.reserve({ deviceId: DEVICE_ID });
+    const asker = callerFor(USERS[1]);
+
+    const request = await asker.device.requestJoin({ deviceId: DEVICE_ID });
+    await holder.device.answerJoinRequest({ requestId: request.id, approve: true });
+    await expect(asker.device.sessionToken({ deviceId: DEVICE_ID })).resolves.toBeDefined();
+
+    // Leaving used to live on the admin router, from when only admins could be
+    // in a session at all — so the first non-admin ever let into one got a 403
+    // from the button that was right there.
+    await asker.device.leaveSession({ deviceId: DEVICE_ID });
+
+    await expect(asker.device.sessionToken({ deviceId: DEVICE_ID })).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
+    const after = await holder.device.get({ id: DEVICE_ID });
+    expect(after.reservation?.observers).toEqual([]);
   });
 
   test("a declined request lets nobody in", async () => {

@@ -74,10 +74,10 @@ v11, fetch adapter, mounted at `/api/trpc`. Three procedure levels in
 | `user` | `me`, `capabilities` | ✅ |
 | `device` | `list`, `get`, `reserve`, `renew`, `release`, `myReservations` | ✅ |
 | `device` | `sessionToken`, `apps`, `launch`, `uninstall`, `reboot`, `rotate`, `adbExpose`, `adbUnexpose` | ✅ |
-| `device` | `requestJoin`, `cancelJoinRequest`, `answerJoinRequest`, `myJoinRequest` | ✅ |
+| `device` | `requestJoin`, `cancelJoinRequest`, `answerJoinRequest`, `myJoinRequest`, `leaveSession` | ✅ |
 | `provider` | `list`, `create`, `update`, `remove`, `restartDevice` | ✅ |
 | `provider` | `tokens.list`/`create`/`revoke` | ✅ |
-| `admin` | `users`, `forceRelease`, `joinSession`, `leaveSession`, `audit` | ✅ |
+| `admin` | `users`, `forceRelease`, `joinSession`, `audit` | ✅ |
 | `stream` | `devices` — live inventory updates over SSE | ✅ |
 
 `stream.devices` yields a **revision counter, not device data**. Clients respond
@@ -105,6 +105,11 @@ drive the device rather than only watch it. The provider matches sessions on
 Requests expire (`JOIN_REQUEST_TTL`, `lib/reservations.ts`) and do not survive
 their reservation: `releaseActive` retires every pending row alongside the
 observer rows it closes.
+
+`device.leaveSession` is `protectedProcedure`, not admin — it closes *your own*
+observer row and nobody else's. It lived on the admin router back when only
+admins could be in a session, which made the Leave button 403 for the first
+non-admin who was ever let into one.
 
 ## The reservation reaper
 
