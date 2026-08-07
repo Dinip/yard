@@ -787,6 +787,68 @@ the database's exclusivity guarantee and what a user sees.
 
 ---
 
+## Phase 12 — Asking to join, and two iOS corrections ✅
+
+A device somebody else held was a dead end for everyone but an admin: the page
+named the holder and offered nothing. The co-driving machinery already existed —
+`admin.joinSession` builds an observer row, discloses it, audits it, and mints a
+token the provider accepts as one more viewer — so what was missing was only a
+way to *ask*.
+
+| Item | State | Where |
+|---|---|---|
+| `join_request` table + partial unique index | ✅ | `db/src/schema/farm.ts`, `drizzle/0006_*.sql` |
+| `requestJoin` / `cancelJoinRequest` / `answerJoinRequest` / `myJoinRequest` | ✅ | `coordinator/.../device.ts` |
+| Observer row is the authorization, not the admin role | ✅ | `device.sessionToken`, `requireOwnedDevice` |
+| Request expiry: reaper sweep + death with the reservation | ✅ | `coordinator/lib/reservations.ts` |
+| Ask to join / waiting / `JoinRequestPrompt` / badge | ✅ | `web/.../devices.$deviceId.tsx` |
+| Popout opens for anyone in the session | ✅ | `web/.../devices.$deviceId.popout.tsx` |
+| `platformLabel` — "iOS", not "Ios" | ✅ | `web/src/lib/utils.ts` |
+| `pick_usb` — USB only, network refused | ✅ | `provider/crates/backend-ios/src/device.rs` |
+
+**Approval creates a `reservationObserver` row and nothing else.** That is the
+whole design: an invited user arrives by the exact path an admin's self-join
+takes, so the session token, the provider, and the disclosure the holder already
+sees need no notion of how the person got there. `addObserver` is now the single
+writer of that row, so the two paths cannot drift.
+
+**The authorization change is the part worth reviewing.** Two call sites
+conflated "admin" with "present in the session", in opposite directions:
+`sessionToken` required `role === "admin" && isObserver(...)`, and
+`requireOwnedDevice` let an admin through with *no* observer row while refusing
+a non-admin who had one. So an approved asker would have been able to stream but
+not launch an app. Both now read the observer row; admins keep their pass on
+device commands.
+
+**Requests cannot outlive what they asked about.** They are keyed on
+`reservation_id`, `releaseActive` expires the pending ones in the same place it
+closes observer rows, and the reaper retires those nobody answered within
+`JOIN_REQUEST_TTL`. `state` keeps `denied`, `cancelled` and `expired` apart —
+the asker is told which, since an approval announces itself by the console
+simply opening and the other outcomes announce nothing.
+
+### The two iOS corrections
+
+**"Ios".** Tailwind's `capitalize` on the wire value `ios`. `platformLabel`
+replaces it at three render sites; the enum, the wire value and the generated
+Rust variant are untouched, because those are protocol and not prose.
+
+**usbmuxd list order decided the transport.** A Wi-Fi-synced iPhone is listed
+twice, `USB` and `Network`, and `idevice`'s `get_device` is a `find` — so which
+one a session was built over was a coin toss. The 17.4+ root-free tunnel is
+built and tested over USB, and a session that silently came up over Wi-Fi fails
+later in the media path where the cause is invisible. `pick_usb` takes the USB
+entry and refuses a network-only device with an error that says what to do. This
+is stricter than "prefer USB": a network-attached device that happened to work
+stops, loudly. Deliberate.
+
+The 17.4 floor error also told operators to *"Route this device to the legacy
+WDA provider"*. There is no WDA provider in this project — it was left behind in
+the port from `stf-ios-provider` — so the sentence sent people looking for
+something that does not exist. It now states the floor and stops.
+
+---
+
 ## Open decisions
 
 - **Name.** The project is "Device Farm" as a placeholder. See
