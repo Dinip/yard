@@ -12,6 +12,7 @@
 
 pub mod adb;
 pub mod h264;
+pub mod metrics;
 pub mod scrcpy;
 
 use std::path::Path;
@@ -22,8 +23,8 @@ use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
 use farm_protocol::{AppInfo, Display, FileEntry, FileKind, FileListing, Platform};
 use provider_core::backend::{
-    join_path, parent_of, BackendError, DeviceBackend, DeviceInfo, InputEvent, ProgressSink,
-    RemoteDebug, Result as BackendResult,
+    join_path, parent_of, AppFilter, BackendError, DeviceBackend, DeviceInfo, DeviceMetrics,
+    InputEvent, ProgressSink, RemoteDebug, Result as BackendResult,
 };
 use provider_core::video::{channel, VideoGeometry, VideoHandle, VideoPublisher};
 use tokio::net::TcpStream;
@@ -707,6 +708,58 @@ impl DeviceBackend for AndroidBackend {
         // it is where a forgotten contact gets lifted.
         self.release_if_stale().await;
         *self.ready.borrow()
+    }
+
+    /// Two adb round trips, or three when app patterns are configured.
+    ///
+    /// Deliberately separate from `info()`, which already makes 3-5 every 15s on
+    /// the supervisor's cadence. See `metrics.rs` for why the system reads are
+    /// batched into one `sh -c`.
+    async fn metrics(&self, apps: &AppFilter) -> BackendResult<DeviceMetrics> {
+        let batch = self.shell(metrics::SYSTEM_BATCH).await?;
+        let sections = metrics::split_sections(&batch);
+        let section = |name: &str| sections.get(name).copied().unwrap_or_default();
+
+        let battery = section("batt");
+        let mut out = DeviceMetrics {
+            cpu: metrics::parse_proc_stat(section("stat")),
+            memory: metrics::parse_meminfo(section("mem")),
+            battery_level: parse_battery_level(battery),
+            battery_charging: parse_battery_state(battery).map(|state| state == "charging"),
+            battery_temperature_c: metrics::parse_battery_temperature(battery),
+            thermal_zones: metrics::parse_thermal_zones(section("ztype"), section("ztemp")),
+            apps: Vec::new(),
+        };
+
+        if apps.is_empty() {
+            return Ok(out);
+        }
+
+        // `dumpsys meminfo` walks every process on the device — a few hundred
+        // milliseconds — which is why it is skipped entirely above rather than
+        // gathered and filtered.
+        let dump = self.shell("dumpsys meminfo").await?;
+        let processes = metrics::parse_meminfo_pss(&dump);
+
+        let pids: Vec<i64> = processes
+            .iter()
+            .filter(|(_, process, _)| apps.matches(process))
+            .map(|(pid, _, _)| *pid)
+            .collect();
+
+        let cpu_by_pid = if pids.is_empty() {
+            Default::default()
+        } else {
+            self.shell(&metrics::pid_stat_command(&pids))
+                .await
+                .unwrap_or_default()
+                .lines()
+                .filter_map(metrics::parse_pid_stat)
+                .collect()
+        };
+
+        out.apps = metrics::assemble_apps(&processes, &cpu_by_pid, apps);
+        Ok(out)
     }
 }
 

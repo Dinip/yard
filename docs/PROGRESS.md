@@ -1041,8 +1041,8 @@ provider-local, in the spirit of Phase 13's recorder.
 | Per-device in-process counters | ✅ | `provider-core/src/video.rs`, `supervisor.rs` |
 | Sampler + cache | ✅ | `provider-core/src/metrics.rs` |
 | Exporter + listener | ✅ | `provider-core/src/metrics.rs` |
-| Android CPU / memory / thermal | ⬜ | `backend-android/src/lib.rs` |
-| Android per-app CPU + PSS | ⬜ | `backend-android/src/lib.rs` |
+| Android CPU / memory / thermal | ✅ | `backend-android/src/lib.rs` |
+| Android per-app CPU + PSS | ✅ | `backend-android/src/lib.rs` |
 | iOS diagnostics-relay probe | ⬜ | `backend-ios/examples/` |
 | iOS battery | ⬜ | `backend-ios/src/lib.rs` |
 | Dev observability stack | ✅ | `docker-compose.dev.yml` |
