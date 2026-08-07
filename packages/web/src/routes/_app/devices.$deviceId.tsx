@@ -23,7 +23,7 @@ import { Label } from "@/components/ui/label";
 import { useDeviceStream } from "@/hooks/use-device-stream";
 import { usePopoutPresence } from "@/hooks/use-popout-presence";
 import { trpc } from "@/lib/trpc";
-import { relativeTime } from "@/lib/utils";
+import { platformLabel, relativeTime } from "@/lib/utils";
 
 export const Route = createFileRoute("/_app/devices/$deviceId")({
   loader: ({ context, params }) =>
@@ -47,10 +47,20 @@ function DevicePage() {
   const { data: me } = useQuery(trpc.user.me.queryOptions());
   const { data: policy } = useQuery(trpc.settings.public.queryOptions());
   const mine = device?.reservation?.userId === me?.id;
-  /** An admin who has openly joined this session: full control, no reservation. */
+  /** Openly joined this session: full control, no reservation. */
   const observing = Boolean(
     me && device?.reservation?.observers.some((o) => o.userId === me.id) && !mine,
   );
+
+  // Only worth asking about while somebody else has it and we are not already
+  // in. The device stream invalidates this along with everything else.
+  const canAsk = Boolean(device?.reservation) && !mine && !observing;
+  const { data: myRequest } = useQuery({
+    ...trpc.device.myJoinRequest.queryOptions({ deviceId }),
+    enabled: canAsk,
+    refetchInterval: pollInterval,
+  });
+  const awaitingAnswer = canAsk && myRequest?.state === "pending";
 
   // A popout takes the stream; this tab keeps the reservation and the page.
   const { poppedOut, reclaim } = usePopoutPresence(deviceId);
@@ -58,6 +68,7 @@ function DevicePage() {
   const invalidate = useCallback(() => {
     qc.invalidateQueries({ queryKey: trpc.device.get.queryKey({ id: deviceId }) });
     qc.invalidateQueries({ queryKey: trpc.device.list.queryKey() });
+    qc.invalidateQueries({ queryKey: trpc.device.myJoinRequest.queryKey({ deviceId }) });
   }, [qc, deviceId]);
 
   // The reservation is gone from `device.get` by the time the revocation is
@@ -133,11 +144,47 @@ function DevicePage() {
   );
 
   const leaveSession = useMutation(
-    trpc.admin.leaveSession.mutationOptions({
+    trpc.device.leaveSession.mutationOptions({
       onSuccess: invalidate,
       onError: (e) => toast.error(e.message),
     }),
   );
+
+  const requestJoin = useMutation(
+    trpc.device.requestJoin.mutationOptions({
+      onSuccess: () => {
+        toast.success("Asked to join. Waiting for an answer.");
+        invalidate();
+      },
+      onError: (e) => toast.error(e.message),
+    }),
+  );
+
+  const cancelJoinRequest = useMutation(
+    trpc.device.cancelJoinRequest.mutationOptions({
+      onSuccess: invalidate,
+      onError: (e) => toast.error(e.message),
+    }),
+  );
+
+  const answerJoinRequest = useMutation(
+    trpc.device.answerJoinRequest.mutationOptions({
+      onSuccess: invalidate,
+      onError: (e) => toast.error(e.message),
+    }),
+  );
+
+  // An approval announces itself — the console simply opens. Being turned down
+  // or timing out does not, so say it once, on the transition.
+  const lastAnswer = useRef<string | null>(null);
+  const requestState = myRequest?.state ?? null;
+  useEffect(() => {
+    const previous = lastAnswer.current;
+    lastAnswer.current = requestState;
+    if (previous !== "pending") return;
+    if (requestState === "denied") toast.error("Your request to join was declined");
+    if (requestState === "expired") toast("Your request to join went unanswered");
+  }, [requestState]);
 
   if (!device) return null;
 
@@ -166,6 +213,15 @@ function DevicePage() {
         <ObserverDisclosure observers={device.reservation.observers} />
       )}
 
+      {/* This one *is* a gate — nobody is in the session until it is answered. */}
+      {mine && device.reservation && (
+        <JoinRequestPrompt
+          requests={device.reservation.joinRequests}
+          pending={answerJoinRequest.isPending}
+          onAnswer={(requestId, approve) => answerJoinRequest.mutate({ requestId, approve })}
+        />
+      )}
+
       <div className="flex items-center gap-3">
         <Button variant="ghost" size="icon" asChild>
           <Link to="/devices">
@@ -175,7 +231,8 @@ function DevicePage() {
         <div>
           <h1 className="font-semibold text-2xl">{device.name ?? device.id}</h1>
           <p className="text-muted-foreground text-sm">
-            {device.platform} {device.osVersion} · {device.model} · {device.provider.name}
+            {platformLabel(device.platform)} {device.osVersion} · {device.model} ·{" "}
+            {device.provider.name}
           </p>
         </div>
         <Badge variant="outline" className="ml-2">
@@ -185,6 +242,10 @@ function DevicePage() {
           <Badge variant="outline" className="border-warning/30 bg-warning/15 text-warning">
             {describeObservers(device.reservation.observers)} in this session
           </Badge>
+        )}
+        {/* A dialog dismissed by accident must not be the only way to answer. */}
+        {mine && device.reservation && device.reservation.joinRequests.length > 0 && (
+          <Badge variant="outline">{device.reservation.joinRequests.length} waiting to join</Badge>
         )}
         <div className="flex-1" />
         {device.reservation ? (
@@ -201,22 +262,26 @@ function DevicePage() {
               <span className="text-muted-foreground text-sm">
                 Held by {device.reservation.ownerName}
               </span>
+              {/* Anyone who is in the session can step out of it, however they
+                  got there. */}
+              {observing && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={leaveSession.isPending}
+                  onClick={() => leaveSession.mutate({ deviceId })}
+                >
+                  Leave session
+                </Button>
+              )}
               {/* Taking a device from someone mid-session is disruptive and
                   auditable, so it asks for a reason rather than being a
                   one-click action next to Release. */}
               {/* Joining is the gentler of the two: the holder keeps the
-                  device and is told, rather than losing it mid-task. */}
-              {me?.isAdmin &&
-                (observing ? (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={leaveSession.isPending}
-                    onClick={() => leaveSession.mutate({ deviceId })}
-                  >
-                    Leave session
-                  </Button>
-                ) : (
+                  device and is told, rather than losing it mid-task. An admin
+                  does that directly; everyone else asks. */}
+              {!observing &&
+                (me?.isAdmin ? (
                   <Button
                     variant="outline"
                     size="sm"
@@ -224,6 +289,29 @@ function DevicePage() {
                     onClick={() => joinSession.mutate({ deviceId })}
                   >
                     Join session
+                  </Button>
+                ) : awaitingAnswer ? (
+                  <div className="flex items-center gap-2">
+                    <span className="text-muted-foreground text-sm">
+                      Waiting for {device.reservation.ownerName}…
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={cancelJoinRequest.isPending}
+                      onClick={() => cancelJoinRequest.mutate({ deviceId })}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                ) : (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={requestJoin.isPending}
+                    onClick={() => requestJoin.mutate({ deviceId })}
+                  >
+                    Ask to join
                   </Button>
                 ))}
               {me?.isAdmin && (
@@ -246,7 +334,16 @@ function DevicePage() {
         <Card className="min-h-[480px]">
           <CardContent className="flex h-full min-h-0 items-center justify-center text-center text-muted-foreground text-sm">
             {!mine && !observing ? (
-              <p>Reserve this device to open a session.</p>
+              device.reservation ? (
+                <p>
+                  {device.reservation.ownerName} is using this device.{" "}
+                  {awaitingAnswer
+                    ? "Your request to join is waiting for an answer."
+                    : "Ask to join, or wait for it to come free."}
+                </p>
+              ) : (
+                <p>Reserve this device to open a session.</p>
+              )
             ) : observing ? (
               <DeviceConsole
                 deviceId={deviceId}
@@ -408,6 +505,62 @@ function ObserverDisclosure({ observers }: { observers: Observer[] }) {
         </DialogHeader>
         <DialogFooter>
           <Button onClick={() => setOpen(false)}>Got it</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+type JoinRequest = { id: string; userId: string; name: string | null; note: string | null };
+
+/**
+ * Asks the holder to answer the oldest outstanding request.
+ *
+ * Deliberately unlike `ObserverDisclosure`, which announces something already
+ * true and can be waved away: nobody is in the session until this is answered,
+ * so it has two real buttons and no "Got it". One at a time — a queue of people
+ * is rare, and answering them one by one is clearer than a list of button
+ * pairs. Closing it falls back to the header badge.
+ */
+function JoinRequestPrompt({
+  requests,
+  pending,
+  onAnswer,
+}: {
+  requests: JoinRequest[];
+  pending: boolean;
+  onAnswer: (requestId: string, approve: boolean) => void;
+}) {
+  const [dismissed, setDismissed] = useState<string[]>([]);
+  const next = requests.find((r) => !dismissed.includes(r.id));
+
+  return (
+    <Dialog
+      open={Boolean(next)}
+      onOpenChange={(open) => {
+        if (!open && next) setDismissed((ids) => [...ids, next.id]);
+      }}
+    >
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{next?.name ?? "Someone"} wants to join this session</DialogTitle>
+          <DialogDescription>
+            {next?.note ? `“${next.note}” — ` : ""}
+            If you let them in they can see the screen and control the device, the same as you. The
+            device stays yours — this is not a release.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button
+            variant="outline"
+            disabled={pending}
+            onClick={() => next && onAnswer(next.id, false)}
+          >
+            Decline
+          </Button>
+          <Button disabled={pending} onClick={() => next && onAnswer(next.id, true)}>
+            Let them in
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

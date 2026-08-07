@@ -5,6 +5,18 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+/**
+ * A platform's name as it is written.
+ *
+ * The wire value is `ios`, and CSS `capitalize` renders that "Ios" — which is
+ * not how anyone spells it. The fallback keeps a platform added to the enum
+ * before this map from rendering as a bare lowercase token.
+ */
+export function platformLabel(platform: string): string {
+  if (platform === "ios") return "iOS";
+  return platform.charAt(0).toUpperCase() + platform.slice(1);
+}
+
 export function relativeTime(date: Date | string | null | undefined): string {
   if (!date) return "never";
   const then = typeof date === "string" ? new Date(date) : date;

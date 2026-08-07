@@ -116,6 +116,22 @@ Android.
 `VideoDecoder`. The mock backend's video is undecodable filler by design, so
 this is the only hardware-free check on the recovery paths.
 
+### A device somebody else is holding
+
+`/devices/:id` offers **Ask to join** rather than only naming the holder. The
+request sits pending until the holder answers it in `JoinRequestPrompt` — a real
+gate, unlike `ObserverDisclosure` beside it, which merely announces an admin who
+is already in and can be waved away. A header badge counts outstanding requests
+so a dialog closed by accident is not the only way to answer.
+
+An approval needs no client branch: the observer row lands on the next
+`device.get`, `observing` flips, and the console opens by itself. Being declined
+or timing out announces nothing on its own, so `myJoinRequest` is watched and
+toasts once on the transition.
+
+Whoever is in the session — holder, admin, or approved asker — gets the same
+console and the same popout.
+
 ### Tokens and reconnects
 
 A session token lives ~60s and is checked only when a request starts, so the
@@ -133,6 +149,7 @@ go over `XMLHttpRequest` because `fetch` still has no portable upload progress.
 with the same guard as `_app` and no shell. It joins the *same* reservation as
 the parent tab — reservations are per user+device — and never reserves or
 releases, so closing it cannot take the device away from the page that owns it.
+It opens for anyone in the session, not only the holder; only the holder renews.
 The provider fans video out per viewer with its own backlog shedding, so a
 second viewer needs no protocol support.
 

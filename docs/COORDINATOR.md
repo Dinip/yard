@@ -74,9 +74,10 @@ v11, fetch adapter, mounted at `/api/trpc`. Three procedure levels in
 | `user` | `me`, `capabilities` | ✅ |
 | `device` | `list`, `get`, `reserve`, `renew`, `release`, `myReservations` | ✅ |
 | `device` | `sessionToken`, `apps`, `launch`, `uninstall`, `reboot`, `rotate`, `adbExpose`, `adbUnexpose` | ✅ |
+| `device` | `requestJoin`, `cancelJoinRequest`, `answerJoinRequest`, `myJoinRequest`, `leaveSession` | ✅ |
 | `provider` | `list`, `create`, `update`, `remove`, `restartDevice` | ✅ |
 | `provider` | `tokens.list`/`create`/`revoke` | ✅ |
-| `admin` | `users`, `forceRelease`, `audit` | ✅ |
+| `admin` | `users`, `forceRelease`, `joinSession`, `audit` | ✅ |
 | `stream` | `devices` — live inventory updates over SSE | ✅ |
 
 `stream.devices` yields a **revision counter, not device data**. Clients respond
@@ -84,6 +85,42 @@ by invalidating `device.list`, so what they render always came from one
 consistent read. That costs an extra round trip per change and removes an entire
 class of "the UI drifted from the database" bugs. The SPA falls back to 5s
 polling when the stream is not connected, and labels which mode it is in.
+
+### Being in someone else's session
+
+A device held by another person is not a dead end. Two ways in, one destination:
+
+- `admin.joinSession` — an admin lets themselves in.
+- `device.requestJoin` → `device.answerJoinRequest` — everyone else asks, and
+  **the holder** answers. (An admin may answer too; they can already join and
+  force-release, so withholding the smaller power would be theatre.)
+
+Both end in one open `reservationObserver` row, and **that row is the
+authorization** — not the caller's role. `device.sessionToken` mints against the
+*holder's* `reservationId` with the joiner's own `userId`, and
+`requireOwnedDevice` accepts holder, observer or admin, so someone let in can
+drive the device rather than only watch it. The provider matches sessions on
+`reservationId` and needs no change for any of it.
+
+Requests expire (`JOIN_REQUEST_TTL`, `lib/reservations.ts`) and do not survive
+their reservation: `releaseActive` retires every pending row alongside the
+observer rows it closes.
+
+`device.leaveSession` is `protectedProcedure`, not admin — it closes *your own*
+observer row and nobody else's. It lived on the admin router back when only
+admins could be in a session, which made the Leave button 403 for the first
+non-admin who was ever let into one.
+
+## The reservation reaper
+
+`startReservationReaper` sweeps every 30s and releases on three conditions —
+lapsed `expiresAt`, idle `lastActivityAt`, and `startedAt` past the maximum
+duration, the latter two off unless an admin configured them. Every release goes
+through `releaseActive`, which is the one place that pushes `session.revoke` and
+writes the audit row.
+
+It also retires unanswered join requests, which release nothing and so sit
+outside those three conditions.
 
 ## The provider gateway
 
@@ -113,11 +150,6 @@ upgrade silently fail.
 coordinator instances would each be blind to the other's providers. Since
 providers dial *out*, this is not a transparent scale-out — it needs Postgres
 `LISTEN`/`NOTIFY` or a bus first. Same applies to `lib/events.ts`.
-
-## Not yet built
-
-- The reservation reaper — expires lapsed reservations and pushes
-  `session.revoke` to the owning provider. Phase 6.
 
 ## Bootstrapping the first admin
 

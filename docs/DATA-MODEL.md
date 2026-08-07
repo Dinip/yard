@@ -74,6 +74,44 @@ A *second* reserve by the **same** user renews rather than conflicts — this is
 what makes the popout window work: reservation is per user+device, so a second
 tab joins the same reservation instead of being locked out.
 
+### `reservationObserver`
+
+Somebody in a session that is not theirs. An **open row here — `left_at is
+null` — is what authorizes a non-holder on the session plane**; the admin role
+is one way to get one, not a substitute for it. `device.sessionToken` checks for
+the row and mints a token carrying *the holder's* `reservationId` with the
+joiner's own `userId`, which the provider accepts exactly like the holder's
+second tab. The provider needs no notion of any of this.
+
+```sql
+CREATE UNIQUE INDEX reservation_observer_one_open_per_user
+  ON reservation_observer (reservation_id, user_id) WHERE left_at IS NULL;
+```
+
+A table rather than a column because join and leave are events worth querying,
+and because the holder's UI names who is present.
+
+### `joinRequest`
+
+Asking the holder to be let in — the path for everyone who cannot join by
+themselves. Approving one inserts a `reservationObserver` row and does nothing
+else, so an invited user arrives exactly the way an admin's self-join does.
+
+Keyed on `reservation_id`, not `device_id`, so a request cannot outlive the
+session it was aimed at: `releaseActive` expires every pending row in the same
+statement that closes the observers.
+
+```sql
+CREATE UNIQUE INDEX join_request_one_pending_per_user
+  ON join_request (reservation_id, user_id) WHERE state = 'pending';
+```
+
+The same partial-unique trick as the two above: a double-clicked button cannot
+leave the holder two identical questions to answer. `state` distinguishes
+`denied` from `cancelled` (the asker withdrew) and `expired` (nobody answered
+within `JOIN_REQUEST_TTL`, swept by the reaper) — three different answers that
+an audit log should not have to guess between.
+
 ### `auditLog`
 
 `actorUserId`, `action`, `targetType`/`targetId`, `metadata` (jsonb), `at`.

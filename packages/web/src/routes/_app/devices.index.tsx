@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useDeviceStream } from "@/hooks/use-device-stream";
 import { trpc } from "@/lib/trpc";
+import { platformLabel } from "@/lib/utils";
 
 export const Route = createFileRoute("/_app/devices/")({
   loader: ({ context }) =>
@@ -51,11 +52,11 @@ function DevicesPage() {
               key={p}
               type="button"
               onClick={() => setPlatform(p)}
-              className={`rounded px-3 py-1 text-sm capitalize transition-colors ${
+              className={`rounded px-3 py-1 text-sm transition-colors ${
                 platform === p ? "bg-accent text-foreground" : "text-muted-foreground"
               }`}
             >
-              {p}
+              {p === "all" ? "All" : platformLabel(p)}
             </button>
           ))}
         </div>

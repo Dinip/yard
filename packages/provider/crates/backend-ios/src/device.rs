@@ -29,7 +29,7 @@ use idevice::lockdown::LockdownClient;
 use idevice::provider::{IdeviceProvider, RsdProvider as _};
 use idevice::rsd::RsdHandshake;
 use idevice::tcp::handle::AdapterHandle;
-use idevice::usbmuxd::UsbmuxdAddr;
+use idevice::usbmuxd::{Connection, UsbmuxdAddr, UsbmuxdDevice};
 use idevice::{IdeviceService as _, ReadWrite, RsdService};
 use provider_core::video::VideoPublisher;
 use tokio::sync::{watch, Mutex};
@@ -258,17 +258,59 @@ async fn usbmuxd_address() -> UsbmuxdAddr {
     }
 }
 
-/// Resolve a udid to a usbmux provider.
+/// Resolve a udid to a usbmux provider, over USB.
 pub async fn usbmux_provider(udid: &str) -> Result<Box<dyn IdeviceProvider>> {
     let address = usbmuxd_address().await;
     let mut usbmuxd = address.connect(1).await.context("connect to usbmuxd")?;
 
-    let device = usbmuxd
-        .get_device(udid)
+    let devices = usbmuxd
+        .get_devices()
         .await
-        .map_err(|err| anyhow!("usbmuxd has no device {udid}: {err:?}"))?;
+        .map_err(|err| anyhow!("list usbmuxd devices: {err:?}"))?;
+    let device = pick_usb(devices, udid)?;
 
     Ok(Box::new(device.to_provider(address, "farm-provider")))
+}
+
+/// Choose the USB entry for a udid, and refuse anything else.
+///
+/// usbmuxd lists a Wi-Fi-synced device **twice** — once `ConnectionType: "USB"`
+/// and once `"Network"` — in no guaranteed order, and `idevice`'s own
+/// `get_device` is a `find`, so which transport the whole session is built over
+/// came down to list order. That is not a fallback, it is a coin toss: the
+/// root-free CoreDeviceProxy tunnel this provider needs is built and tested
+/// over USB, and a device that silently came up over Wi-Fi fails later, in the
+/// media path, where the cause is invisible.
+///
+/// So: take USB when it is there, and when it is not, say so plainly rather
+/// than trying the transport that does not work.
+fn pick_usb(devices: Vec<UsbmuxdDevice>, udid: &str) -> Result<UsbmuxdDevice> {
+    let mut network = false;
+    let mut usb = None;
+
+    for device in devices {
+        if device.udid != udid {
+            continue;
+        }
+        match device.connection_type {
+            Connection::Usb => usb = Some(device),
+            _ => network = true,
+        }
+    }
+
+    match usb {
+        Some(device) => {
+            if network {
+                info!(udid, "device is also paired over the network; using USB");
+            }
+            Ok(device)
+        }
+        None if network => Err(anyhow!(
+            "{udid} is attached over the network only, and this provider needs USB. \
+             Plug the device in, or turn off Wi-Fi sync for it."
+        )),
+        None => Err(anyhow!("usbmuxd has no device {udid}")),
+    }
 }
 
 /// Open one RSD service over the tunnel.
@@ -336,7 +378,10 @@ struct Supervisor {
 async fn supervise(supervisor: Supervisor) {
     loop {
         if let Err(err) = run_once(&supervisor).await {
-            warn!(%err, "device session ended; retrying in {}s", RECONNECT_DELAY.as_secs());
+            // `?err` and not `%err`: anyhow's Display prints only the outermost
+            // context, so a session that died three layers down reported the
+            // same sentence whatever had actually gone wrong.
+            warn!(?err, "device session ended; retrying in {}s", RECONNECT_DELAY.as_secs());
         }
 
         // Publish the teardown before sleeping, so the provider marks the
@@ -427,8 +472,8 @@ async fn product_version(provider: &dyn IdeviceProvider) -> Result<String> {
 ///
 /// Below 17.4 the root-free tunnel can only reach the device over the
 /// RemotePairing/Wi-Fi path, and below 17 the CoreDevice display service does
-/// not exist at all. Both cases need a different deployment, so fail loudly
-/// rather than half-work.
+/// not exist at all. Neither is implemented here and there is no other backend
+/// to hand the device to, so fail loudly rather than half-work.
 fn assert_supported(product_version: &str) -> Result<()> {
     let mut parts = product_version.split('.');
     let parsed = (|| {
@@ -447,8 +492,9 @@ fn assert_supported(product_version: &str) -> Result<()> {
 
     if (major, minor) < (17, 4) {
         return Err(anyhow!(
-            "iOS {product_version} is not supported by this provider (needs 17.4+ for the \
-             root-free CoreDeviceProxy tunnel). Route this device to the legacy WDA provider."
+            "iOS {product_version} is not supported: this provider needs 17.4+, where \
+             CoreDeviceProxy builds the tunnel without root. There is no fallback path for \
+             older devices."
         ));
     }
     Ok(())
@@ -468,5 +514,47 @@ mod tests {
         // An unparseable version is a warning, not a hard stop: refusing to run
         // on a version string we simply do not recognise would be worse.
         assert!(assert_supported("").is_ok());
+    }
+
+    fn listed(udid: &str, connection_type: Connection) -> UsbmuxdDevice {
+        UsbmuxdDevice {
+            udid: udid.to_string(),
+            device_id: 1,
+            connection_type,
+        }
+    }
+
+    fn network() -> Connection {
+        Connection::Network(std::net::IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 0, 4)))
+    }
+
+    #[test]
+    fn takes_the_usb_entry_whichever_order_usbmuxd_listed_it() {
+        // The bug this guards: with both entries present, `find` took whichever
+        // came first, so the transport depended on usbmuxd's listing order.
+        for devices in [
+            vec![listed("A", Connection::Usb), listed("A", network())],
+            vec![listed("A", network()), listed("A", Connection::Usb)],
+        ] {
+            let picked = pick_usb(devices, "A").expect("USB entry is present");
+            assert_eq!(picked.connection_type, Connection::Usb);
+        }
+    }
+
+    #[test]
+    fn refuses_a_device_offered_only_over_the_network() {
+        let err = pick_usb(vec![listed("A", network())], "A").unwrap_err();
+        assert!(err.to_string().contains("network only"), "{err}");
+    }
+
+    #[test]
+    fn ignores_other_devices() {
+        assert!(pick_usb(vec![listed("B", Connection::Usb)], "A").is_err());
+        let picked = pick_usb(
+            vec![listed("B", Connection::Usb), listed("A", Connection::Usb)],
+            "A",
+        )
+        .expect("the requested udid is present");
+        assert_eq!(picked.udid, "A");
     }
 }

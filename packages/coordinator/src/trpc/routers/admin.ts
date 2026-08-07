@@ -1,11 +1,11 @@
-import { auditLog, reservation, reservationObserver, user } from "@farm/db";
+import { auditLog, reservation, user } from "@farm/db";
 import { AUDIT_ACTION_VALUES } from "@farm/protocol";
 import { TRPCError } from "@trpc/server";
-import { and, count, desc, eq, gte, ilike, inArray, isNull, lte, or } from "drizzle-orm";
+import { and, count, desc, eq, gte, ilike, inArray, lte, or } from "drizzle-orm";
 import { z } from "zod";
 import { audit } from "../../lib/audit.ts";
 import { deviceEvents } from "../../lib/events.ts";
-import { releaseActive } from "../../lib/reservations.ts";
+import { addObserver, releaseActive } from "../../lib/reservations.ts";
 import { adminProcedure, router } from "../init.ts";
 
 export const adminRouter = router({
@@ -89,16 +89,7 @@ export const adminRouter = router({
         throw new TRPCError({ code: "BAD_REQUEST", message: "You already hold this device" });
       }
 
-      await ctx.db
-        .insert(reservationObserver)
-        .values({
-          id: crypto.randomUUID(),
-          reservationId: held.id,
-          userId: ctx.user.id,
-        })
-        // Rejoining after a reload is not an error, and must not leave two open
-        // rows for one person.
-        .onConflictDoNothing();
+      await addObserver(ctx.db, held.id, ctx.user.id);
 
       await audit(ctx.db, ctx.user.id, "device.session_join", "device", input.deviceId, {
         reservationId: held.id,
@@ -106,32 +97,6 @@ export const adminRouter = router({
       });
       deviceEvents.publish();
       return { reservationId: held.id };
-    }),
-
-  leaveSession: adminProcedure
-    .input(z.object({ deviceId: z.string() }))
-    .mutation(async ({ ctx, input }) => {
-      const [held] = await ctx.db
-        .select({ id: reservation.id })
-        .from(reservation)
-        .where(and(eq(reservation.deviceId, input.deviceId), eq(reservation.state, "active")))
-        .limit(1);
-      if (!held) throw new TRPCError({ code: "NOT_FOUND" });
-
-      await ctx.db
-        .update(reservationObserver)
-        .set({ leftAt: new Date() })
-        .where(
-          and(
-            eq(reservationObserver.reservationId, held.id),
-            eq(reservationObserver.userId, ctx.user.id),
-            isNull(reservationObserver.leftAt),
-          ),
-        );
-
-      await audit(ctx.db, ctx.user.id, "device.session_leave", "device", input.deviceId);
-      deviceEvents.publish();
-      return { ok: true };
     }),
 
   /**

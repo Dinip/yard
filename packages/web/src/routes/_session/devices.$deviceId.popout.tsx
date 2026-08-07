@@ -32,6 +32,11 @@ function PopoutPage() {
   }, [device]);
 
   const mine = device?.reservation?.userId === me?.id;
+  /** Joined somebody else's session — an admin, or an approved request. */
+  const observing = Boolean(
+    me && device?.reservation?.observers.some((o) => o.userId === me.id) && !mine,
+  );
+  const inSession = mine || observing;
 
   // Kept while the reservation still exists: it is gone from `device.get` by
   // the time the revocation needs explaining.
@@ -43,7 +48,7 @@ function PopoutPage() {
 
   // Tells the parent tab to stand down, and closes this window when it asks
   // for the stream back.
-  usePopoutHeartbeat(deviceId, Boolean(mine));
+  usePopoutHeartbeat(deviceId, inSession);
 
   if (!device) return null;
 
@@ -70,7 +75,7 @@ function PopoutPage() {
           lastActivityAt={device.reservation?.lastActivityAt}
         />
       )}
-      {mine ? (
+      {inSession ? (
         <DeviceConsole
           deviceId={deviceId}
           active
@@ -81,7 +86,10 @@ function PopoutPage() {
         />
       ) : (
         <div className="flex flex-1 items-center justify-center text-center text-muted-foreground text-sm">
-          <p>You do not hold this device. Reserve it in the main window and reopen this one.</p>
+          <p>
+            You are not in this device's session. Reserve it — or ask to join — in the main window,
+            then reopen this one.
+          </p>
         </div>
       )}
     </div>

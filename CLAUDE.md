@@ -87,6 +87,10 @@ See docs/DEVELOPMENT.md.
   what makes the popout window work.
 - **Providers dial out.** The coordinator never connects to a provider. This is
   why providers work behind NAT.
+- **An open `reservationObserver` row is what authorizes a non-holder** on the
+  session plane — the admin role is one way to get one (`admin.joinSession`),
+  the holder approving a `joinRequest` is the other, and neither is a substitute
+  for the row itself.
 - **Session tokens are Ed25519 JWTs verified by the provider against a cached
   JWKS.** A provider keeps serving an authorized session across a coordinator
   restart; revocation is a control-plane push, not a token-expiry side effect.
