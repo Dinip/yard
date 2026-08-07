@@ -4,7 +4,15 @@
  * DATABASE_URL (docker compose -f docker-compose.dev.yml up -d).
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { device, provider, reservation, reservationObserver, setting, user } from "@farm/db";
+import {
+  device,
+  joinRequest,
+  provider,
+  reservation,
+  reservationObserver,
+  setting,
+  user,
+} from "@farm/db";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { db } from "../src/db.ts";
 import { startReservationReaper } from "../src/lib/reservations.ts";
@@ -264,6 +272,143 @@ describe("joining someone else's session", () => {
       .where(eq(reservationObserver.reservationId, held.id));
     expect(rows).toHaveLength(1);
     expect(rows[0]?.leftAt).not.toBeNull();
+  });
+});
+
+/**
+ * Asking to join, for everyone who is not an admin.
+ *
+ * The whole point is that approval routes through the *same* observer row the
+ * admin path creates, so what has to hold is that a plain user ends up with a
+ * session token — and does not, on any other answer.
+ */
+describe("asking to join a session", () => {
+  test("an approved request gets a non-admin a token against the holder's reservation", async () => {
+    await resetDevice();
+    const holder = callerFor(USERS[0]);
+    const held = await holder.device.reserve({ deviceId: DEVICE_ID });
+    const asker = callerFor(USERS[1]);
+
+    await expect(asker.device.sessionToken({ deviceId: DEVICE_ID })).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
+
+    const request = await asker.device.requestJoin({ deviceId: DEVICE_ID, note: "need it" });
+    expect(request.state).toBe("pending");
+
+    // The holder is the one who sees it, and the one who answers.
+    const seen = await holder.device.get({ id: DEVICE_ID });
+    expect(seen.reservation?.joinRequests.map((r) => r.userId)).toEqual([USERS[1]]);
+
+    await holder.device.answerJoinRequest({ requestId: request.id, approve: true });
+
+    const token = await asker.device.sessionToken({ deviceId: DEVICE_ID });
+    const claims = JSON.parse(atob(token.token.split(".")[1]!.replace(/-/g, "+")));
+    expect(claims.reservationId).toBe(held.id);
+    expect(claims.userId).toBe(USERS[1]);
+
+    // The holder keeps the device, and now names who is in with them.
+    const after = await holder.device.get({ id: DEVICE_ID });
+    expect(after.reservation?.userId).toBe(USERS[0]);
+    expect(after.reservation?.observers.map((o) => o.userId)).toEqual([USERS[1]]);
+    expect(after.reservation?.joinRequests).toEqual([]);
+  });
+
+  test("a declined request lets nobody in", async () => {
+    await resetDevice();
+    const holder = callerFor(USERS[0]);
+    await holder.device.reserve({ deviceId: DEVICE_ID });
+    const asker = callerFor(USERS[1]);
+
+    const request = await asker.device.requestJoin({ deviceId: DEVICE_ID });
+    await holder.device.answerJoinRequest({ requestId: request.id, approve: false });
+
+    await expect(asker.device.sessionToken({ deviceId: DEVICE_ID })).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
+    // And the asker can tell why, which is the only way they would know.
+    expect(await asker.device.myJoinRequest({ deviceId: DEVICE_ID })).toMatchObject({
+      state: "denied",
+    });
+    // Answering twice is not a second chance.
+    await expect(
+      holder.device.answerJoinRequest({ requestId: request.id, approve: true }),
+    ).rejects.toMatchObject({ code: "PRECONDITION_FAILED" });
+  });
+
+  test("asking twice is asking once", async () => {
+    await resetDevice();
+    await callerFor(USERS[0]).device.reserve({ deviceId: DEVICE_ID });
+    const asker = callerFor(USERS[1]);
+
+    // Two tabs, or one impatient double-click.
+    const [first, second] = await Promise.all([
+      asker.device.requestJoin({ deviceId: DEVICE_ID }),
+      asker.device.requestJoin({ deviceId: DEVICE_ID }),
+    ]);
+    expect(second.id).toBe(first.id);
+
+    const seen = await callerFor(USERS[0]).device.get({ id: DEVICE_ID });
+    expect(seen.reservation?.joinRequests).toHaveLength(1);
+  });
+
+  test("only the holder answers, and the holder cannot ask", async () => {
+    await resetDevice();
+    await callerFor(USERS[0]).device.reserve({ deviceId: DEVICE_ID });
+
+    const request = await callerFor(USERS[1]).device.requestJoin({ deviceId: DEVICE_ID });
+
+    await expect(
+      callerFor(USERS[2]).device.answerJoinRequest({ requestId: request.id, approve: true }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    // Not even the person who asked.
+    await expect(
+      callerFor(USERS[1]).device.answerJoinRequest({ requestId: request.id, approve: true }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+    await expect(
+      callerFor(USERS[0]).device.requestJoin({ deviceId: DEVICE_ID }),
+    ).rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+
+  test("releasing the device leaves no request to answer", async () => {
+    await resetDevice();
+    const holder = callerFor(USERS[0]);
+    const held = await holder.device.reserve({ deviceId: DEVICE_ID });
+    const request = await callerFor(USERS[1]).device.requestJoin({ deviceId: DEVICE_ID });
+
+    await holder.device.release({ deviceId: DEVICE_ID });
+
+    const [row] = await db.select().from(joinRequest).where(eq(joinRequest.id, request.id));
+    expect(row?.state).toBe("expired");
+    expect(row?.reservationId).toBe(held.id);
+  });
+
+  test("the reaper retires a request nobody answered", async () => {
+    await resetDevice();
+    await callerFor(USERS[0]).device.reserve({ deviceId: DEVICE_ID });
+    const request = await callerFor(USERS[1]).device.requestJoin({ deviceId: DEVICE_ID });
+
+    // Backdate rather than waiting out the TTL.
+    await db
+      .update(joinRequest)
+      .set({ expiresAt: new Date(Date.now() - 1000) })
+      .where(eq(joinRequest.id, request.id));
+
+    const stop = startReservationReaper(db);
+    await Bun.sleep(200);
+    stop();
+
+    const [row] = await db.select().from(joinRequest).where(eq(joinRequest.id, request.id));
+    expect(row?.state).toBe("expired");
+    // The reservation itself was never at risk.
+    const [held] = await db
+      .select()
+      .from(reservation)
+      .where(eq(reservation.deviceId, DEVICE_ID))
+      .orderBy(desc(reservation.startedAt))
+      .limit(1);
+    expect(held?.state).toBe("active");
   });
 });
 

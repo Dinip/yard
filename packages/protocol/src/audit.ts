@@ -29,9 +29,12 @@ export const AUDIT_ACTIONS = [
     group: "Reservations",
   },
 
-  // Sessions — an admin present in someone else's.
+  // Sessions — somebody present in someone else's.
   { value: "device.session_join", label: "Joined a session", group: "Sessions" },
   { value: "device.session_leave", label: "Left a session", group: "Sessions" },
+  { value: "device.session_request", label: "Asked to join", group: "Sessions" },
+  { value: "device.session_request_approved", label: "Join approved", group: "Sessions" },
+  { value: "device.session_request_denied", label: "Join denied", group: "Sessions" },
 
   // Things done to a device.
   { value: "device.install", label: "Installs", group: "Devices" },

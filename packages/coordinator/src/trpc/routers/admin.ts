@@ -5,7 +5,7 @@ import { and, count, desc, eq, gte, ilike, inArray, isNull, lte, or } from "driz
 import { z } from "zod";
 import { audit } from "../../lib/audit.ts";
 import { deviceEvents } from "../../lib/events.ts";
-import { releaseActive } from "../../lib/reservations.ts";
+import { addObserver, releaseActive } from "../../lib/reservations.ts";
 import { adminProcedure, router } from "../init.ts";
 
 export const adminRouter = router({
@@ -89,16 +89,7 @@ export const adminRouter = router({
         throw new TRPCError({ code: "BAD_REQUEST", message: "You already hold this device" });
       }
 
-      await ctx.db
-        .insert(reservationObserver)
-        .values({
-          id: crypto.randomUUID(),
-          reservationId: held.id,
-          userId: ctx.user.id,
-        })
-        // Rejoining after a reload is not an error, and must not leave two open
-        // rows for one person.
-        .onConflictDoNothing();
+      await addObserver(ctx.db, held.id, ctx.user.id);
 
       await audit(ctx.db, ctx.user.id, "device.session_join", "device", input.deviceId, {
         reservationId: held.id,

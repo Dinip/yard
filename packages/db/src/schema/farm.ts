@@ -36,6 +36,22 @@ export const deviceStatusEnum = pgEnum("device_status", [
 
 export const reservationStateEnum = pgEnum("reservation_state", ["active", "released", "expired"]);
 
+/**
+ * How somebody's ask to join a session ended.
+ *
+ * `cancelled` and `expired` are kept apart from `denied` on purpose: the
+ * requester withdrawing, nobody answering in time, and the holder saying no are
+ * three different answers to the same question, and the audit log should not
+ * have to guess which one happened.
+ */
+export const joinRequestStateEnum = pgEnum("join_request_state", [
+  "pending",
+  "approved",
+  "denied",
+  "cancelled",
+  "expired",
+]);
+
 export const provider = pgTable("provider", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
@@ -159,15 +175,19 @@ export const reservation = pgTable(
 );
 
 /**
- * An admin watching (and driving) somebody else's session.
+ * Somebody watching (and driving) another person's session.
+ *
+ * An open row here is what authorizes a non-holder on the session plane. There
+ * are two ways to get one and they produce the same row: an admin joining by
+ * themselves, or the holder approving a `joinRequest`.
  *
  * A table rather than a column on `reservation` because join and leave are
  * events worth querying — "who was in this session, and when" is an audit
  * question — and because the holder's UI names the people who are present.
  *
  * The provider needs no notion of this at all: it matches sessions on
- * `reservationId`, so an admin holding a token minted against the holder's
- * reservation is accepted exactly like the holder's second tab.
+ * `reservationId`, so a token minted against the holder's reservation is
+ * accepted exactly like the holder's second tab.
  */
 export const reservationObserver = pgTable(
   "reservation_observer",
@@ -189,6 +209,46 @@ export const reservationObserver = pgTable(
     uniqueIndex("reservation_observer_one_open_per_user")
       .on(t.reservationId, t.userId)
       .where(sql`${t.leftAt} is null`),
+  ],
+);
+
+/**
+ * Somebody asking the holder to let them into a session.
+ *
+ * Approving one inserts a `reservationObserver` row and nothing else, so an
+ * invited user arrives by exactly the path an admin's self-join already takes —
+ * which is what makes the claim "the provider needs no change" hold here too.
+ *
+ * Keyed on the reservation rather than the device so a request cannot outlive
+ * the session it was aimed at: when the reservation ends, every pending row
+ * against it is expired in the same statement that closes the observers.
+ */
+export const joinRequest = pgTable(
+  "join_request",
+  {
+    id: text("id").primaryKey(),
+    reservationId: text("reservation_id")
+      .notNull()
+      .references(() => reservation.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    state: joinRequestStateEnum("state").notNull().default("pending"),
+    /** The requester's one line of "why", shown to the holder. */
+    note: text("note"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    expiresAt: timestamp("expires_at").notNull(),
+    decidedAt: timestamp("decided_at"),
+    decidedBy: text("decided_by").references(() => user.id, { onDelete: "set null" }),
+  },
+  (t) => [
+    index("join_request_reservation_idx").on(t.reservationId),
+    // The same partial-unique trick as the observer table: a double-clicked
+    // button must not be able to leave two rows the holder has to answer twice.
+    uniqueIndex("join_request_one_pending_per_user")
+      .on(t.reservationId, t.userId)
+      .where(sql`${t.state} = 'pending'`),
+    index("join_request_pending_expiry_idx").on(t.expiresAt).where(sql`${t.state} = 'pending'`),
   ],
 );
 
@@ -244,5 +304,6 @@ export type Reservation = typeof reservation.$inferSelect;
 export type AuditLog = typeof auditLog.$inferSelect;
 export type Setting = typeof setting.$inferSelect;
 export type ReservationObserver = typeof reservationObserver.$inferSelect;
+export type JoinRequest = typeof joinRequest.$inferSelect;
 export type Platform = (typeof platformEnum.enumValues)[number];
 export type DeviceStatus = (typeof deviceStatusEnum.enumValues)[number];

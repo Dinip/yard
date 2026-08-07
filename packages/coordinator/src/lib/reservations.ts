@@ -1,5 +1,5 @@
 import type { Database } from "@farm/db";
-import { device, reservation, reservationObserver } from "@farm/db";
+import { device, joinRequest, reservation, reservationObserver } from "@farm/db";
 import type { AuditAction } from "@farm/protocol";
 import { and, eq, inArray, isNull, lt } from "drizzle-orm";
 import { providers } from "../gateway/registry.ts";
@@ -60,6 +60,8 @@ export async function releaseActive(
 
   if (released.length === 0) return [];
 
+  const reservationIds = released.map((row) => row.id);
+
   // An observer's presence is scoped to the session they joined; the session
   // is over.
   await db
@@ -67,13 +69,14 @@ export async function releaseActive(
     .set({ leftAt: new Date() })
     .where(
       and(
-        inArray(
-          reservationObserver.reservationId,
-          released.map((row) => row.id),
-        ),
+        inArray(reservationObserver.reservationId, reservationIds),
         isNull(reservationObserver.leftAt),
       ),
     );
+
+  // And so is a request to join it. Leaving one pending would let the holder
+  // answer, after the fact, a question about a session that no longer exists.
+  await expirePendingRequests(db, reservationIds);
 
   const ids = released.map((row) => row.deviceId);
   await db
@@ -109,6 +112,44 @@ export async function releaseActive(
 
   deviceEvents.publish();
   return released;
+}
+
+/**
+ * Put somebody into a session, with full control.
+ *
+ * The one way presence is created, whether an admin joined by themselves or the
+ * holder approved a request. Both must produce exactly the same row, because
+ * that row is what `device.sessionToken` treats as the grant.
+ *
+ * Rejoining after a reload is not an error, and must not leave two open rows
+ * for one person — hence the conflict clause, which the partial unique index
+ * on `(reservation_id, user_id) where left_at is null` backs.
+ */
+export async function addObserver(db: Database, reservationId: string, userId: string) {
+  await db
+    .insert(reservationObserver)
+    .values({ id: crypto.randomUUID(), reservationId, userId })
+    .onConflictDoNothing();
+}
+
+/**
+ * How long an unanswered request to join stays answerable.
+ *
+ * A constant rather than a `SETTINGS` key: this is the span in which a holder
+ * plausibly notices a dialog, not policy anyone needs to tune, and a stale
+ * request on screen is worse than a lapsed one.
+ */
+export const JOIN_REQUEST_TTL = 120_000;
+
+/** Retire every pending request against these reservations. */
+async function expirePendingRequests(db: Database, reservationIds: string[]) {
+  if (reservationIds.length === 0) return;
+  await db
+    .update(joinRequest)
+    .set({ state: "expired", decidedAt: new Date() })
+    .where(
+      and(inArray(joinRequest.reservationId, reservationIds), eq(joinRequest.state, "pending")),
+    );
 }
 
 /** How often the reaper looks. */
@@ -170,6 +211,9 @@ async function sweepCondition(
  * coordinators running it would not double-release: the second finds no rows.
  * That is worth keeping true even though only one coordinator is supported
  * today.
+ *
+ * It also retires unanswered requests to join, which release nothing and so sit
+ * outside the three conditions above.
  */
 export function startReservationReaper(db: Database) {
   const sweep = async () => {
@@ -203,6 +247,17 @@ export function startReservationReaper(db: Database) {
           auditAction: "device.reservation_max_duration",
         });
       }
+
+      // Unanswered requests to join. A plain UPDATE rather than a
+      // `sweepCondition`: nothing is being released, so there is no session to
+      // revoke and nothing worth an audit row — the ask is already logged.
+      const lapsed = await db
+        .update(joinRequest)
+        .set({ state: "expired", decidedAt: now })
+        .where(and(eq(joinRequest.state, "pending"), lt(joinRequest.expiresAt, now)))
+        .returning({ id: joinRequest.id });
+      // Both ends are showing a request that is no longer answerable.
+      if (lapsed.length) deviceEvents.publish();
     } catch (error) {
       // A failed sweep must not kill the timer: the next one will find the
       // same rows, and a coordinator that silently stopped reaping is exactly
