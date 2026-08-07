@@ -1016,7 +1016,7 @@ tab surviving the popout handover.
 
 ---
 
-## Phase 14 — Device metrics 🚧
+## Phase 14 — Device metrics ✅
 
 *Done when: a Prometheus server scrapes CPU, memory, temperature and per-app
 usage off every device a provider owns, and a stale device's series disappear
@@ -1043,8 +1043,8 @@ provider-local, in the spirit of Phase 13's recorder.
 | Exporter + listener | ✅ | `provider-core/src/metrics.rs` |
 | Android CPU / memory / thermal | ✅ | `backend-android/src/lib.rs` |
 | Android per-app CPU + PSS | ✅ | `backend-android/src/lib.rs` |
-| iOS diagnostics-relay probe | ⬜ | `backend-ios/examples/` |
-| iOS battery | ⬜ | `backend-ios/src/lib.rs` |
+| iOS diagnostics-relay probe | ✅ | `backend-ios/examples/` |
+| iOS battery | ✅ | `backend-ios/src/lib.rs` |
 | Dev observability stack | ✅ | `docker-compose.dev.yml` |
 
 ### Verified with no hardware
@@ -1063,6 +1063,17 @@ is wrong: samples are gathered device-major, so families arrived interleaved and
 each was re-declared per device. Prometheus requires a family's samples contiguous
 under one `# HELP`/`# TYPE`. The encoder now buffers per family, and there is a
 unit test asserting the exact regrouped bytes.
+
+### Still to confirm on hardware
+
+Everything above is verified against mock devices; the device-specific reads are
+not yet exercised on real ones. On a real Android: `/proc/stat`, `/proc/meminfo`,
+`dumpsys battery`'s temperature line, thermal zones — expect SELinux denial on
+most retail devices, and confirm that degrades to no series rather than an error —
+and `dumpsys meminfo`'s comma-grouped PSS values. On a real iPhone: run
+`cargo run -p backend-ios --example diagnostics_probe -- <udid>`, check the
+reported level against Settings, confirm the temperature unit, and confirm
+`info()` makes at most one relay round trip a minute.
 
 ### Decisions worth not relitigating
 

@@ -234,6 +234,24 @@ crates/backend-ios/src/
 └── lib.rs      the pointer state machine and the DeviceBackend impl
 ```
 
+**Battery, and only battery.** The gas gauge (`AppleSmartBattery`, via the
+diagnostics relay) gives level, charging state and temperature. iOS has no CPU or
+memory to give: `host_statistics`/`vm_statistics` are available to on-device code
+only, and the relay is a lockdown service with a fixed dictionary and no `sysctl`
+surface. `examples/diagnostics_probe.rs` is how that was checked, against a real
+device — the negative result is recorded so the question stops being re-asked.
+Those gauges are simply **absent** for an iPhone, which is what an absent
+Prometheus series is for; `metrics()` answers `Ok` with mostly `None` rather than
+`Unsupported`, so it does not read as an error.
+
+Battery was previously not reported at all, because a relay round trip is far too
+expensive on `info()`'s 15s cadence. It is now cached with a 60s TTL and shared:
+the metrics sampler refreshes it on its own cadence and `info()` rides on that,
+so the worst case is one round trip a minute instead of four. Key spellings and
+units vary by iOS version — temperature is usually hundredths of a degree and
+sometimes tenths — which is why the probe exists and why the unit is guessed by
+magnitude with implausible results dropped.
+
 iOS 17.4+ only: below that the root-free `CoreDeviceProxy` tunnel does not
 exist, and bring-up fails loudly rather than half-working. There is no other
 iOS backend to hand an older device to.
