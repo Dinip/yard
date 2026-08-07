@@ -41,8 +41,8 @@ use idevice::services::afc::{opcode::AfcFopenMode, AfcClient};
 use idevice::services::house_arrest::HouseArrestClient;
 use idevice::{IdeviceService as _, ReadWrite};
 use provider_core::backend::{
-    join_path, parent_of, BackendError, DeviceBackend, DeviceInfo, InputEvent, ProgressSink,
-    Result as BackendResult,
+    join_path, parent_of, AppFilter, BackendError, DeviceBackend, DeviceInfo, DeviceMetrics,
+    InputEvent, ProgressSink, Result as BackendResult,
 };
 use provider_core::video::{channel, VideoGeometry, VideoHandle, VideoPublisher};
 use tokio::sync::Mutex;
@@ -138,6 +138,90 @@ const CONTACT_MAX: Duration = Duration::from_secs(10);
 
 /// How long to wait for a session when a request needs one.
 const SESSION_WAIT: Duration = Duration::from_secs(20);
+
+/// How stale a battery reading `info()` will accept before paying for a fresh
+/// diagnostics round trip.
+///
+/// The poll loop runs every 15s; without this, iOS would make four relay round
+/// trips a minute for a number that moves by fractions of a percent. Metrics
+/// sampling refreshes it on its own cadence, so with metrics enabled at any
+/// interval below this, `info()` never makes one at all.
+const BATTERY_TTL: Duration = Duration::from_secs(60);
+
+/// Which diagnostics call a battery reading came from. See [`IosBackend::read_battery`]
+/// for why the registry is tried first.
+#[derive(Debug, Clone, Copy)]
+enum BatterySource {
+    Registry,
+    GasGauge,
+}
+
+/// Reads a gas-gauge or `AppleSmartBattery` dictionary.
+///
+/// Key spellings and units vary by iOS version, which is what
+/// `examples/diagnostics_probe.rs` exists to settle on a real device. Percentage
+/// is preferred where offered; capacity over max capacity is the fallback, since
+/// `MaxCapacity` is the *design* capacity on some versions and the current full
+/// charge on others — either way it is the right denominator for a charge level.
+pub fn parse_battery(values: &plist::Dictionary) -> BatteryReading {
+    // `gasguage` nests its answer under a `GasGauge` key, the same shape
+    // `mobilegestalt` uses. `ioregistry` does not nest, so this unwraps when
+    // there is something to unwrap and passes through otherwise.
+    let values = values
+        .get("GasGauge")
+        .and_then(plist::Value::as_dictionary)
+        .unwrap_or(values);
+
+    let number = |key: &str| -> Option<f64> {
+        values.get(key).and_then(|value| {
+            value
+                .as_real()
+                .or_else(|| value.as_signed_integer().map(|n| n as f64))
+                .or_else(|| value.as_unsigned_integer().map(|n| n as f64))
+        })
+    };
+    let boolean = |key: &str| -> Option<bool> {
+        values.get(key).and_then(|value| {
+            value
+                .as_boolean()
+                .or_else(|| value.as_unsigned_integer().map(|n| n != 0))
+        })
+    };
+
+    let level = number("CurrentCapacity")
+        .and_then(|current| match number("MaxCapacity") {
+            Some(max) if max > 0.0 => Some(current / max),
+            // No usable denominator: some versions report `CurrentCapacity` as
+            // an outright percentage instead. Anything above 100 there is a raw
+            // mAh reading with its `MaxCapacity` missing, which is unusable —
+            // better no series than a battery pinned at 100%.
+            _ => (current <= 100.0).then_some(current / 100.0),
+        })
+        .map(|level| level.clamp(0.0, 1.0));
+
+    BatteryReading {
+        level,
+        charging: boolean("IsCharging").or_else(|| boolean("ExternalConnected")),
+        temperature_c: number("Temperature").and_then(scale_battery_temperature),
+    }
+}
+
+/// The gas gauge reports temperature in hundredths of a degree, and a few iOS
+/// versions in tenths. Guessing by magnitude is the only option — the same
+/// problem, and the same shape of answer, as Android's thermal zones.
+fn scale_battery_temperature(raw: f64) -> Option<f64> {
+    let celsius = if raw.abs() > 1000.0 {
+        raw / 100.0
+    } else if raw.abs() > 100.0 {
+        raw / 10.0
+    } else {
+        raw
+    };
+
+    // A phone being tested is neither freezing nor boiling; outside this the
+    // unit guess was wrong and no reading beats a wrong one.
+    (-10.0..=150.0).contains(&celsius).then_some(celsius)
+}
 
 /// Per-device settings from `provider.yaml`'s `options:` map.
 #[derive(Clone, Debug)]
@@ -244,7 +328,8 @@ impl Geometry {
     }
 
     pub fn set_rotation(&self, degrees: i64) {
-        self.rotation.store(degrees.rem_euclid(360), Ordering::Relaxed);
+        self.rotation
+            .store(degrees.rem_euclid(360), Ordering::Relaxed);
         self.known.store(true, Ordering::Relaxed);
     }
 
@@ -267,6 +352,23 @@ pub struct IosBackend {
     publisher: VideoPublisher,
     geometry: Geometry,
     pointer: Mutex<Pointer>,
+    /// Last diagnostics-relay battery read, with the time it was taken.
+    ///
+    /// A relay round trip is far too expensive to make on `info()`'s 15s
+    /// cadence, which is why iOS reported no battery at all until now. Sharing
+    /// one cached read between `info()` and `metrics()` amortises it: the worst
+    /// case is one round trip a minute, and with metrics enabled at any interval
+    /// under [`BATTERY_TTL`] `info()` never makes one at all.
+    battery: Mutex<Option<(Instant, BatteryReading)>>,
+}
+
+/// What the gas gauge tells us about the battery.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BatteryReading {
+    /// 0..1, to match every other backend and the protocol.
+    pub level: Option<f64>,
+    pub charging: Option<bool>,
+    pub temperature_c: Option<f64>,
 }
 
 impl IosBackend {
@@ -287,6 +389,7 @@ impl IosBackend {
             publisher,
             geometry,
             pointer: Mutex::new(Pointer::default()),
+            battery: Mutex::new(None),
         })
     }
 
@@ -535,6 +638,96 @@ impl IosBackend {
         }
     }
 
+    /// The cached battery, refreshing it when `max_age` has passed.
+    ///
+    /// `metrics()` passes `ZERO` — it is already on its own, slower cadence —
+    /// and `info()` passes [`BATTERY_TTL`], so the 15s poll loop does not turn
+    /// into four relay round trips a minute.
+    async fn battery(&self, max_age: Duration) -> BatteryReading {
+        let mut cached = self.battery.lock().await;
+        if let Some((at, reading)) = *cached {
+            if at.elapsed() < max_age {
+                return reading;
+            }
+        }
+
+        match self.read_battery().await {
+            Ok(reading) => {
+                *cached = Some((Instant::now(), reading));
+                reading
+            }
+            Err(err) => {
+                debug!(%err, "battery unavailable — reporting unknown");
+                // The stale reading is dropped rather than re-served: a phone
+                // that has gone away must stop reporting a charge level.
+                *cached = None;
+                BatteryReading::default()
+            }
+        }
+    }
+
+    /// Reads the battery, preferring the registry entry over the gas gauge.
+    ///
+    /// That order is the opposite of what the service names suggest, and it was
+    /// settled by `examples/diagnostics_probe.rs` against an iPhone 13: `gasguage`
+    /// answers a thin summary — `CycleCount`, `FullChargeCapacity`, `Status`, all
+    /// nested under a `GasGauge` key — with **no charge level in it at all**.
+    /// `ioregistry` on `AppleSmartBattery` is where `CurrentCapacity`,
+    /// `MaxCapacity` and `IsCharging` actually live.
+    ///
+    /// Each source is judged by whether a level came out of it, not by whether
+    /// the dictionary was non-empty: the gas gauge's reply is non-empty and
+    /// useless, so an emptiness check would take it and never fall through.
+    async fn read_battery(&self) -> Result<BatteryReading> {
+        let provider = device::usbmux_provider(&self.options.udid).await?;
+
+        let registry = self
+            .relay_battery(&*provider, BatterySource::Registry)
+            .await;
+        if let Ok(reading) = &registry {
+            if reading.level.is_some() {
+                return registry;
+            }
+        }
+
+        // Kept as a fallback rather than deleted: it is the documented battery
+        // service, and a version that populates it properly should still work.
+        let gauge = self
+            .relay_battery(&*provider, BatterySource::GasGauge)
+            .await;
+        match (&gauge, registry) {
+            (Ok(reading), _) if reading.level.is_some() => gauge,
+            // Neither had a level. Prefer whichever answered at all, so a
+            // temperature or charging flag on its own is not thrown away.
+            (_, Ok(reading)) => Ok(reading),
+            _ => gauge,
+        }
+    }
+
+    async fn relay_battery(
+        &self,
+        provider: &dyn idevice::provider::IdeviceProvider,
+        source: BatterySource,
+    ) -> Result<BatteryReading> {
+        let mut relay = DiagnosticsRelayClient::connect(provider)
+            .await
+            .map_err(|err| anyhow!("diagnostics relay connect: {err:?}"))?;
+
+        let values = match source {
+            BatterySource::Registry => relay
+                .ioregistry(None, Some("AppleSmartBattery"), None)
+                .await
+                .map_err(|err| anyhow!("ioregistry: {err:?}"))?,
+            BatterySource::GasGauge => relay
+                .gasguage()
+                .await
+                .map_err(|err| anyhow!("gasguage: {err:?}"))?,
+        }
+        .ok_or_else(|| anyhow!("{source:?} returned nothing"))?;
+
+        Ok(parse_battery(&values))
+    }
+
     async fn try_display(&self) -> Result<Display> {
         let provider = device::usbmux_provider(&self.options.udid).await?;
         let mut relay = DiagnosticsRelayClient::connect(&*provider)
@@ -586,6 +779,7 @@ impl IosBackend {
 #[async_trait]
 impl DeviceBackend for IosBackend {
     async fn info(&self) -> BackendResult<DeviceInfo> {
+        let battery = self.battery(BATTERY_TTL).await;
         let identity = self
             .host
             .identity()
@@ -615,10 +809,37 @@ impl DeviceBackend for IosBackend {
             security_patch: None,
             abi_list: None,
             display: self.display().await,
-            // Battery state needs a diagnostics round-trip of its own; the poll
-            // loop calls `info` every 15s and this is not worth that cost yet.
-            battery_level: None,
-            battery_state: None,
+            // Shared with `metrics()` through a TTL cache — see `battery()`. The
+            // round trip is worth making now precisely *because* it is amortised
+            // rather than paid on every 15s poll.
+            battery_level: battery.level,
+            battery_state: battery
+                .charging
+                .map(|charging| if charging { "charging" } else { "discharging" }.to_owned()),
+        })
+    }
+
+    /// Battery only.
+    ///
+    /// iOS has no CPU or memory to give: `host_statistics`/`vm_statistics` are
+    /// available to on-device code only, and the diagnostics relay is a lockdown
+    /// service with a fixed dictionary and no `sysctl` surface —
+    /// `examples/diagnostics_probe.rs` is how that was checked. Those gauges are
+    /// therefore simply absent for an iPhone, which is what an absent Prometheus
+    /// series is for.
+    ///
+    /// This answers `Ok` with mostly `None` rather than `Unsupported`, so it does
+    /// not advance the exporter's error counter: there is nothing wrong here.
+    async fn metrics(&self, _apps: &AppFilter) -> BackendResult<DeviceMetrics> {
+        // Duration::ZERO: the metrics sampler is already on its own, slower
+        // cadence, so it always takes a fresh reading and `info()` rides on it.
+        let battery = self.battery(Duration::ZERO).await;
+
+        Ok(DeviceMetrics {
+            battery_level: battery.level,
+            battery_charging: battery.charging,
+            battery_temperature_c: battery.temperature_c,
+            ..Default::default()
         })
     }
 
@@ -856,10 +1077,15 @@ impl DeviceBackend for IosBackend {
                     .map_err(|err| BackendError::Failed(format!("afc connect: {err:?}")))?;
                 (afc, MEDIA_PREFIX.to_owned(), inner)
             }
-            IosPath::App { bundle, path: inner } => {
+            IosPath::App {
+                bundle,
+                path: inner,
+            } => {
                 let house = HouseArrestClient::connect(&*provider)
                     .await
-                    .map_err(|err| BackendError::Failed(format!("house_arrest connect: {err:?}")))?;
+                    .map_err(|err| {
+                        BackendError::Failed(format!("house_arrest connect: {err:?}"))
+                    })?;
                 // Documents rather than the whole container: the rest is denied
                 // for an app that has not opted in, and the error that produces
                 // says nothing a user can act on.
@@ -916,10 +1142,15 @@ impl DeviceBackend for IosBackend {
                     .map_err(|err| BackendError::Failed(format!("afc connect: {err:?}")))?;
                 (afc, inner)
             }
-            IosPath::App { bundle, path: inner } => {
+            IosPath::App {
+                bundle,
+                path: inner,
+            } => {
                 let house = HouseArrestClient::connect(&*provider)
                     .await
-                    .map_err(|err| BackendError::Failed(format!("house_arrest connect: {err:?}")))?;
+                    .map_err(|err| {
+                        BackendError::Failed(format!("house_arrest connect: {err:?}"))
+                    })?;
                 let afc = house.vend_documents(bundle.clone()).await.map_err(|err| {
                     BackendError::Failed(format!("{bundle} does not share files: {err:?}"))
                 })?;
@@ -948,7 +1179,9 @@ impl DeviceBackend for IosBackend {
                 break;
             }
             written += chunk.len() as u64;
-            file.write_all(&chunk).await.context("writing staged file")?;
+            file.write_all(&chunk)
+                .await
+                .context("writing staged file")?;
             if chunk.len() < AFC_CHUNK {
                 break;
             }
@@ -1054,7 +1287,10 @@ mod tests {
 
         // Media, and its walk back up to the synthetic root.
         assert!(matches!(IosPath::parse("media:/DCIM"), IosPath::Media(p) if p == "/DCIM"));
-        assert_eq!(IosPath::parent("media:/DCIM/100APPLE").as_deref(), Some("media:/DCIM"));
+        assert_eq!(
+            IosPath::parent("media:/DCIM/100APPLE").as_deref(),
+            Some("media:/DCIM")
+        );
         assert_eq!(IosPath::parent("media:/DCIM").as_deref(), Some("media:/"));
         assert_eq!(IosPath::parent("media:/").as_deref(), Some("/"));
 
@@ -1114,5 +1350,115 @@ mod tests {
         let mut options = serde_json::Map::new();
         options.insert("motion_idr".into(), serde_json::json!("yes"));
         assert!(IosOptions::parse("udid-1", &options).is_err());
+    }
+
+    fn dict(entries: &[(&str, plist::Value)]) -> plist::Dictionary {
+        let mut out = plist::Dictionary::new();
+        for (key, value) in entries {
+            out.insert((*key).to_owned(), value.clone());
+        }
+        out
+    }
+
+    /// The real `ioregistry AppleSmartBattery` shape, off an iPhone 13: capacity
+    /// is already a percentage, and there is **no Temperature key at all**.
+    #[test]
+    fn the_real_registry_shape_yields_a_level_and_a_state_but_no_temperature() {
+        let reading = parse_battery(&dict(&[
+            ("CurrentCapacity", 100u64.into()),
+            ("MaxCapacity", 100u64.into()),
+            ("IsCharging", false.into()),
+            ("ExternalConnected", true.into()),
+            ("CycleCount", 53u64.into()),
+        ]));
+
+        assert_eq!(reading.level, Some(1.0));
+        assert_eq!(reading.charging, Some(false));
+        assert_eq!(reading.temperature_c, None);
+    }
+
+    /// The real `gasguage` reply, off the same phone: nested under `GasGauge`,
+    /// and carrying no charge level. It must unwrap cleanly *and* report no
+    /// level, which is what makes `read_battery` fall through to the registry.
+    #[test]
+    fn the_real_gas_gauge_shape_unwraps_but_offers_no_level() {
+        let mut gauge = plist::Dictionary::new();
+        gauge.insert(
+            "GasGauge".into(),
+            plist::Value::Dictionary(dict(&[
+                ("CycleCount", 53u64.into()),
+                ("FullChargeCapacity", 100u64.into()),
+                ("Status", "Success".into()),
+            ])),
+        );
+
+        let reading = parse_battery(&gauge);
+
+        assert_eq!(reading.level, None);
+        assert_eq!(reading.charging, None);
+    }
+
+    #[test]
+    fn a_gas_gauge_reading_becomes_a_level_a_state_and_a_temperature() {
+        let reading = parse_battery(&dict(&[
+            ("CurrentCapacity", 2100u64.into()),
+            ("MaxCapacity", 3200u64.into()),
+            ("IsCharging", true.into()),
+            // Hundredths of a degree, the usual gas-gauge unit.
+            ("Temperature", 3120u64.into()),
+        ]));
+
+        assert_eq!(reading.level.map(|l| (l * 100.0).round()), Some(66.0));
+        assert_eq!(reading.charging, Some(true));
+        assert_eq!(reading.temperature_c, Some(31.2));
+    }
+
+    /// Some versions report `CurrentCapacity` as a percentage with no usable
+    /// denominator beside it.
+    #[test]
+    fn a_capacity_with_no_maximum_is_read_as_a_percentage() {
+        let reading = parse_battery(&dict(&[("CurrentCapacity", 77u64.into())]));
+        assert_eq!(reading.level, Some(0.77));
+    }
+
+    /// A raw mAh reading with its maximum missing would otherwise pin the
+    /// battery at 100% forever, which looks like a working feature.
+    #[test]
+    fn a_raw_capacity_with_no_maximum_is_refused() {
+        let reading = parse_battery(&dict(&[("CurrentCapacity", 2100u64.into())]));
+        assert_eq!(reading.level, None);
+    }
+
+    #[test]
+    fn battery_temperature_units_are_guessed_by_magnitude() {
+        let hundredths = parse_battery(&dict(&[("Temperature", 3120u64.into())]));
+        let tenths = parse_battery(&dict(&[("Temperature", 312u64.into())]));
+        let degrees = parse_battery(&dict(&[("Temperature", 31u64.into())]));
+
+        assert_eq!(hundredths.temperature_c, Some(31.2));
+        assert_eq!(tenths.temperature_c, Some(31.2));
+        assert_eq!(degrees.temperature_c, Some(31.0));
+    }
+
+    #[test]
+    fn an_implausible_battery_temperature_is_no_reading() {
+        let reading = parse_battery(&dict(&[("Temperature", 9_000_000u64.into())]));
+        assert_eq!(reading.temperature_c, None);
+    }
+
+    #[test]
+    fn an_empty_dictionary_reports_nothing_rather_than_zero() {
+        let reading = parse_battery(&plist::Dictionary::new());
+
+        assert_eq!(reading.level, None);
+        assert_eq!(reading.charging, None);
+        assert_eq!(reading.temperature_c, None);
+    }
+
+    /// The fallback key on versions where the gas gauge omits `IsCharging`.
+    #[test]
+    fn external_power_stands_in_for_a_missing_charging_flag() {
+        let reading = parse_battery(&dict(&[("ExternalConnected", 1u64.into())]));
+        assert_eq!(reading.charging, Some(true));
     }
 }

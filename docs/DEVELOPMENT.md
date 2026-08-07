@@ -59,6 +59,31 @@ FARM_PROVIDER_TOKEN=pft_… ./target/release/farm-provider --config /tmp/provide
 `--check` validates the config and exits. Still no hardware required: mock
 devices stream synthetic video and accept input, uploads and screenshots.
 
+### Device metrics
+
+The example config ships `metrics:` enabled on **:9100**, and the mock devices
+report synthetic CPU, memory, battery and temperature — so the fastest end-to-end
+check of the whole feature is:
+
+```bash
+curl -s localhost:9100/metrics | grep farm_
+```
+
+The Android mock reports two processes and the example's `*.demo.*` pattern
+matches exactly one of them, so the app filter is visible without hardware. The
+iOS mock reports battery and no CPU, which is what a real iPhone does.
+
+For the full picture, Prometheus and Grafana are behind a compose profile:
+
+```bash
+docker compose -f docker-compose.dev.yml --profile observability up -d
+```
+
+Grafana on **:3001** (anonymous, no login), Prometheus on **:9090**, scraping a
+provider running on the host. The default `up -d` still brings up Postgres alone
+— nothing in the test suite needs either. Provisioning lives in
+`docs/observability/`.
+
 ## Running the whole thing in Docker
 
 The production shape — Caddy in front, coordinator and web in containers,

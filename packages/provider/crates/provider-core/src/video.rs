@@ -6,7 +6,7 @@
 //! browser's `VideoDecoder` does the rest. That is what lets one session server
 //! serve HEVC from iOS and H.264 from Android with no branch in between.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -68,6 +68,18 @@ pub struct VideoHandle {
     frames: broadcast::Sender<Arc<AccessUnit>>,
     keyframe: Arc<Notify>,
     streaming: Arc<AtomicBool>,
+    published: Arc<Published>,
+}
+
+/// Cumulative stream throughput, for the metrics exporter.
+///
+/// Counted here rather than at each viewer because this is the one place every
+/// access unit passes through exactly once — a per-viewer count would multiply
+/// with the audience and mean something quite different.
+#[derive(Default)]
+pub(crate) struct Published {
+    pub bytes: AtomicU64,
+    pub frames: AtomicU64,
 }
 
 impl VideoHandle {
@@ -136,6 +148,21 @@ impl VideoHandle {
     pub fn is_streaming(&self) -> bool {
         self.streaming.load(Ordering::Relaxed)
     }
+
+    /// Live viewers, for the metrics exporter. On the handle rather than only
+    /// the publisher because the exporter reaches a device through its backend,
+    /// which hands out the read side.
+    pub fn viewer_count(&self) -> usize {
+        self.frames.receiver_count()
+    }
+
+    pub fn bytes_published(&self) -> u64 {
+        self.published.bytes.load(Ordering::Relaxed)
+    }
+
+    pub fn frames_published(&self) -> u64 {
+        self.published.frames.load(Ordering::Relaxed)
+    }
 }
 
 /// The write side, owned by a backend's capture task.
@@ -146,6 +173,7 @@ pub struct VideoPublisher {
     frames: broadcast::Sender<Arc<AccessUnit>>,
     keyframe: Arc<Notify>,
     streaming: Arc<AtomicBool>,
+    published: Arc<Published>,
 }
 
 impl VideoPublisher {
@@ -186,6 +214,12 @@ impl VideoPublisher {
         if au.is_key {
             self.streaming.store(true, Ordering::Relaxed);
         }
+        // Counted before the send, so the numbers describe what the device
+        // produced rather than what happened to have an audience.
+        self.published
+            .bytes
+            .fetch_add(au.data.len() as u64, Ordering::Relaxed);
+        self.published.frames.fetch_add(1, Ordering::Relaxed);
         self.frames.send(Arc::new(au)).unwrap_or(0)
     }
 
@@ -211,6 +245,7 @@ pub fn channel() -> (VideoHandle, VideoPublisher) {
     let (frames, _) = broadcast::channel(BACKLOG);
     let keyframe = Arc::new(Notify::new());
     let streaming = Arc::new(AtomicBool::new(false));
+    let published = Arc::new(Published::default());
 
     (
         VideoHandle {
@@ -219,6 +254,7 @@ pub fn channel() -> (VideoHandle, VideoPublisher) {
             frames: frames.clone(),
             keyframe: keyframe.clone(),
             streaming: streaming.clone(),
+            published: published.clone(),
         },
         VideoPublisher {
             codec: Arc::new(codec_tx),
@@ -226,6 +262,7 @@ pub fn channel() -> (VideoHandle, VideoPublisher) {
             frames,
             keyframe,
             streaming,
+            published,
         },
     )
 }
@@ -248,6 +285,42 @@ mod tests {
         assert!(au.is_key);
         assert_eq!(au.data, vec![1, 2, 3]);
         assert!(handle.is_streaming());
+    }
+
+    /// Throughput describes what the device produced, not what was watched: a
+    /// stream with no audience is still a stream, and a stream with three
+    /// viewers did not encode three times as much.
+    #[tokio::test]
+    async fn throughput_counts_frames_once_regardless_of_audience() {
+        let (handle, publisher) = channel();
+        let _one = handle.subscribe();
+        let _two = handle.subscribe();
+
+        publisher.publish(AccessUnit {
+            data: vec![0; 100],
+            is_key: true,
+        });
+        publisher.publish(AccessUnit {
+            data: vec![0; 40],
+            is_key: false,
+        });
+
+        assert_eq!(handle.frames_published(), 2);
+        assert_eq!(handle.bytes_published(), 140);
+        assert_eq!(handle.viewer_count(), 2);
+    }
+
+    #[tokio::test]
+    async fn throughput_still_counts_with_nobody_watching() {
+        let (handle, publisher) = channel();
+        publisher.publish(AccessUnit {
+            data: vec![0; 64],
+            is_key: true,
+        });
+
+        assert_eq!(handle.viewer_count(), 0);
+        assert_eq!(handle.frames_published(), 1);
+        assert_eq!(handle.bytes_published(), 64);
     }
 
     #[tokio::test]

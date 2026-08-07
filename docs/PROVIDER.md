@@ -55,6 +55,7 @@ src/
 ├── auth.rs        JWKS fetch + session-token verification
 ├── session.rs     which reservation may use each device
 ├── control.rs     the outbound WSS to the coordinator
+├── metrics.rs     device sampling + the Prometheus exposition
 ├── origins.rs     browser origins allowed on the browser-facing planes
 ├── supervisor.rs  owns every device, routes commands
 └── server.rs      session plane (WS) + artifact plane (HTTP)
@@ -117,7 +118,8 @@ deploy. That is not hypothetical — it is exactly what happened when
 
 axum. `GET /s/:id` (WebSocket), `GET /s/:id/screenshot.png`,
 `GET /s/:id/mjpeg`, `GET /s/:id/files`, `GET /s/:id/file`,
-`POST /s/:id/install`, `GET /health`.
+`POST /s/:id/install`, `GET /health`. The Prometheus exposition is deliberately
+**not** here — it gets a listener of its own; see [Metrics](#metrics).
 
 Per-viewer fanout with backlog shedding, ported in spirit from `screen_ws.rs`:
 when a viewer lags, everything is dropped until the next keyframe, which is then
@@ -145,6 +147,93 @@ polls each device every 15s, pushing an update only when something actually
 changed. `busy` is the coordinator's word, not the provider's — a reserved
 device stays reserved across a poll.
 
+### Metrics
+
+Device CPU, memory, temperature and per-app usage, for Prometheus. Off unless
+`provider.yaml` has a `metrics:` block — writing the block at all turns it on,
+so an omitted `enabled` means yes.
+
+```yaml
+metrics:
+  bind: 0.0.0.0:9100
+  interval_secs: 30
+  app_patterns: ["*.demo.*"]   # Android only, globbed on the process name
+```
+
+```yaml
+# prometheus.yml
+scrape_configs:
+  - job_name: farm-provider
+    static_configs:
+      - targets: ["lab-1.example.com:9100"]
+```
+
+**A listener of its own, not a route on 7100.** The session port is
+browser-facing, carries a CORS layer and session tokens, and is publicly
+TLS-terminated; a scraper has none of those, and a `/metrics` added there would
+inherit the CORS layer. There is deliberately **no auth** on the metrics port —
+bind it to an interface only your monitoring reaches. It is not a fifth plane;
+see [ARCHITECTURE.md](./ARCHITECTURE.md).
+
+**`farm_device_status` is reconstructed, not reported.** A provider's own status
+is only ever `preparing`, `ready` or `unhealthy` — `busy` is the coordinator's
+word, set when a reservation goes active, and the supervisor deliberately never
+writes it. Exporting the raw value made `busy` a permanently dead series and made
+every *reserved* device report `ready`, which on a dashboard reads as "free, take
+it" about a device someone is using. So the exporter combines the status with the
+session registry, which is the same fact the coordinator sets `busy` for and the
+same one that admits a viewer to the session plane. Health still wins over
+occupancy: a broken phone that happens to be reserved reports `unhealthy`. None of
+this changes what goes upstream — the control plane still never says `busy`.
+
+**The scrape reads a cache.** A background task samples every device on
+`interval_secs`, eight at a time, each under a timeout of half the interval. The
+supervisor's own poll loop is sequential but this one cannot be: a sample is
+several adb round trips plus a `dumpsys` that walks every process, so devices in
+series would spend a third of the interval in one pass and one wedged device
+would starve the rest. Sampling on scrape instead would put that on the request
+path and let a second scraper double the load on the phones.
+
+**CPU is a counter, not a percent.** `/proc/stat` is already monotonic, so
+exporting `_total` means nothing here holds a previous sample, `rate()` gives the
+operator any window they want rather than the one we picked, and a rebooted
+device's counter reset is handled for free. `memory_pct` and a `mode="total"`
+series are likewise absent: both are derivable, and a `total` mode would
+double-count under `sum without(mode)`.
+
+**A stale or failed device emits none of its device-sourced series.** Absence is
+how Prometheus spells "no data" — `rate()` and `avg_over_time` handle a gap, and
+`absent()` alerts on it. Re-serving the last known value would be a lie: an
+unplugged phone would show a flat, healthy 40 °C forever. The operational
+metrics (`farm_device_status`, viewers, install counts, error counts) are read
+live and are never suppressed, which is what keeps *the device is gone* — status
+still reported, no CPU series — distinguishable from *the exporter is broken*,
+where there is nothing at all. A backend that answers `Unsupported` is a success
+holding nothing, not an error; otherwise every iOS device, which has no CPU or
+memory to give, would look permanently broken.
+
+**Per-app metrics are the cardinality risk.** A bare `*` pattern is refused at
+config load, and a sample is capped at 32 processes per device — the cap is the
+real defence, since `com.*` is just as expensive and impossible to reject on
+sight. With no patterns configured the backend skips the expensive read entirely.
+
+Android costs **two adb round trips per device per interval**, three with app
+patterns: `/proc/stat`, `/proc/meminfo`, `dumpsys battery` and the thermal zones
+are batched into one `sh -c`, because each read is ~5-40 ms of device work
+against ~15-30 ms of transport setup. None of it goes near `info()`, which
+already makes 3-5 round trips every 15s on the supervisor's cadence.
+
+The exposition format is written by hand rather than through a registry crate.
+Both `prometheus-client` and `metrics-exporter-prometheus` *retain* every label
+set they have seen, and making a device's series disappear through one of those
+is more code than emitting the bytes. The encoder buffers per family, because
+samples are gathered device-major and Prometheus requires a family's samples
+contiguous under one `# HELP`/`# TYPE`.
+
+`metrics: enabled: false` does not skip spawning anything — the listener and the
+sampler both park. That keeps `main.rs` to one code path, where every long-lived
+task is spawned, aborted on shutdown, and fatal if it returns.
+
 ## `backend-ios`
 
 ```
@@ -155,6 +244,40 @@ crates/backend-ios/src/
 ├── hid.rs      touch, keyboard, hardware buttons, rotation
 └── lib.rs      the pointer state machine and the DeviceBackend impl
 ```
+
+**Battery level and charging state, and nothing else.** Not CPU, not memory, and
+— on the hardware checked — not temperature either. `examples/diagnostics_probe.rs`
+is how that was established, against a real iPhone 13, and the negative result is
+recorded here so the question stops being re-asked:
+
+- `all()` returns **752 bytes**. There is nothing resembling CPU, memory or
+  thermal in it. `host_statistics`/`vm_statistics` are available to on-device
+  code only, and this relay is a lockdown service with a fixed dictionary and no
+  `sysctl` surface.
+- **`gasguage` is not the battery source**, despite the name. It answers
+  `CycleCount`, `FullChargeCapacity` and `Status`, nested under a `GasGauge` key,
+  with no charge level in it at all.
+- **`ioregistry` on `AppleSmartBattery` is.** `CurrentCapacity` and `MaxCapacity`
+  are both percentages there, alongside `IsCharging` and `ExternalConnected`.
+- **No `Temperature` key exists on either.** The names under `IOReportLegend`
+  (`BatteryMaxTemp` and friends) are channel labels, not readings.
+
+So the registry is tried first and the gas gauge is the fallback, which is the
+opposite of what the service names suggest. Each source is judged by whether a
+*level* came out of it rather than by whether the dictionary was non-empty —
+the gas gauge's reply is non-empty and useless, so an emptiness check takes it and
+never falls through. That was a real bug, caught only on hardware.
+
+The temperature parsing is kept anyway, since it costs nothing and another iOS
+version may populate it; `farm_device_battery_temperature_celsius` is simply
+absent for an iPhone, which is what an absent series is for. `metrics()` answers
+`Ok` with mostly `None` rather than `Unsupported`, so a healthy iPhone does not
+advance the exporter's error counter.
+
+Battery was previously not reported at all, because a relay round trip is far too
+expensive on `info()`'s 15s cadence. It is now cached with a 60s TTL and shared:
+the metrics sampler refreshes it on its own cadence and `info()` rides on that,
+so the worst case is one round trip a minute instead of four.
 
 iOS 17.4+ only: below that the root-free `CoreDeviceProxy` tunnel does not
 exist, and bring-up fails loudly rather than half-working. There is no other
@@ -254,6 +377,7 @@ pub trait DeviceBackend: Send + Sync + 'static {
     async fn remote_debug(&self) -> Result<RemoteDebug>;      // android only
     async fn restart(&self) -> Result<()>;
     async fn is_healthy(&self) -> bool;
+    async fn metrics(&self, apps: &AppFilter) -> Result<DeviceMetrics>;
 }
 ```
 

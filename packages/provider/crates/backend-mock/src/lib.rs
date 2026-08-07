@@ -20,13 +20,14 @@ use std::time::Duration;
 use async_trait::async_trait;
 use farm_protocol::{AppInfo, Display, FileEntry, FileKind, FileListing, Platform};
 use provider_core::backend::{
-    parent_of, BackendError, DeviceBackend, DeviceInfo, InputEvent, ProgressSink, RemoteDebug,
-    Result,
+    parent_of, AppFilter, AppMetrics, BackendError, CpuTimes, DeviceBackend, DeviceInfo,
+    DeviceMetrics, InputEvent, MemoryBytes, ProgressSink, RemoteDebug, Result, ThermalZone,
 };
 use provider_core::video::{
     channel, AccessUnit, CodecDescription, VideoGeometry, VideoHandle, VideoPublisher,
 };
 use tokio::sync::Mutex;
+use tokio::time::Instant;
 use tracing::{debug, info};
 
 /// Frame cadence. 10fps is enough to exercise fan-out and shedding without
@@ -48,6 +49,26 @@ const PNG: &[u8] = &[
 
 /// Where the mock's file browser opens, mirroring Android's.
 const FILES_ROOT: &str = "/sdcard";
+
+/// Half a battery cycle: twenty minutes draining, then twenty charging.
+const BATTERY_HALF_CYCLE: f64 = 20.0 * 60.0;
+/// Period of the synthetic load curve that drives CPU, memory and temperature.
+const LOAD_PERIOD: f64 = 5.0 * 60.0;
+/// A four-core synthetic device, so `idle` outpaces `user` the way a real
+/// `/proc/stat` does.
+const CORES: f64 = 4.0;
+const MEMORY_TOTAL: u64 = 8 * 1024 * 1024 * 1024;
+
+/// The two processes the mock reports for per-app metrics.
+///
+/// The names are chosen so the `*.demo.*` pattern in `provider.example.yaml`
+/// matches exactly one of them: that makes the app filter, and the difference
+/// between a matched and an unmatched process, visible in a scrape with no
+/// hardware attached.
+const MOCK_APPS: &[(&str, u64)] = &[
+    ("com.example.mock.app", 180 * 1024 * 1024),
+    ("com.example.demo.player", 320 * 1024 * 1024),
+];
 
 /// A synthetic device filesystem: `(path, contents)`, `None` for a directory.
 ///
@@ -75,6 +96,14 @@ pub struct MockBackend {
     publisher: VideoPublisher,
     /// Everything a test or a UI click can observe.
     pub state: Arc<MockState>,
+    /// Origin for every synthetic metric. Deriving them from elapsed time rather
+    /// than storing them means `info()` and `metrics()` cannot disagree about the
+    /// battery — a UI showing 77% beside a Grafana panel showing 41% is a bug
+    /// report waiting to happen.
+    ///
+    /// `tokio::time::Instant`, not the std one, so a test can fast-forward
+    /// twenty minutes of battery drain instead of waiting for it.
+    started: Instant,
 }
 
 #[derive(Default)]
@@ -117,6 +146,7 @@ impl MockBackend {
             video,
             publisher: publisher.clone(),
             state,
+            started: Instant::now(),
         });
 
         let (width, height) = backend.panel_size();
@@ -146,6 +176,47 @@ impl MockBackend {
             Platform::Ios => (1179, 2556),
             Platform::Android => (1080, 2400),
         }
+    }
+
+    /// Battery as `(level 0..1, charging)`, on a 40-minute saw: it drains from
+    /// full to 20% over twenty minutes, then charges back.
+    ///
+    /// Shared by `info()` and `metrics()` so the control plane and the exporter
+    /// never disagree.
+    fn battery(&self) -> (f64, bool) {
+        let phase = self.started.elapsed().as_secs_f64() % (2.0 * BATTERY_HALF_CYCLE);
+        if phase < BATTERY_HALF_CYCLE {
+            let t = phase / BATTERY_HALF_CYCLE;
+            (1.0 - 0.8 * t, false)
+        } else {
+            let t = (phase - BATTERY_HALF_CYCLE) / BATTERY_HALF_CYCLE;
+            (0.2 + 0.8 * t, true)
+        }
+    }
+
+    /// How busy the synthetic CPU is right now, 0..1, on a five-minute sine.
+    ///
+    /// One curve drives CPU, memory and temperature together, so the mock shows
+    /// the correlation an operator would actually be looking for rather than
+    /// three unrelated wobbles.
+    fn load(&self) -> f64 {
+        let t = self.started.elapsed().as_secs_f64() / LOAD_PERIOD;
+        0.15 + 0.10 * (t * std::f64::consts::TAU).sin()
+    }
+
+    /// Cumulative busy core-seconds: the *integral* of [`Self::load`], not a
+    /// sample of it.
+    ///
+    /// The exporter emits these as counters, and `rate()` reads a value that
+    /// dips as a counter reset — a whole scrape interval of spurious spike. So
+    /// the wobble has to live in the derivative, which is what integrating
+    /// gives: ∫(a + b·sin(2πt/P)) dt, whose integrand never reaches zero.
+    fn busy_core_seconds(&self) -> f64 {
+        let elapsed = self.started.elapsed().as_secs_f64();
+        let turns = elapsed / LOAD_PERIOD * std::f64::consts::TAU;
+        let integral =
+            0.15 * elapsed - 0.10 * LOAD_PERIOD / std::f64::consts::TAU * (turns.cos() - 1.0);
+        integral * CORES
     }
 
     /// The dimensions a viewer sees at the current rotation.
@@ -212,6 +283,7 @@ impl DeviceBackend for MockBackend {
 
         let rotation = self.state.rotation.load(Ordering::Relaxed);
         let (width, height) = self.stream_size();
+        let (level, charging) = self.battery();
 
         Ok(DeviceInfo {
             id: self.id.clone(),
@@ -240,8 +312,7 @@ impl DeviceBackend for MockBackend {
             serial: Some(self.id.clone()),
             brand: matches!(self.platform, Platform::Android).then(|| "google".into()),
             build_id: matches!(self.platform, Platform::Android).then(|| "UD1A.230803.041".into()),
-            security_patch: matches!(self.platform, Platform::Android)
-                .then(|| "2026-05-01".into()),
+            security_patch: matches!(self.platform, Platform::Android).then(|| "2026-05-01".into()),
             abi_list: matches!(self.platform, Platform::Android)
                 .then(|| "arm64-v8a,armeabi-v7a,armeabi".into()),
             display: Some(Display {
@@ -251,8 +322,72 @@ impl DeviceBackend for MockBackend {
                 rotation: Some(rotation),
                 render_rotation: Some(0),
             }),
-            battery_level: Some(0.77),
-            battery_state: Some("discharging".into()),
+            battery_level: Some(level),
+            battery_state: Some(if charging { "charging" } else { "discharging" }.into()),
+        })
+    }
+
+    async fn metrics(&self, apps: &AppFilter) -> Result<DeviceMetrics> {
+        if !self.state.healthy.load(Ordering::Relaxed) {
+            return Err(BackendError::Unavailable("mock marked unhealthy".into()));
+        }
+
+        let elapsed = self.started.elapsed().as_secs_f64();
+        let busy = self.busy_core_seconds();
+        let (battery_level, charging) = self.battery();
+        let load = self.load();
+
+        // Memory and temperature ride the same curve as the CPU, so the mock
+        // shows a correlation rather than three unrelated wobbles.
+        let available = (5.0 - 3.0 * (load - 0.05) / 0.20) * 1024.0 * 1024.0 * 1024.0;
+        let available = (available as u64).min(MEMORY_TOTAL);
+
+        // A real iOS device reports battery and nothing else; the mock mirrors
+        // that so the "no CPU series for iOS" behaviour is testable.
+        let (cpu, memory, thermal_zones) = match self.platform {
+            Platform::Ios => (None, None, Vec::new()),
+            Platform::Android => (
+                Some(CpuTimes {
+                    // 5:1 user:system, and idle is whatever the four cores did
+                    // not spend — the same arithmetic /proc/stat implies.
+                    user: busy * 5.0 / 6.0,
+                    system: busy / 6.0,
+                    idle: CORES * elapsed - busy,
+                    ..Default::default()
+                }),
+                Some(MemoryBytes {
+                    total: MEMORY_TOTAL,
+                    available: Some(available),
+                    free: Some(available / 2),
+                }),
+                vec![ThermalZone {
+                    name: "mock-cpu".into(),
+                    celsius: 34.0 + 48.0 * (load - 0.05),
+                }],
+            ),
+        };
+
+        let apps = match self.platform {
+            Platform::Ios => Vec::new(),
+            Platform::Android => MOCK_APPS
+                .iter()
+                .filter(|(process, _)| apps.matches(process))
+                .map(|(process, pss)| AppMetrics {
+                    process: (*process).into(),
+                    cpu_seconds: Some(busy / 8.0),
+                    pss_bytes: Some(*pss),
+                })
+                .collect(),
+        };
+
+        Ok(DeviceMetrics {
+            cpu,
+            memory,
+            battery_level: Some(battery_level),
+            battery_charging: Some(charging),
+            battery_temperature_c: Some(30.0 + 40.0 * (load - 0.05)),
+            thermal_zones,
+            apps,
         })
     }
 
@@ -425,5 +560,115 @@ impl DeviceBackend for MockBackend {
 
     async fn is_healthy(&self) -> bool {
         self.state.healthy.load(Ordering::Relaxed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn android() -> Arc<MockBackend> {
+        MockBackend::new("mock-android-1", Platform::Android, "Mock Pixel")
+    }
+
+    /// The exporter emits CPU as a counter, and a counter that dips reads as a
+    /// reset — a whole scrape interval of spurious `rate()` spike. This is the
+    /// property that makes the mock usable for eyeballing a dashboard.
+    #[tokio::test(start_paused = true)]
+    async fn synthetic_cpu_counters_only_ever_advance() {
+        let backend = android();
+        let filter = AppFilter::default();
+        let mut previous = CpuTimes::default();
+
+        // A whole load period, sampled far more finely than the sine wobbles.
+        for _ in 0..60 {
+            tokio::time::advance(Duration::from_secs(5)).await;
+            let cpu = backend.metrics(&filter).await.unwrap().cpu.unwrap();
+
+            assert!(
+                cpu.user >= previous.user,
+                "{} < {}",
+                cpu.user,
+                previous.user
+            );
+            assert!(cpu.system >= previous.system);
+            assert!(cpu.idle >= previous.idle);
+            previous = cpu;
+        }
+
+        assert!(previous.user > 0.0, "the curve never advanced at all");
+    }
+
+    /// `info()` and `metrics()` must read the same battery: a UI showing one
+    /// number beside a Grafana panel showing another is a bug report waiting to
+    /// happen.
+    #[tokio::test(start_paused = true)]
+    async fn the_control_plane_and_the_exporter_agree_on_the_battery() {
+        let backend = android();
+        tokio::time::advance(Duration::from_secs(11 * 60)).await;
+
+        let info = backend.info().await.unwrap();
+        let metrics = backend.metrics(&AppFilter::default()).await.unwrap();
+
+        assert_eq!(info.battery_level, metrics.battery_level);
+        assert_eq!(
+            info.battery_state.as_deref() == Some("charging"),
+            metrics.battery_charging.unwrap()
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_battery_drains_then_charges() {
+        let backend = android();
+
+        tokio::time::advance(Duration::from_secs(10 * 60)).await;
+        let draining = backend.metrics(&AppFilter::default()).await.unwrap();
+        assert!(!draining.battery_charging.unwrap());
+        assert!((0.55..0.65).contains(&draining.battery_level.unwrap()));
+
+        tokio::time::advance(Duration::from_secs(20 * 60)).await;
+        let charging = backend.metrics(&AppFilter::default()).await.unwrap();
+        assert!(charging.battery_charging.unwrap());
+    }
+
+    /// One of the two mock apps matches the documented `*.demo.*` pattern and
+    /// the other does not, so a scrape shows the filter working.
+    #[tokio::test]
+    async fn only_matching_processes_are_reported() {
+        let backend = android();
+
+        let none = backend.metrics(&AppFilter::default()).await.unwrap();
+        assert!(none.apps.is_empty());
+
+        let filtered = backend
+            .metrics(&AppFilter::new(&["*.demo.*".to_owned()]))
+            .await
+            .unwrap();
+        let names: Vec<_> = filtered.apps.iter().map(|a| a.process.as_str()).collect();
+        assert_eq!(names, vec!["com.example.demo.player"]);
+    }
+
+    /// Mirrors the real iOS backend, whose diagnostics relay offers battery and
+    /// no CPU or memory at all.
+    #[tokio::test]
+    async fn the_ios_mock_reports_battery_but_no_cpu_or_memory() {
+        let backend = MockBackend::new("mock-ios-1", Platform::Ios, "Mock iPhone");
+        let metrics = backend
+            .metrics(&AppFilter::new(&["*.demo.*".to_owned()]))
+            .await
+            .unwrap();
+
+        assert!(metrics.battery_level.is_some());
+        assert!(metrics.cpu.is_none());
+        assert!(metrics.memory.is_none());
+        assert!(metrics.apps.is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_unhealthy_mock_fails_rather_than_inventing_numbers() {
+        let backend = android();
+        backend.state.healthy.store(false, Ordering::Relaxed);
+
+        assert!(backend.metrics(&AppFilter::default()).await.is_err());
     }
 }

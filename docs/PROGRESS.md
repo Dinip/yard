@@ -1016,6 +1016,140 @@ tab surviving the popout handover.
 
 ---
 
+## Phase 14 — Device metrics ✅
+
+*Done when: a Prometheus server scrapes CPU, memory, temperature and per-app
+usage off every device a provider owns, and a stale device's series disappear
+rather than going flat.*
+
+The provider supervised every device on a host but reported almost nothing about
+their *condition* — `DeviceSnapshot` carried battery level and charging state and
+that was all. A phone that is thermally throttling, swapping, or pinned by a
+leaked process streams badly and fails tests in ways that look like flaky
+software, and the only way to notice was for a tester to say a device "feels
+slow". The metric set is taken from `Dinip/adb_metrics`.
+
+**Nothing crosses the coordinator wire.** No zod schema, no `generated.rs`, no DB
+column, no UI — `bun run protocol:check` is unaffected. Don't go looking; this is
+provider-local, in the spirit of Phase 13's recorder.
+
+| Item | State | Where |
+|---|---|---|
+| `metrics:` config section | ✅ | `provider-core/src/config.rs` |
+| `DeviceMetrics` + `AppFilter` on the backend trait | ✅ | `provider-core/src/backend.rs` |
+| Synthetic metrics for the mock | ✅ | `backend-mock/src/lib.rs` |
+| Per-device in-process counters | ✅ | `provider-core/src/video.rs`, `supervisor.rs` |
+| Sampler + cache | ✅ | `provider-core/src/metrics.rs` |
+| Exporter + listener | ✅ | `provider-core/src/metrics.rs` |
+| Android CPU / memory / thermal | ✅ | `backend-android/src/lib.rs` |
+| Android per-app CPU + PSS | ✅ | `backend-android/src/lib.rs` |
+| iOS diagnostics-relay probe | ✅ | `backend-ios/examples/` |
+| iOS battery | ✅ | `backend-ios/src/lib.rs` |
+| Dev observability stack | ✅ | `docker-compose.dev.yml` |
+
+### Verified with no hardware
+
+`--profile observability` up, the real binary running two mock devices: Prometheus
+reports the target `up`, `farm_device_cpu_seconds_total` advances between scrapes,
+`sum by (device) (rate(...{mode!="idle"}[2m])) / sum by (device) (rate(...[2m]))`
+reads ~0.18 against the mock's ~0.15 ± wobble, `farm_app_memory_pss_bytes` exists
+for `com.example.demo.player` and not for `com.example.mock.app`, the iOS mock has
+no CPU series at all, and Grafana provisions the dashboard. With a deliberately
+bad provider token, `farm_provider_control_connected` reads 0 while every device
+metric keeps being served — the exporter does not depend on the coordinator.
+
+**A real bug the tests caught.** The encoder wrote each sample as it went, which
+is wrong: samples are gathered device-major, so families arrived interleaved and
+each was re-declared per device. Prometheus requires a family's samples contiguous
+under one `# HELP`/`# TYPE`. The encoder now buffers per family, and there is a
+unit test asserting the exact regrouped bytes.
+
+### Verified on hardware
+
+**Galaxy S22 (Android 15)**, via `cargo run -p backend-android --example
+metrics_probe`: the batched read parses `/proc/stat` (all eight modes), 7.10 GiB
+total memory with 2.85 GiB available, battery 100% "full" at **33.7 °C**, and 209
+processes out of the PSS section with comma-grouped values and `:remote`/`:search`
+sub-processes staying distinct from their parents. `*.google.*` matched 12 of them
+and every one got CPU seconds back — so the `/proc/<pid>/stat` last-`)` split works
+on real process names.
+
+**Thermal zones came back empty**, as predicted: this device exposes only
+`cooling_device*` under `/sys/class/thermal`, no `thermal_zone*` at all. It
+degrades to no series rather than an error, which is the intended behaviour. 209
+processes against a cap of 32 is also a good demonstration of why the cap exists.
+
+**iPhone 13**, via `cargo run -p backend-ios --example diagnostics_probe`: level
+and charging state read correctly. Two things the hardware corrected — see
+PROVIDER.md: `gasguage` is *not* the battery source despite the name, and there is
+**no temperature** available on iOS at all.
+
+### A real bug the hardware caught
+
+`read_battery` chose its source by whether the dictionary came back non-empty.
+`gasguage` answers a non-empty and completely useless dictionary — `CycleCount`,
+`FullChargeCapacity`, `Status`, nested under a `GasGauge` key, no charge level —
+so the fallback to `ioregistry` never fired and iOS reported no battery at all.
+It now tries the registry first and judges each source by whether a *level* came
+out of it. Both real shapes are now test fixtures.
+
+### A second bug the hardware caught
+
+A reserved device reported `farm_device_status{status="ready"}`. The provider's
+own status can never be `busy` — that is the coordinator's word — so the raw
+export made the `busy` series permanently dead *and* made every in-use device
+advertise itself as available. The exporter now combines the provider status with
+the session registry; health still wins over occupancy.
+
+### The dashboard needed a browser to verify
+
+Every check through Grafana's API passed while the dashboard was, in fact,
+blank. Three separate faults, none visible without opening it:
+
+- Prometheus targets default to **instant** queries. Hand-written panel JSON has
+  to say `range: true` — Grafana's query editor writes it for you. Without it a
+  panel draws a legend and an empty plot, with no error anywhere.
+- The status panel was a time series, which is the wrong shape for a categorical
+  signal. It is a **state timeline** now, with the statuses encoded numerically in
+  PromQL and mapped back to names and colours.
+- Value mappings and a `thresholds` block on the same field fight, and thresholds
+  win: every band rendered as a uniform grey bar labelled `-∞+`.
+
+### Still to confirm
+
+A device that is *actually* warm or busy — everything above was measured on an
+idle, fully charged phone, so the numbers are right but the range is narrow. And
+a device with readable `thermal_zone*` entries, to exercise the unit heuristic on
+something other than a fixture.
+
+### Decisions worth not relitigating
+
+- **A listener of its own, not a route on 7100.** That port is browser-facing,
+  carries a CORS layer and session tokens, and is publicly TLS-terminated. There
+  is deliberately **no auth** on the metrics port; the operator binds it to an
+  interface only their monitoring reaches. A `/metrics` alias on 7100 "for
+  convenience" would inherit the CORS layer and defeat the whole point.
+- **It is not a fifth plane.** A plane in this codebase carries authenticated user
+  traffic; this has neither property. See ARCHITECTURE.md.
+- **A background sampler with a cache**, not sample-on-scrape: a scrape never
+  waits on a phone, and a second scraper cannot double the load on the devices.
+- **CPU is a counter, not a percent.** `/proc/stat` is already a monotonic jiffy
+  counter, so exporting `_total` means nothing here holds a previous sample,
+  `rate()` gives the operator any window they want, and a rebooted device's
+  counter reset is handled for free.
+- **A stale or failed device emits *no* device-sourced series at all.** Absence is
+  how Prometheus spells "no data". Re-emitting the last known value would be a
+  lie — an unplugged phone would show a flat, healthy 40 °C forever. The
+  operational metrics are read live and are never suppressed, which is what keeps
+  "device gone" distinguishable from "exporter broken".
+- **No metrics crate.** The values arrive as a snapshot and the exporter
+  transcribes them on GET. Both `prometheus-client` and
+  `metrics-exporter-prometheus` *retain* label sets they have seen, and making a
+  series disappear through a retaining registry is more code than emitting the
+  text format directly.
+
+---
+
 ## Open decisions
 
 - **Name.** The project is "Device Farm" as a placeholder. See

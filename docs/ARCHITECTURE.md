@@ -67,6 +67,21 @@ Nothing is stored server-side. There is no object storage anywhere in the
 system, and no `app`/artifact table in the database — see
 [DATA-MODEL.md](./DATA-MODEL.md).
 
+### Not a plane: the metrics listener
+
+A provider can also expose device CPU, memory and temperature for Prometheus, on
+a **second port of its own** (`metrics.bind`, default 9100). That is deliberately
+not counted as a fifth plane: every plane above carries user traffic and is
+authenticated end to end, and this carries neither. It is an operator side door,
+and calling it a plane would make "plane" mean "socket".
+
+It is separate from the session port precisely *because* it is not a plane. That
+port is browser-facing, carries a CORS layer and session tokens, and is publicly
+TLS-terminated; a scraper has none of those, and putting `/metrics` there would
+hand it the CORS layer. There is no auth on the metrics port, so the operator is
+expected to bind it where only their monitoring can reach it. See
+[PROVIDER.md](./PROVIDER.md#metrics).
+
 ## Session tokens
 
 Ed25519 JWTs carrying `deviceId`, `userId`, `reservationId`, `exp ≈ 60s`,
