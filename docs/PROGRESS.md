@@ -1038,7 +1038,7 @@ provider-local, in the spirit of Phase 13's recorder.
 | `metrics:` config section | ✅ | `provider-core/src/config.rs` |
 | `DeviceMetrics` + `AppFilter` on the backend trait | ✅ | `provider-core/src/backend.rs` |
 | Synthetic metrics for the mock | ✅ | `backend-mock/src/lib.rs` |
-| Per-device in-process counters | ⬜ | `provider-core/src/video.rs`, `supervisor.rs` |
+| Per-device in-process counters | ✅ | `provider-core/src/video.rs`, `supervisor.rs` |
 | Sampler + cache | ⬜ | `provider-core/src/metrics.rs` |
 | Exporter + listener | ⬜ | `provider-core/src/metrics.rs` |
 | Android CPU / memory / thermal | ⬜ | `backend-android/src/lib.rs` |

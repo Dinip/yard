@@ -6,6 +6,7 @@
 //! containers, N ZMQ connections and N config files collapse into one.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -60,6 +61,11 @@ pub struct Device {
     info: RwLock<Option<DeviceInfo>>,
     /// Rate limiter for activity reports, not a record of activity itself.
     activity: ActivityThrottle,
+    /// Installs attempted on this device, for the metrics exporter. Counted
+    /// where the result is already reported upstream, so the session server
+    /// needs no knowledge of metrics at all.
+    installs_ok: AtomicU64,
+    installs_failed: AtomicU64,
 }
 
 impl Device {
@@ -73,6 +79,14 @@ impl Device {
 
     pub async fn info(&self) -> Option<DeviceInfo> {
         self.info.read().await.clone()
+    }
+
+    /// Installs attempted, as `(ok, failed)`.
+    pub fn install_counts(&self) -> (u64, u64) {
+        (
+            self.installs_ok.load(Ordering::Relaxed),
+            self.installs_failed.load(Ordering::Relaxed),
+        )
     }
 
 
@@ -170,6 +184,8 @@ impl Supervisor {
                 status: RwLock::new(DeviceStatus::Preparing),
                 info: RwLock::new(None),
                 activity: ActivityThrottle::default(),
+                installs_ok: AtomicU64::new(0),
+                installs_failed: AtomicU64::new(0),
             }),
         );
     }
@@ -300,6 +316,15 @@ impl Supervisor {
         sha256: &str,
         error: Option<String>,
     ) {
+        if let Some(device) = self.devices.get(device_id) {
+            let counter = if error.is_none() {
+                &device.installs_ok
+            } else {
+                &device.installs_failed
+            };
+            counter.fetch_add(1, Ordering::Relaxed);
+        }
+
         self.push(ProviderMessage::InstallFinished {
             device_id: device_id.to_owned(),
             user_id: user_id.to_owned(),
