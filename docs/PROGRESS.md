@@ -1093,6 +1093,14 @@ so the fallback to `ioregistry` never fired and iOS reported no battery at all.
 It now tries the registry first and judges each source by whether a *level* came
 out of it. Both real shapes are now test fixtures.
 
+### A second bug the hardware caught
+
+A reserved device reported `farm_device_status{status="ready"}`. The provider's
+own status can never be `busy` — that is the coordinator's word — so the raw
+export made the `busy` series permanently dead *and* made every in-use device
+advertise itself as available. The exporter now combines the provider status with
+the session registry; health still wins over occupancy.
+
 ### Still to confirm
 
 A device that is *actually* warm or busy — everything above was measured on an

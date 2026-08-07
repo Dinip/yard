@@ -286,9 +286,10 @@ pub async fn encode(state: &MetricsState) -> String {
     // (nothing at all).
     for device in &devices {
         let id: &str = &device.id;
-        let status = device.status().await;
         let video = device.backend.video();
         let (installs_ok, installs_failed) = device.install_counts();
+        let session_active = state.supervisor.sessions().current(id).await.is_some();
+        let status = effective_status(device.status().await, session_active);
 
         // One series per status with 1 on the current one, node_exporter's enum
         // idiom, so an alert is `== 1` rather than `absent()`.
@@ -305,9 +306,7 @@ pub async fn encode(state: &MetricsState) -> String {
             "farm_device_session_active",
             "1 while a reservation is authorized on this device.",
             &[("device", id)],
-            f64::from(u8::from(
-                state.supervisor.sessions().current(id).await.is_some(),
-            )),
+            f64::from(u8::from(session_active)),
         );
         out.gauge(
             "farm_device_viewers",
@@ -479,6 +478,32 @@ const ALL_STATUSES: &[DeviceStatus] = &[
     DeviceStatus::Busy,
     DeviceStatus::Unhealthy,
 ];
+
+/// What an operator means by a device's status, which is not quite what the
+/// provider tracks.
+///
+/// A provider's own status is only ever `preparing`, `ready` or `unhealthy` —
+/// `busy` is the coordinator's word, assigned when a reservation goes active,
+/// and [`crate::supervisor::Supervisor::refresh`] deliberately never writes it.
+/// Exporting the raw value therefore made `busy` a permanently dead series and,
+/// far worse, made every reserved device report `ready` — which on a dashboard
+/// reads as "free, take it" about a device someone is actively using.
+///
+/// So the exporter reconstructs it. The provider holds the authoritative input:
+/// an authorized reservation is exactly what the coordinator sets `busy` for,
+/// and it is the same fact that admits a viewer to the session plane. This does
+/// not change what the provider *reports upstream* — the control plane still
+/// never says `busy` — it only makes the observability surface mean what
+/// everyone reading it will assume.
+///
+/// Health wins over occupancy: a broken phone that happens to be reserved is
+/// still broken, and must not hide behind `busy`.
+fn effective_status(status: DeviceStatus, session_active: bool) -> DeviceStatus {
+    match status {
+        DeviceStatus::Ready if session_active => DeviceStatus::Busy,
+        other => other,
+    }
+}
 
 fn status_label(status: DeviceStatus) -> &'static str {
     match status {

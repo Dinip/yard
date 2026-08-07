@@ -175,6 +175,17 @@ inherit the CORS layer. There is deliberately **no auth** on the metrics port �
 bind it to an interface only your monitoring reaches. It is not a fifth plane;
 see [ARCHITECTURE.md](./ARCHITECTURE.md).
 
+**`farm_device_status` is reconstructed, not reported.** A provider's own status
+is only ever `preparing`, `ready` or `unhealthy` — `busy` is the coordinator's
+word, set when a reservation goes active, and the supervisor deliberately never
+writes it. Exporting the raw value made `busy` a permanently dead series and made
+every *reserved* device report `ready`, which on a dashboard reads as "free, take
+it" about a device someone is using. So the exporter combines the status with the
+session registry, which is the same fact the coordinator sets `busy` for and the
+same one that admits a viewer to the session plane. Health still wins over
+occupancy: a broken phone that happens to be reserved reports `unhealthy`. None of
+this changes what goes upstream — the control plane still never says `busy`.
+
 **The scrape reads a cache.** A background task samples every device on
 `interval_secs`, eight at a time, each under a timeout of half the interval. The
 supervisor's own poll loop is sequential but this one cannot be: a sample is

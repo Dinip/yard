@@ -239,6 +239,81 @@ async fn device_status_emits_one_series_per_status() {
     assert_eq!(unhealthy, Some(0.0));
 }
 
+/// A reserved device must not read as `ready`.
+///
+/// `ready` on a dashboard means "free, take it". The provider's own status can
+/// never be `busy` — that word belongs to the coordinator — so the exporter has
+/// to combine the two, or every in-use device advertises itself as available.
+#[tokio::test]
+async fn a_reserved_device_reports_busy_rather_than_ready() {
+    let h = start(&[]).await;
+    let ready = format!("farm_device_status{{device=\"{IOS_DEVICE}\",status=\"ready\"}}");
+    let busy = format!("farm_device_status{{device=\"{IOS_DEVICE}\",status=\"busy\"}}");
+
+    let body = h.text().await;
+    assert_eq!(series(&body, &ready), Some(1.0));
+    assert_eq!(series(&body, &busy), Some(0.0));
+
+    h.sessions
+        .authorize(
+            IOS_DEVICE,
+            Authorization {
+                reservation_id: "res-1".into(),
+                user_id: "user-1".into(),
+            },
+        )
+        .await;
+
+    let body = h.text().await;
+    assert_eq!(series(&body, &busy), Some(1.0), "a reserved device is busy");
+    assert_eq!(
+        series(&body, &ready),
+        Some(0.0),
+        "and must not still advertise itself as ready"
+    );
+
+    // Releasing gives it back.
+    h.sessions.revoke(IOS_DEVICE, "test").await;
+    let body = h.text().await;
+    assert_eq!(series(&body, &ready), Some(1.0));
+    assert_eq!(series(&body, &busy), Some(0.0));
+}
+
+/// An unhealthy device is unhealthy whether or not someone holds it: a broken
+/// phone that happens to be reserved must not hide behind `busy`.
+#[tokio::test]
+async fn a_reservation_does_not_mask_an_unhealthy_device() {
+    let h = start(&[]).await;
+    h.android.state.healthy.store(false, Ordering::Relaxed);
+    h.state.supervisor.bootstrap().await;
+
+    h.sessions
+        .authorize(
+            ANDROID_DEVICE,
+            Authorization {
+                reservation_id: "res-2".into(),
+                user_id: "user-1".into(),
+            },
+        )
+        .await;
+
+    let body = h.text().await;
+    assert_eq!(
+        series(
+            &body,
+            &format!("farm_device_status{{device=\"{ANDROID_DEVICE}\",status=\"unhealthy\"}}")
+        ),
+        Some(1.0)
+    );
+    assert_eq!(
+        series(
+            &body,
+            &format!("farm_device_status{{device=\"{ANDROID_DEVICE}\",status=\"busy\"}}")
+        ),
+        Some(0.0)
+    );
+}
+
 #[tokio::test]
 async fn an_authorized_reservation_shows_as_an_active_session() {
     let h = start(&[]).await;
