@@ -1101,6 +1101,20 @@ export made the `busy` series permanently dead *and* made every in-use device
 advertise itself as available. The exporter now combines the provider status with
 the session registry; health still wins over occupancy.
 
+### The dashboard needed a browser to verify
+
+Every check through Grafana's API passed while the dashboard was, in fact,
+blank. Three separate faults, none visible without opening it:
+
+- Prometheus targets default to **instant** queries. Hand-written panel JSON has
+  to say `range: true` — Grafana's query editor writes it for you. Without it a
+  panel draws a legend and an empty plot, with no error anywhere.
+- The status panel was a time series, which is the wrong shape for a categorical
+  signal. It is a **state timeline** now, with the statuses encoded numerically in
+  PromQL and mapped back to names and colours.
+- Value mappings and a `thresholds` block on the same field fight, and thresholds
+  win: every band rendered as a uniform grey bar labelled `-∞+`.
+
 ### Still to confirm
 
 A device that is *actually* warm or busy — everything above was measured on an
