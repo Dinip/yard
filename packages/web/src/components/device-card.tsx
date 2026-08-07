@@ -3,7 +3,7 @@ import { Battery, Smartphone } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import type { DeviceListItem } from "@/lib/types";
-import { cn } from "@/lib/utils";
+import { cn, platformLabel } from "@/lib/utils";
 
 const STATUS_STYLES: Record<string, string> = {
   ready: "bg-success/15 text-success border-success/30",
@@ -43,9 +43,9 @@ export function DeviceCard({ device }: { device: DeviceListItem }) {
 
       <CardContent className="grid gap-1 px-4 text-muted-foreground text-xs">
         <Row label="Platform">
-          <span className="inline-flex items-center gap-1 capitalize">
+          <span className="inline-flex items-center gap-1">
             <Smartphone className="size-3" />
-            {device.platform} {device.osVersion}
+            {platformLabel(device.platform)} {device.osVersion}
           </span>
         </Row>
         {device.displayWidth && device.displayHeight ? (
