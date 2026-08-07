@@ -77,6 +77,10 @@ See docs/DEVELOPMENT.md.
   errors rather than guessing a type name.
 - **The product name lives in `APP_NAME`.** Never hardcode "Device Farm" in a
   user-visible string. See [RENAMING.md](docs/RENAMING.md).
+- **Keep the docs in step with the code.** Before finishing a change, check
+  whether the docs above describe what you just changed — an invariant, a wire
+  message, a schema, a command — and update them in the same commit. PROGRESS.md
+  always; the rest when relevant.
 
 ## Invariants worth knowing
 
@@ -119,3 +123,16 @@ See docs/DEVELOPMENT.md.
 
 Commit per meaningful unit of work with PROGRESS.md updated alongside. The
 default branch is `main`.
+
+Commit messages and PR titles follow
+[Conventional Commits](https://www.conventionalcommits.org): `type(scope): summary`
+— e.g. `feat(sessions): ask to join a session`, `fix(provider): drop stale RTP
+keyframes`. Scope is the package or feature area; use `!` after the type/scope
+for a breaking change.
+
+This includes PRs: merges are squashed, so the PR title becomes the commit on
+`main` and must be a valid Conventional Commit — not a bare description of the
+branch.
+
+**Ask before opening a PR.** Finishing a unit of work is not permission to
+publish it; propose the title and body and wait for a yes.
