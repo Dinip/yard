@@ -44,6 +44,11 @@ services:
       # on other machines in production — so the scrape target is the host.
       - "host.docker.internal:host-gateway"
 
+  # Deliberately stateless: the datasource and the dashboard are both
+  # provisioned from files, so there is nothing here worth keeping. A volume
+  # would only preserve a *stale* copy of them — a datasource provisioned once
+  # without a uid then refuses to be re-provisioned with one, and Grafana
+  # crash-loops on "data source not found" until the volume is removed.
   grafana:
     image: grafana/grafana:12.2.0
     profiles: [observability]
@@ -54,14 +59,15 @@ services:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
       GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      # Nothing here needs them, and they fail their signature check and slow
+      # every start by re-downloading.
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
     ports:
       - "3001:3000"
     volumes:
       - ./docs/observability/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./docs/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
-      - grafana-dev-data:/var/lib/grafana
 
 volumes:
   postgres-dev-data:
   prometheus-dev-data:
-  grafana-dev-data:

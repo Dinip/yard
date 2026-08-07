@@ -1,19 +1,32 @@
 {
-  "title": "Device farm — devices",
+  "title": "Device farm \u2014 devices",
   "uid": "farm-devices",
   "schemaVersion": 39,
   "refresh": "30s",
-  "time": { "from": "now-1h", "to": "now" },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
   "templating": {
     "list": [
       {
         "name": "device",
         "type": "query",
-        "datasource": { "type": "prometheus", "uid": "$${DS_PROMETHEUS}" },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "farm-prometheus"
+        },
         "query": "label_values(farm_device_status, device)",
         "includeAll": true,
         "multi": true,
-        "current": { "text": "All", "value": "$__all" }
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        },
+        "refresh": 1,
+        "sort": 1,
+        "definition": "label_values(farm_device_status, device)",
+        "label": "Device"
       }
     ]
   },
@@ -23,92 +36,205 @@
       "type": "timeseries",
       "title": "CPU busy",
       "description": "Everything but idle, as a fraction of total CPU time. Derived from counters, so the window follows the dashboard's.",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
       "fieldConfig": {
-        "defaults": { "unit": "percentunit", "min": 0, "max": 1 },
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        },
         "overrides": []
       },
       "targets": [
         {
           "expr": "sum by (device) (rate(farm_device_cpu_seconds_total{device=~\"$device\",mode!=\"idle\"}[5m])) / sum by (device) (rate(farm_device_cpu_seconds_total{device=~\"$device\"}[5m]))",
-          "legendFormat": "{{device}}"
+          "legendFormat": "{{device}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "farm-prometheus"
+          }
         }
-      ]
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "farm-prometheus"
+      }
     },
     {
       "id": 2,
       "type": "timeseries",
       "title": "Memory used",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
-      "fieldConfig": { "defaults": { "unit": "bytes", "min": 0 }, "overrides": [] },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "min": 0
+        },
+        "overrides": []
+      },
       "targets": [
         {
           "expr": "farm_device_memory_used_bytes{device=~\"$device\"}",
-          "legendFormat": "{{device}}"
+          "legendFormat": "{{device}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "farm-prometheus"
+          }
         }
-      ]
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "farm-prometheus"
+      }
     },
     {
       "id": 3,
       "type": "timeseries",
       "title": "Temperature",
       "description": "Battery temperature, plus any thermal zone the device let us read. A phone that throttles here streams badly and fails tests in ways that look like flaky software.",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
-      "fieldConfig": { "defaults": { "unit": "celsius" }, "overrides": [] },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "celsius"
+        },
+        "overrides": []
+      },
       "targets": [
         {
           "expr": "farm_device_battery_temperature_celsius{device=~\"$device\"}",
-          "legendFormat": "{{device}} battery"
+          "legendFormat": "{{device}} battery",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "farm-prometheus"
+          }
         },
         {
           "expr": "farm_device_thermal_zone_celsius{device=~\"$device\"}",
-          "legendFormat": "{{device}} {{zone}}"
+          "legendFormat": "{{device}} {{zone}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "farm-prometheus"
+          }
         }
-      ]
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "farm-prometheus"
+      }
     },
     {
       "id": 4,
       "type": "timeseries",
       "title": "Battery",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
       "fieldConfig": {
-        "defaults": { "unit": "percentunit", "min": 0, "max": 1 },
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        },
         "overrides": []
       },
       "targets": [
         {
           "expr": "farm_device_battery_level_ratio{device=~\"$device\"}",
-          "legendFormat": "{{device}}"
+          "legendFormat": "{{device}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "farm-prometheus"
+          }
         }
-      ]
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "farm-prometheus"
+      }
     },
     {
       "id": 5,
       "type": "timeseries",
-      "title": "Watched apps — PSS",
+      "title": "Watched apps \u2014 PSS",
       "description": "Only processes matching metrics.app_patterns in provider.yaml.",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
-      "fieldConfig": { "defaults": { "unit": "bytes", "min": 0 }, "overrides": [] },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "min": 0
+        },
+        "overrides": []
+      },
       "targets": [
         {
           "expr": "farm_app_memory_pss_bytes{device=~\"$device\"}",
-          "legendFormat": "{{device}} {{app}}"
+          "legendFormat": "{{device}} {{app}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "farm-prometheus"
+          }
         }
-      ]
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "farm-prometheus"
+      }
     },
     {
       "id": 6,
       "type": "timeseries",
       "title": "Device status",
       "description": "One series per status, 1 on the current one. A device whose CPU series vanished but whose status is still reported has gone away; nothing at all means the exporter is down.",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
-      "fieldConfig": { "defaults": { "min": 0, "max": 1 }, "overrides": [] },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 1
+        },
+        "overrides": []
+      },
       "targets": [
         {
           "expr": "farm_device_status{device=~\"$device\"} == 1",
-          "legendFormat": "{{device}} {{status}}"
+          "legendFormat": "{{device}} {{status}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "farm-prometheus"
+          }
         }
-      ]
+      ],
+      "datasource": {
+        "type": "prometheus",
+        "uid": "farm-prometheus"
+      }
     }
   ]
 }
