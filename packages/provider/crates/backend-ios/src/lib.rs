@@ -30,7 +30,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
-use farm_protocol::{AppInfo, Display, Platform};
+use farm_protocol::{AppInfo, Display, FileEntry, FileKind, FileListing, Platform};
 use idevice::core_device::{
     AppServiceClient, ImageFormat, PasteboardPayload, PasteboardServiceClient, RotationDirection,
     ScreenCaptureServiceClient, GENERAL_PASTEBOARD,
@@ -38,9 +38,11 @@ use idevice::core_device::{
 use idevice::diagnostics_relay::DiagnosticsRelayClient;
 use idevice::installation_proxy::InstallationProxyClient;
 use idevice::services::afc::{opcode::AfcFopenMode, AfcClient};
+use idevice::services::house_arrest::HouseArrestClient;
 use idevice::{IdeviceService as _, ReadWrite};
 use provider_core::backend::{
-    BackendError, DeviceBackend, DeviceInfo, InputEvent, ProgressSink, Result as BackendResult,
+    join_path, parent_of, BackendError, DeviceBackend, DeviceInfo, InputEvent, ProgressSink,
+    Result as BackendResult,
 };
 use provider_core::video::{channel, VideoGeometry, VideoHandle, VideoPublisher};
 use tokio::sync::Mutex;
@@ -51,6 +53,82 @@ use crate::hid::Input;
 
 /// Where an IPA is staged on the device before `installation_proxy` installs it.
 const STAGING_DIR: &str = "PublicStaging";
+
+/// Read size for pulling a file off the device over AFC.
+const AFC_CHUNK: usize = 256 * 1024;
+
+/// Where iOS file browsing can actually reach, as a path the browser carries
+/// around opaquely.
+///
+/// An iPhone has no single filesystem to walk. `com.apple.afc` vends the *media*
+/// domain — `DCIM`, `Downloads`, `Books` — while everything a user saves through
+/// "Save to Files → On My iPhone" lands in some **app's** container, which is a
+/// separate `house_arrest` vend per app and cannot be reached from the media
+/// root at all. Those are two disjoint trees, so the path carries which one it
+/// means rather than pretending there is one root above them.
+enum IosPath {
+    /// The synthetic top: lists the media domain and every app that shares files.
+    Root,
+    /// `media:<absolute>` — the AFC media domain.
+    Media(String),
+    /// `app:<bundle>:<absolute>` — one app's Documents, via `house_arrest`.
+    App { bundle: String, path: String },
+}
+
+const MEDIA_PREFIX: &str = "media:";
+const APP_PREFIX: &str = "app:";
+
+/// The only directory a `VendDocuments` AFC session may read.
+///
+/// The vend hands over the app's *container*, then denies everything in it
+/// except this — listing `/` answers `Afc(PermDenied)`, which reads exactly
+/// like a broken feature. So the app tree starts here rather than one level up
+/// at a root that exists and refuses.
+const APP_DOCUMENTS: &str = "/Documents";
+
+impl IosPath {
+    fn parse(raw: &str) -> Self {
+        if let Some(rest) = raw.strip_prefix(MEDIA_PREFIX) {
+            return Self::Media(normalize(rest));
+        }
+        if let Some(rest) = raw.strip_prefix(APP_PREFIX) {
+            // `app:<bundle>:<path>` — split on the first colon only, since a
+            // bundle id never contains one and a path may.
+            if let Some((bundle, path)) = rest.split_once(':') {
+                return Self::App {
+                    bundle: bundle.to_owned(),
+                    path: normalize(path),
+                };
+            }
+        }
+        Self::Root
+    }
+
+    /// The path one level up, or `None` at a tree's own root — which is what
+    /// makes the browser show ".." exactly where there is somewhere to go.
+    fn parent(raw: &str) -> Option<String> {
+        match Self::parse(raw) {
+            Self::Root => None,
+            // Up from the top of either tree is the synthetic root, so the two
+            // disjoint trees are still navigable as one browse.
+            Self::Media(path) if path == "/" => Some("/".into()),
+            Self::App { path, .. } if path == APP_DOCUMENTS => Some("/".into()),
+            Self::Media(path) => Some(format!("{MEDIA_PREFIX}{}", parent_of(&path)?)),
+            Self::App { bundle, path } => {
+                Some(format!("{APP_PREFIX}{bundle}:{}", parent_of(&path)?))
+            }
+        }
+    }
+}
+
+fn normalize(path: &str) -> String {
+    let trimmed = path.trim_end_matches('/');
+    if trimmed.is_empty() {
+        "/".to_owned()
+    } else {
+        trimmed.to_owned()
+    }
+}
 
 /// Longest a contact may stay down with no further samples before the provider
 /// lifts it on its own. Generous enough for a deliberate long-press, short
@@ -241,6 +319,94 @@ impl IosBackend {
             .session()
             .await
             .ok_or_else(|| BackendError::Unavailable("the device session went away".into()))
+    }
+
+    /// The synthetic root: the media domain, then every app that shares files.
+    ///
+    /// `UIFileSharingEnabled` is exactly the flag that decides whether an app
+    /// appears under "On My iPhone" in the Files app, so listing by it means
+    /// this browser shows the same set the phone does. Apps are asked for over
+    /// `installation_proxy`, which returns each one's whole Info.plist — the
+    /// flag is already in the answer, so this costs one round-trip, not one per
+    /// app.
+    async fn list_file_domains(
+        &self,
+        provider: &dyn idevice::provider::IdeviceProvider,
+    ) -> BackendResult<FileListing> {
+        let mut entries = vec![FileEntry {
+            name: "Media".into(),
+            path: format!("{MEDIA_PREFIX}/"),
+            kind: FileKind::Directory,
+            size: None,
+            modified_at: None,
+        }];
+
+        let mut proxy = InstallationProxyClient::connect(provider)
+            .await
+            .map_err(|err| BackendError::Failed(format!("installation_proxy connect: {err:?}")))?;
+
+        let apps = proxy
+            .get_apps(Some("User"), None)
+            .await
+            .map_err(|err| BackendError::Failed(format!("list apps: {err:?}")))?;
+
+        let mut sharing: Vec<(String, String)> = apps
+            .into_iter()
+            .filter_map(|(bundle, info)| {
+                let dict = info.as_dictionary()?;
+                let shares = dict
+                    .get("UIFileSharingEnabled")
+                    .and_then(plist::Value::as_boolean)
+                    .unwrap_or(false);
+                if !shares {
+                    return None;
+                }
+                let name = dict
+                    .get("CFBundleDisplayName")
+                    .or_else(|| dict.get("CFBundleName"))
+                    .and_then(plist::Value::as_string)
+                    .unwrap_or(&bundle)
+                    .to_owned();
+                Some((name, bundle))
+            })
+            .collect();
+        sharing.sort_by_key(|(name, _)| name.to_lowercase());
+
+        // An app suite ships several bundles under one display name — this
+        // phone lists "My BMW" three times — and three identical rows is not a
+        // choice anyone can make. Only the ambiguous ones get the bundle id,
+        // so the common case stays clean.
+        let duplicated: std::collections::HashSet<&str> = sharing
+            .iter()
+            .enumerate()
+            .filter(|(i, (name, _))| {
+                sharing
+                    .iter()
+                    .enumerate()
+                    .any(|(j, (other, _))| j != *i && other == name)
+            })
+            .map(|(_, (name, _))| name.as_str())
+            .collect();
+        let duplicated: std::collections::HashSet<String> =
+            duplicated.into_iter().map(str::to_owned).collect();
+
+        entries.extend(sharing.into_iter().map(|(name, bundle)| FileEntry {
+            name: if duplicated.contains(&name) {
+                format!("{name} ({bundle})")
+            } else {
+                name
+            },
+            path: format!("{APP_PREFIX}{bundle}:{APP_DOCUMENTS}"),
+            kind: FileKind::Directory,
+            size: None,
+            modified_at: None,
+        }));
+
+        Ok(FileListing {
+            path: "/".into(),
+            parent: None,
+            entries,
+        })
     }
 
     async fn send(&self, input: Input) {
@@ -662,6 +828,137 @@ impl DeviceBackend for IosBackend {
         Ok(())
     }
 
+    fn files_root(&self) -> Option<&'static str> {
+        Some("/")
+    }
+
+    /// One directory, from whichever of the two trees the path names.
+    ///
+    /// **An iPhone has no single filesystem to browse**, so the root here is
+    /// synthetic: it lists the AFC media domain (`DCIM`, `Downloads`, `Books`)
+    /// alongside every installed app that shares files. Those are separate
+    /// services — `com.apple.afc` and a per-app `house_arrest` vend — and
+    /// nothing joins them on the device. Anything saved through
+    /// "Save to Files → On My iPhone" lives in an app container, which is why
+    /// the media domain alone left people unable to find their own file.
+    ///
+    /// One `get_file_info` round-trip per entry, because AFC has no batched
+    /// stat. Fine for a directory a person is looking at; it is the reason this
+    /// is a browse rather than a recursive search.
+    async fn list_files(&self, path: &str) -> BackendResult<FileListing> {
+        let provider = device::usbmux_provider(&self.options.udid).await?;
+
+        let (mut afc, prefix, inner) = match IosPath::parse(path) {
+            IosPath::Root => return self.list_file_domains(&*provider).await,
+            IosPath::Media(inner) => {
+                let afc = AfcClient::connect(&*provider)
+                    .await
+                    .map_err(|err| BackendError::Failed(format!("afc connect: {err:?}")))?;
+                (afc, MEDIA_PREFIX.to_owned(), inner)
+            }
+            IosPath::App { bundle, path: inner } => {
+                let house = HouseArrestClient::connect(&*provider)
+                    .await
+                    .map_err(|err| BackendError::Failed(format!("house_arrest connect: {err:?}")))?;
+                // Documents rather than the whole container: the rest is denied
+                // for an app that has not opted in, and the error that produces
+                // says nothing a user can act on.
+                let afc = house.vend_documents(bundle.clone()).await.map_err(|err| {
+                    BackendError::Failed(format!("{bundle} does not share files: {err:?}"))
+                })?;
+                (afc, format!("{APP_PREFIX}{bundle}:"), inner)
+            }
+        };
+        let names = afc
+            .list_dir(inner.clone())
+            .await
+            .map_err(|err| BackendError::Failed(format!("list {inner}: {err:?}")))?;
+
+        let mut entries = Vec::new();
+        for name in names {
+            if name == "." || name == ".." {
+                continue;
+            }
+            let child = join_path(&inner, &name);
+            // A single unreadable entry must not lose the whole listing — the
+            // directory is still worth showing, with that one as `other`.
+            let info = afc.get_file_info(child.clone()).await.ok();
+            let kind = match info.as_ref().map(|i| i.st_ifmt.as_str()) {
+                Some("S_IFDIR") => FileKind::Directory,
+                Some("S_IFREG") => FileKind::File,
+                _ => FileKind::Other,
+            };
+            entries.push(FileEntry {
+                name,
+                path: format!("{prefix}{child}"),
+                size: (kind == FileKind::File).then(|| info.as_ref().map_or(0, |i| i.size as i64)),
+                modified_at: info.map(|i| i.modified.and_utc().timestamp_millis()),
+                kind,
+            });
+        }
+
+        Ok(FileListing {
+            path: path.to_owned(),
+            parent: IosPath::parent(path),
+            entries,
+        })
+    }
+
+    async fn pull_file(&self, path: &str, dest: &Path) -> BackendResult<u64> {
+        use tokio::io::AsyncWriteExt as _;
+
+        let provider = device::usbmux_provider(&self.options.udid).await?;
+        let (mut afc, inner) = match IosPath::parse(path) {
+            IosPath::Root => return Err(BackendError::Failed("that is not a file".into())),
+            IosPath::Media(inner) => {
+                let afc = AfcClient::connect(&*provider)
+                    .await
+                    .map_err(|err| BackendError::Failed(format!("afc connect: {err:?}")))?;
+                (afc, inner)
+            }
+            IosPath::App { bundle, path: inner } => {
+                let house = HouseArrestClient::connect(&*provider)
+                    .await
+                    .map_err(|err| BackendError::Failed(format!("house_arrest connect: {err:?}")))?;
+                let afc = house.vend_documents(bundle.clone()).await.map_err(|err| {
+                    BackendError::Failed(format!("{bundle} does not share files: {err:?}"))
+                })?;
+                (afc, inner)
+            }
+        };
+        let mut remote = afc
+            .open(inner.clone(), AfcFopenMode::RdOnly)
+            .await
+            .map_err(|err| BackendError::Failed(format!("open {inner}: {err:?}")))?;
+
+        let mut file = tokio::fs::File::create(dest)
+            .await
+            .with_context(|| format!("creating {}", dest.display()))?;
+        let mut written: u64 = 0;
+
+        // Chunked rather than `read_entire`: the point of staging to disk is
+        // that a video off a phone never sits in the provider's memory, and
+        // reading it whole here would undo that one line before writing it out.
+        loop {
+            let chunk = remote
+                .read_n(AFC_CHUNK)
+                .await
+                .map_err(|err| BackendError::Failed(format!("read {inner}: {err:?}")))?;
+            if chunk.is_empty() {
+                break;
+            }
+            written += chunk.len() as u64;
+            file.write_all(&chunk).await.context("writing staged file")?;
+            if chunk.len() < AFC_CHUNK {
+                break;
+            }
+        }
+
+        file.flush().await.context("flushing staged file")?;
+        let _ = remote.close().await;
+        Ok(written)
+    }
+
     /// The session plane sends an absolute angle; CoreDevice's orientation
     /// service only steps 90° at a time, so we walk there.
     ///
@@ -750,6 +1047,40 @@ impl DeviceBackend for IosBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_two_file_trees_stay_apart_but_navigate_as_one() {
+        assert!(matches!(IosPath::parse("/"), IosPath::Root));
+
+        // Media, and its walk back up to the synthetic root.
+        assert!(matches!(IosPath::parse("media:/DCIM"), IosPath::Media(p) if p == "/DCIM"));
+        assert_eq!(IosPath::parent("media:/DCIM/100APPLE").as_deref(), Some("media:/DCIM"));
+        assert_eq!(IosPath::parent("media:/DCIM").as_deref(), Some("media:/"));
+        assert_eq!(IosPath::parent("media:/").as_deref(), Some("/"));
+
+        // An app container. The bundle id must survive a path that has its own
+        // colons, which is why only the first one splits.
+        match IosPath::parse("app:com.example.App:/Documents/Reports") {
+            IosPath::App { bundle, path } => {
+                assert_eq!(bundle, "com.example.App");
+                assert_eq!(path, "/Documents/Reports");
+            }
+            _ => panic!("an app path did not parse as one"),
+        }
+        assert_eq!(
+            IosPath::parent("app:com.example.App:/Documents/Reports").as_deref(),
+            Some("app:com.example.App:/Documents"),
+        );
+        // Documents is the top of an app tree — a VendDocuments session denies
+        // everything above it, so walking up goes to the synthetic root.
+        assert_eq!(
+            IosPath::parent("app:com.example.App:/Documents").as_deref(),
+            Some("/"),
+        );
+
+        // The top has nowhere above it, so the browser hides "..".
+        assert_eq!(IosPath::parent("/"), None);
+    }
 
     /// The constant this file exists to get right.
     ///

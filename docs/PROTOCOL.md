@@ -93,6 +93,7 @@ command dispatch.
 | `device.status` / `.display` / `.battery` | Targeted field updates |
 | `command.result` | Settles the correlated pending command |
 | `install.finished` | Written to `auditLog` — the file is already deleted |
+| `file.pulled` | Written to `auditLog` — bytes left the device and the coordinator was not on the path |
 
 ### coordinator → provider (`CoordinatorMessage`)
 
@@ -168,12 +169,39 @@ regression `stf-ios-provider/src/control.rs` documents at length.
 ## Artifact plane — browser → provider ✅ built
 
 Same port, same token. `POST /s/:deviceId/install`,
-`GET /s/:deviceId/screenshot.png`, `GET /s/:deviceId/mjpeg`.
+`GET /s/:deviceId/screenshot.png`, `GET /s/:deviceId/mjpeg`,
+`GET /s/:deviceId/files`, `GET /s/:deviceId/file`.
 
 `/mjpeg` is the degraded fallback for browsers that cannot decode the real
 stream: `multipart/x-mixed-replace` at ~3fps. Its parts are **PNG** despite the
 path — both backends capture PNG, and converting would mean a transcode in the
 provider, which happens nowhere in this system.
+
+### Files off a device
+
+`GET /s/:deviceId/files?path=…` answers a `FileListing` — the plane's first
+schema'd response, in `packages/protocol/src/files.ts` so the provider
+serialises a generated struct rather than a hand-rolled one. `path` absent means
+"wherever this backend opens", so the browser never has to know that Android
+means `/sdcard` and iOS means the AFC media root. A backend with no filesystem
+access answers **501**, which is a different thing from an empty directory and
+is rendered as such.
+
+`GET /s/:deviceId/file?path=…` answers the bytes. The provider copies the file
+into its scratch directory, serves it, and deletes it when the response body is
+dropped — the same staging the install path uses in the other direction, and for
+the same reason: a video off a phone must never sit in the provider's memory.
+There is still no artifact storage anywhere.
+
+**This is the only operation in the system that carries data out of a device**,
+so it is the one that must be audited, and the audit row is written *before* the
+body is sent: a download the client aborts half way still took the bytes off the
+device. Directory listings are not audited — one browse would write a row per
+click, and the row worth keeping is the one with the digest on it.
+
+A directory the device refuses answers **502 with the device's own words**.
+"Permission denied" is the whole answer for an unrooted adb reading
+`/data/data`, and rewording it would only hide which path said no.
 
 ### CORS is structural here, not incidental
 

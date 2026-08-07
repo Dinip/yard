@@ -189,6 +189,18 @@ export class GatewaySession {
           providerId: this.auth.providerId,
         });
         break;
+
+      case "file.pulled":
+        // The one operation that carries data *out* of a device, and the
+        // coordinator was not on the path — so this row and its digest are the
+        // whole record of what was taken.
+        await audit(db, msg.userId, "device.file_pull", "device", msg.deviceId, {
+          path: msg.path,
+          size: msg.size,
+          sha256: msg.sha256,
+          providerId: this.auth.providerId,
+        });
+        break;
     }
   }
 

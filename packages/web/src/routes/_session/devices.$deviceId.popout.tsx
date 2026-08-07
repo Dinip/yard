@@ -78,6 +78,7 @@ function PopoutPage() {
       {inSession ? (
         <DeviceConsole
           deviceId={deviceId}
+          platform={device.platform}
           active
           className="flex-1"
           showPopout={false}

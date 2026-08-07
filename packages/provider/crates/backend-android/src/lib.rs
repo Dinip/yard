@@ -20,10 +20,10 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
-use farm_protocol::{AppInfo, Display, Platform};
+use farm_protocol::{AppInfo, Display, FileEntry, FileKind, FileListing, Platform};
 use provider_core::backend::{
-    BackendError, DeviceBackend, DeviceInfo, InputEvent, ProgressSink, RemoteDebug,
-    Result as BackendResult,
+    join_path, parent_of, BackendError, DeviceBackend, DeviceInfo, InputEvent, ProgressSink,
+    RemoteDebug, Result as BackendResult,
 };
 use provider_core::video::{channel, VideoGeometry, VideoHandle, VideoPublisher};
 use tokio::net::TcpStream;
@@ -46,6 +46,11 @@ const ADB_RESTART_TIMEOUT: Duration = Duration::from_secs(15);
 /// The port `adbd` listens on when told to. 5555 is the convention every
 /// `adb connect` example assumes.
 const DEVICE_ADB_PORT: u16 = 5555;
+
+/// Where the file browser opens. Shared external storage is where anything a
+/// tester wants off a phone ends up — screenshots, exports, downloads — and it
+/// is what an unrooted adb can actually read.
+const FILES_ROOT: &str = "/sdcard";
 
 /// Longest a contact may stay down with no further samples before the provider
 /// lifts it on its own. Same reasoning as the iOS backend: a browser that loses
@@ -544,6 +549,60 @@ impl DeviceBackend for AndroidBackend {
             )));
         }
         Ok(())
+    }
+
+    fn files_root(&self) -> Option<&'static str> {
+        Some(FILES_ROOT)
+    }
+
+    /// One directory, straight off the sync protocol's `LIST`.
+    ///
+    /// Navigation is deliberately not fenced to [`FILES_ROOT`]: adb runs
+    /// unrooted here, so the device's own permissions are the real boundary and
+    /// a second one drawn in the provider would only be decoration — it would
+    /// hide `/sdcard/Android/data` while `/data/data` still answered "Permission
+    /// denied" on its own. A directory adb cannot read says so, in the device's
+    /// own words.
+    async fn list_files(&self, path: &str) -> BackendResult<FileListing> {
+        let path = path.trim_end_matches('/');
+        let path = if path.is_empty() { "/" } else { path };
+
+        let entries = self
+            .adb
+            .list(&self.options.serial, path)
+            .await
+            .map_err(|err| BackendError::Failed(format!("{err:#}")))?;
+
+        let entries = entries
+            .iter()
+            .map(|entry| FileEntry {
+                path: join_path(path, &entry.name),
+                name: entry.name.clone(),
+                kind: if entry.is_dir() {
+                    FileKind::Directory
+                } else if entry.is_file() {
+                    FileKind::File
+                } else {
+                    FileKind::Other
+                },
+                size: entry.is_file().then_some(entry.size as i64),
+                // Seconds on the wire, milliseconds everywhere in this project.
+                modified_at: (entry.mtime > 0).then(|| entry.mtime as i64 * 1000),
+            })
+            .collect();
+
+        Ok(FileListing {
+            path: path.to_owned(),
+            parent: parent_of(path).map(str::to_owned),
+            entries,
+        })
+    }
+
+    async fn pull_file(&self, path: &str, dest: &Path) -> BackendResult<u64> {
+        self.adb
+            .pull(&self.options.serial, path, dest)
+            .await
+            .map_err(|err| BackendError::Failed(format!("{err:#}")))
     }
 
     /// scrcpy rotates 90° at a time, so an absolute angle is walked to.

@@ -1,6 +1,7 @@
 export * from "./audit.ts";
 export * from "./common.ts";
 export * from "./control.ts";
+export * from "./files.ts";
 export { named, nameOf, registry } from "./registry.ts";
 export * from "./session.ts";
 export * from "./token.ts";

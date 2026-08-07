@@ -849,6 +849,173 @@ something that does not exist. It now states the floor and stops.
 
 ---
 
+## Phase 13 — Getting things off a device ✅
+
+Everything the farm could do pushed *into* a device — install, type, tap, paste.
+The only thing that came back out was a single PNG, so a tester who reproduced a
+bug had no way to hand over the evidence. Two features close that, deliberately
+built on opposite sides of the system.
+
+| Item | State | Where |
+|---|---|---|
+| `FileEntry` / `FileListing` — the artifact plane's first schemas | ✅ | `protocol/src/files.ts` |
+| `file.pulled` control message + `device.file_pull` audit action | ✅ | `protocol/src/{control,audit}.ts` |
+| `files_root` / `list_files` / `pull_file` on the backend trait | ✅ | `provider-core/src/backend.rs` |
+| `GET /s/:id/files` and `GET /s/:id/file` | ✅ | `provider-core/src/server.rs` |
+| adb sync `LIST` + `RECV` | ✅ | `backend-android/src/adb.rs` |
+| AFC listing and chunked read | ✅ | `backend-ios/src/lib.rs` |
+| A synthetic tree, so the whole path runs with no hardware | ✅ | `backend-mock/src/lib.rs` |
+| Files dialog; `saveBlob` shared by three callers | ✅ | `web/src/components/device-files-dialog.tsx` |
+| `ScreenRecorder` — canvas → MP4, capped at 2 minutes | ✅ | `web/src/lib/screen/recorder.ts` |
+
+### The file browser
+
+**Read-only, and that is a decision.** Writing to a device's filesystem is a
+separate question with its own audit weight, and `install` already covers the one
+file anybody needs to put on a device.
+
+It rides the artifact plane, so the coordinator mints a token and is then out of
+the way — and it is **the only operation in the system that carries data out of a
+device**, which makes it the one that most needs auditing. The provider therefore
+reports `file.pulled` up the control plane exactly as it reports an install, with
+the sha256, and the coordinator writes the row. Two things about that row:
+
+- **It is written before the body is sent.** A download the client aborts half
+  way still took the bytes off the device; an egress record that only lands on a
+  clean finish is the wrong direction to be wrong in.
+- **Directory listings are not audited.** One browse would write a row per click,
+  and the row worth keeping is the one with a digest on it.
+
+The pulled file is staged in the scratch directory and deleted when the response
+body drops — the install path's arrangement in reverse, and for the same reason:
+a video off a phone must never sit in the provider's memory. There is still no
+artifact storage anywhere.
+
+**Android uses the sync subprotocol, not `adb shell ls`.** `ls` output differs
+between toybox and toolbox builds and has to be re-guessed per device; `LIST`
+answers fixed-width `DENT` records carrying the mode and size, so a listing costs
+no extra `stat` calls and a directory is tellable from a file without one.
+`RECV` is the mirror of the `SEND` that was already there for the scrcpy server.
+Both are tested against a **fake adb server that writes one byte at a time** —
+the phase-4 scrcpy bug came from assuming a single `read()` returns a whole
+header, and framing readers in this crate now get tested against the hostile case
+by default.
+
+**Navigation is not fenced to `/sdcard`.** adb runs unrooted, so the device's own
+permissions are the real boundary and a second one in the provider would only be
+decoration — it would hide `/sdcard/Android/data` while `/data/data` still
+answered "Permission denied" on its own. So a refused directory answers 502 with
+**the device's own words**, which is also the only thing that tells an unreadable
+directory from an empty one.
+
+**iOS has no single filesystem, so its root is synthetic.** The first cut served
+only `com.apple.afc` — the media directory — and that turned out to be the wrong
+half: **the first thing tried on a real iPhone was a file saved through "Save to
+Files", which lands in an app container and was not there.** So the root now
+lists the media domain *and* every app that shares files, each reached by its own
+`house_arrest` vend. They are genuinely disjoint trees with no common parent on
+the device, so the path carries which one it means (`media:/DCIM`,
+`app:<bundle>:/Documents`) rather than inventing a root above them.
+
+Three things that only a real device would have said:
+
+- **A `VendDocuments` session denies everything above `/Documents`.** Listing the
+  container root answers `Afc(PermDenied)`, which reads exactly like a broken
+  feature, so the app tree starts at `/Documents`.
+- **`UIFileSharingEnabled` is the right filter**, because it is the same flag
+  that decides whether an app appears under "On My iPhone" — so the browser shows
+  the set the phone shows. It rides in the `installation_proxy` answer already,
+  so this costs one round-trip rather than one per app.
+- **An app suite ships several bundles under one display name.** The test phone
+  listed "My BMW" three times, which is not a choice anyone can make; the
+  ambiguous rows now carry their bundle id and unique ones stay clean.
+
+Still out of reach: files saved to the *root* of "On My iPhone" rather than into
+an app's folder, and `crashreportcopymobile` for crash logs — the latter is a
+third tree and the obvious next addition.
+
+One shape worth noting: `files_root` is a **backend** answer rather than a
+platform check in the web app, because what a device exposes is a property of how
+the provider reaches it, not of the logo on the front. A backend that answers
+`None` makes `/files` a 501, which the browser renders as "this device does not
+offer file access" — a different thing from an empty directory.
+
+### Recording
+
+**No provider, protocol or coordinator change at all**, and that is the whole
+point: the frames are already decoded and already painted, so this is the browser
+recording its own canvas. There is nothing here for the audit log to say — the
+coordinator cannot observe it, and a row claiming otherwise would be a fiction.
+
+- **MP4 where the browser will give one.** `MediaRecorder` grew MP4 output only
+  recently and Firefox still has WebM only, so the container is a preference list
+  resolved by `isTypeSupported` and the extension follows from what was actually
+  chosen. A file named `.mp4` by a recorder that produced WebM is worse than a
+  `.webm`.
+- **It captures a fixed-size mirror of the canvas, not the canvas.** The renderer
+  reassigns `canvas.width`/`height` on every geometry change, and an MP4 track
+  has one geometry for its whole length — so the size is fixed at record-start
+  and each frame is drawn in aspect-fitted. Rotating mid-recording letterboxes
+  rather than ending the file, which is what someone recording a rotation bug
+  needs. It also keeps the capture off the live context, which is created
+  `desynchronized` for latency.
+- **The 2-minute cap finalises and saves rather than discarding** — an accidental
+  two minutes is still evidence. So do a revoked session, unmount, and `active`
+  going false, which is the popout handover: every one of those funnels through
+  one `finishRecording`, because a recording that vanished when its window went
+  quiet would be the worst way for this to fail.
+- **Frames are pushed explicitly**, with `captureStream(0)` + `requestFrame()`.
+  The mirror is not in the document, so nothing composites it, and Chrome emits
+  from an uncomposited canvas only occasionally whatever rate it is given.
+  Measured on the Galaxy S22, `captureStream(30)` produced **three frames in
+  forty-one seconds of continuous motion** — a correctly timed slideshow, which
+  is worse than an error because the file looks fine until it is played. With
+  `requestFrame` the same test gives 360 frames in 18s.
+- **A recording running behind a collapsed overlay had nothing to show for
+  itself.** The popout is exactly where a window gets left alone, so the badge —
+  a pulsing dot and the elapsed time — sits outside the collapsing bar, in the
+  opposite corner from the handle, and stops the recording when clicked.
+
+Files are named `<device>_20260807_194105.<ext>`: a unix millisecond count sorts
+just as well and tells a person nothing, and these exist to be matched against a
+bug report.
+
+The raw alternative — teeing the H.264/HEVC access units into an MP4 muxer, no
+re-encode — was considered and rejected. The wire carries no presentation
+timestamps (`decodeChunk` synthesises a nominal 16 666 µs step), so pacing would
+drift; HEVC in MP4 is a narrower playback story than AVC; and recording what the
+viewer actually saw is the honest artifact for a bug report anyway.
+
+### Verified
+
+`cargo test --workspace` and `bun test` (124) pass, clippy clean at `-D warnings`.
+The provider-core suite runs the real axum router against the real mock backend
+over a real socket: a listing opens at the backend root with a null `parent`, a
+subdirectory reports sizes and walks back up, a refused directory answers 502
+carrying the path, a download serves the right bytes with a `Content-Disposition`
+filename **and the staged copy is gone afterwards** — which asserts the guard
+fires rather than that it was never created — and both new routes refuse a
+garbage token (401), a token for another device (403), and a revoked reservation
+(403). The adb `LIST`/`RECV` readers are tested against a fake adb server that
+**writes one byte at a time**.
+
+**Verified on hardware**, which is where three of this phase's bugs came from:
+
+- **Galaxy S22.** Browsed `/sdcard` → `Pictures`, downloaded a 1.1 MB PNG, and
+  its sha256 matched `adb shell sha256sum` exactly. The scratch dir was empty
+  afterwards and `/admin/audit` had the `device.file_pull` row.
+- **iPhone 13.** The synthetic root listed Media and five file-sharing apps;
+  browsing into one showed its real `Documents` and pulling `Approov.log` off it
+  gave 9184 bytes of the app's own log.
+- **Recording**, in the popout: 360 frames over 18.3s of H.264 at the stream's
+  own 590×1280, and a 44.9s file whose duration matched the badge's `0:44`.
+
+**Still to confirm by hand:** the 2-minute cap firing on its own, a rotation
+mid-recording producing one letterboxed file, and a recording started in the main
+tab surviving the popout handover.
+
+---
+
 ## Open decisions
 
 - **Name.** The project is "Device Farm" as a placeholder. See

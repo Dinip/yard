@@ -123,6 +123,23 @@ export const ProviderMessage = named(
       ok: z.boolean(),
       error: z.string().optional(),
     }),
+    /**
+     * Bytes left the device. The coordinator is not on that path — the download
+     * went browser↔provider like every other artifact — so this is the only way
+     * it can record what was taken, which it must: this is the one operation in
+     * the system that carries data *out* of a device.
+     *
+     * Sent on success only, and only for a file. Listing a directory is a
+     * metadata read and would write a row per click.
+     */
+    z.object({
+      type: z.literal("file.pulled"),
+      deviceId: z.string(),
+      userId: z.string(),
+      path: z.string(),
+      size: z.number().int(),
+      sha256: z.string(),
+    }),
   ]),
 );
 

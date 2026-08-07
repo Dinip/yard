@@ -43,6 +43,7 @@ export const AUDIT_ACTIONS = [
   { value: "device.reboot", label: "Reboots", group: "Devices" },
   { value: "device.restart", label: "Session restarts", group: "Devices" },
   { value: "device.adb.expose", label: "Remote debugging enabled", group: "Devices" },
+  { value: "device.file_pull", label: "Pulled a file", group: "Devices" },
 
   // Administration.
   { value: "provider.create", label: "Provider created", group: "Administration" },

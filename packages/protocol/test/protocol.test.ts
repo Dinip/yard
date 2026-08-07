@@ -1,11 +1,18 @@
 import { describe, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { ClientMessage, CoordinatorMessage, ProviderMessage, ServerMessage } from "../src/index.ts";
+import {
+  ClientMessage,
+  CoordinatorMessage,
+  FileListing,
+  ProviderMessage,
+  ServerMessage,
+} from "../src/index.ts";
 import {
   clientFixtures,
   controlFixtures,
   coordinatorFixtures,
+  fileFixtures,
   serverFixtures,
 } from "./fixtures.ts";
 
@@ -14,6 +21,7 @@ const cases = [
   ["CoordinatorMessage", CoordinatorMessage, coordinatorFixtures],
   ["ClientMessage", ClientMessage, clientFixtures],
   ["ServerMessage", ServerMessage, serverFixtures],
+  ["FileListing", FileListing, fileFixtures],
 ] as const;
 
 describe("wire fixtures", () => {
@@ -55,6 +63,7 @@ describe("wire fixtures", () => {
           coordinator: coordinatorFixtures,
           client: clientFixtures,
           server: serverFixtures,
+          files: fileFixtures,
         },
         null,
         2,

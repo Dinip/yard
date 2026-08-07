@@ -105,6 +105,41 @@ export const controlFixtures = {
     sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     ok: true,
   },
+  filePulled: {
+    type: "file.pulled",
+    deviceId: "R5CT10ABCDE",
+    userId: "user-1",
+    path: "/sdcard/DCIM/Camera/IMG_20260807.jpg",
+    size: 2489301,
+    sha256: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+  },
+} as const;
+
+export const fileFixtures = {
+  listing: {
+    path: "/sdcard/DCIM",
+    parent: "/sdcard",
+    entries: [
+      { name: "Camera", path: "/sdcard/DCIM/Camera", kind: "directory", modifiedAt: 1754524800000 },
+      {
+        name: "IMG_20260807.jpg",
+        path: "/sdcard/DCIM/IMG_20260807.jpg",
+        kind: "file",
+        size: 2489301,
+        modifiedAt: 1754524800000,
+      },
+      // A symlink or a device node — listed, but not something to offer a
+      // download for. The backend says so rather than the browser guessing
+      // from the name.
+      { name: "self", path: "/sdcard/DCIM/self", kind: "other" },
+    ],
+  },
+  /** The top of what a backend will serve: `parent` is null, so no "..". */
+  root: {
+    path: "/sdcard",
+    parent: null,
+    entries: [{ name: "DCIM", path: "/sdcard/DCIM", kind: "directory" }],
+  },
 } as const;
 
 export const coordinatorFixtures = {
