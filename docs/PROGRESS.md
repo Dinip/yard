@@ -1064,16 +1064,41 @@ each was re-declared per device. Prometheus requires a family's samples contiguo
 under one `# HELP`/`# TYPE`. The encoder now buffers per family, and there is a
 unit test asserting the exact regrouped bytes.
 
-### Still to confirm on hardware
+### Verified on hardware
 
-Everything above is verified against mock devices; the device-specific reads are
-not yet exercised on real ones. On a real Android: `/proc/stat`, `/proc/meminfo`,
-`dumpsys battery`'s temperature line, thermal zones — expect SELinux denial on
-most retail devices, and confirm that degrades to no series rather than an error —
-and `dumpsys meminfo`'s comma-grouped PSS values. On a real iPhone: run
-`cargo run -p backend-ios --example diagnostics_probe -- <udid>`, check the
-reported level against Settings, confirm the temperature unit, and confirm
-`info()` makes at most one relay round trip a minute.
+**Galaxy S22 (Android 15)**, via `cargo run -p backend-android --example
+metrics_probe`: the batched read parses `/proc/stat` (all eight modes), 7.10 GiB
+total memory with 2.85 GiB available, battery 100% "full" at **33.7 °C**, and 209
+processes out of the PSS section with comma-grouped values and `:remote`/`:search`
+sub-processes staying distinct from their parents. `*.google.*` matched 12 of them
+and every one got CPU seconds back — so the `/proc/<pid>/stat` last-`)` split works
+on real process names.
+
+**Thermal zones came back empty**, as predicted: this device exposes only
+`cooling_device*` under `/sys/class/thermal`, no `thermal_zone*` at all. It
+degrades to no series rather than an error, which is the intended behaviour. 209
+processes against a cap of 32 is also a good demonstration of why the cap exists.
+
+**iPhone 13**, via `cargo run -p backend-ios --example diagnostics_probe`: level
+and charging state read correctly. Two things the hardware corrected — see
+PROVIDER.md: `gasguage` is *not* the battery source despite the name, and there is
+**no temperature** available on iOS at all.
+
+### A real bug the hardware caught
+
+`read_battery` chose its source by whether the dictionary came back non-empty.
+`gasguage` answers a non-empty and completely useless dictionary — `CycleCount`,
+`FullChargeCapacity`, `Status`, nested under a `GasGauge` key, no charge level —
+so the fallback to `ioregistry` never fired and iOS reported no battery at all.
+It now tries the registry first and judges each source by whether a *level* came
+out of it. Both real shapes are now test fixtures.
+
+### Still to confirm
+
+A device that is *actually* warm or busy — everything above was measured on an
+idle, fully charged phone, so the numbers are right but the range is narrow. And
+a device with readable `thermal_zone*` entries, to exercise the unit heuristic on
+something other than a fixture.
 
 ### Decisions worth not relitigating
 

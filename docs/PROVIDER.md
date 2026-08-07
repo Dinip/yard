@@ -234,23 +234,39 @@ crates/backend-ios/src/
 └── lib.rs      the pointer state machine and the DeviceBackend impl
 ```
 
-**Battery, and only battery.** The gas gauge (`AppleSmartBattery`, via the
-diagnostics relay) gives level, charging state and temperature. iOS has no CPU or
-memory to give: `host_statistics`/`vm_statistics` are available to on-device code
-only, and the relay is a lockdown service with a fixed dictionary and no `sysctl`
-surface. `examples/diagnostics_probe.rs` is how that was checked, against a real
-device — the negative result is recorded so the question stops being re-asked.
-Those gauges are simply **absent** for an iPhone, which is what an absent
-Prometheus series is for; `metrics()` answers `Ok` with mostly `None` rather than
-`Unsupported`, so it does not read as an error.
+**Battery level and charging state, and nothing else.** Not CPU, not memory, and
+— on the hardware checked — not temperature either. `examples/diagnostics_probe.rs`
+is how that was established, against a real iPhone 13, and the negative result is
+recorded here so the question stops being re-asked:
+
+- `all()` returns **752 bytes**. There is nothing resembling CPU, memory or
+  thermal in it. `host_statistics`/`vm_statistics` are available to on-device
+  code only, and this relay is a lockdown service with a fixed dictionary and no
+  `sysctl` surface.
+- **`gasguage` is not the battery source**, despite the name. It answers
+  `CycleCount`, `FullChargeCapacity` and `Status`, nested under a `GasGauge` key,
+  with no charge level in it at all.
+- **`ioregistry` on `AppleSmartBattery` is.** `CurrentCapacity` and `MaxCapacity`
+  are both percentages there, alongside `IsCharging` and `ExternalConnected`.
+- **No `Temperature` key exists on either.** The names under `IOReportLegend`
+  (`BatteryMaxTemp` and friends) are channel labels, not readings.
+
+So the registry is tried first and the gas gauge is the fallback, which is the
+opposite of what the service names suggest. Each source is judged by whether a
+*level* came out of it rather than by whether the dictionary was non-empty —
+the gas gauge's reply is non-empty and useless, so an emptiness check takes it and
+never falls through. That was a real bug, caught only on hardware.
+
+The temperature parsing is kept anyway, since it costs nothing and another iOS
+version may populate it; `farm_device_battery_temperature_celsius` is simply
+absent for an iPhone, which is what an absent series is for. `metrics()` answers
+`Ok` with mostly `None` rather than `Unsupported`, so a healthy iPhone does not
+advance the exporter's error counter.
 
 Battery was previously not reported at all, because a relay round trip is far too
 expensive on `info()`'s 15s cadence. It is now cached with a 60s TTL and shared:
 the metrics sampler refreshes it on its own cadence and `info()` rides on that,
-so the worst case is one round trip a minute instead of four. Key spellings and
-units vary by iOS version — temperature is usually hundredths of a degree and
-sometimes tenths — which is why the probe exists and why the unit is guessed by
-magnitude with implausible results dropped.
+so the worst case is one round trip a minute instead of four.
 
 iOS 17.4+ only: below that the root-free `CoreDeviceProxy` tunnel does not
 exist, and bring-up fails loudly rather than half-working. There is no other

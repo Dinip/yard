@@ -77,6 +77,29 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
+    // What the backend's own parser makes of each source — the thing that
+    // actually ends up on a dashboard.
+    println!("\n=== parse_battery() ===");
+    for (label, values) in [
+        ("ioregistry AppleSmartBattery", {
+            let mut relay = connect(&*provider).await?;
+            relay
+                .ioregistry(None, Some("AppleSmartBattery"), None)
+                .await
+                .ok()
+                .flatten()
+        }),
+        ("gasguage", {
+            let mut relay = connect(&*provider).await?;
+            relay.gasguage().await.ok().flatten()
+        }),
+    ] {
+        match values {
+            Some(values) => println!("  {label}: {:?}", backend_ios::parse_battery(&values)),
+            None => println!("  {label}: (no answer)"),
+        }
+    }
+
     // The whole tree. Large; grepped rather than printed in full.
     let mut relay = connect(&*provider).await?;
     match relay.all().await {

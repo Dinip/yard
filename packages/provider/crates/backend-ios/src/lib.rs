@@ -148,6 +148,14 @@ const SESSION_WAIT: Duration = Duration::from_secs(20);
 /// interval below this, `info()` never makes one at all.
 const BATTERY_TTL: Duration = Duration::from_secs(60);
 
+/// Which diagnostics call a battery reading came from. See [`IosBackend::read_battery`]
+/// for why the registry is tried first.
+#[derive(Debug, Clone, Copy)]
+enum BatterySource {
+    Registry,
+    GasGauge,
+}
+
 /// Reads a gas-gauge or `AppleSmartBattery` dictionary.
 ///
 /// Key spellings and units vary by iOS version, which is what
@@ -156,6 +164,14 @@ const BATTERY_TTL: Duration = Duration::from_secs(60);
 /// `MaxCapacity` is the *design* capacity on some versions and the current full
 /// charge on others — either way it is the right denominator for a charge level.
 pub fn parse_battery(values: &plist::Dictionary) -> BatteryReading {
+    // `gasguage` nests its answer under a `GasGauge` key, the same shape
+    // `mobilegestalt` uses. `ioregistry` does not nest, so this unwraps when
+    // there is something to unwrap and passes through otherwise.
+    let values = values
+        .get("GasGauge")
+        .and_then(plist::Value::as_dictionary)
+        .unwrap_or(values);
+
     let number = |key: &str| -> Option<f64> {
         values.get(key).and_then(|value| {
             value
@@ -650,28 +666,64 @@ impl IosBackend {
         }
     }
 
+    /// Reads the battery, preferring the registry entry over the gas gauge.
+    ///
+    /// That order is the opposite of what the service names suggest, and it was
+    /// settled by `examples/diagnostics_probe.rs` against an iPhone 13: `gasguage`
+    /// answers a thin summary — `CycleCount`, `FullChargeCapacity`, `Status`, all
+    /// nested under a `GasGauge` key — with **no charge level in it at all**.
+    /// `ioregistry` on `AppleSmartBattery` is where `CurrentCapacity`,
+    /// `MaxCapacity` and `IsCharging` actually live.
+    ///
+    /// Each source is judged by whether a level came out of it, not by whether
+    /// the dictionary was non-empty: the gas gauge's reply is non-empty and
+    /// useless, so an emptiness check would take it and never fall through.
     async fn read_battery(&self) -> Result<BatteryReading> {
         let provider = device::usbmux_provider(&self.options.udid).await?;
-        let mut relay = DiagnosticsRelayClient::connect(&*provider)
+
+        let registry = self
+            .relay_battery(&*provider, BatterySource::Registry)
+            .await;
+        if let Ok(reading) = &registry {
+            if reading.level.is_some() {
+                return registry;
+            }
+        }
+
+        // Kept as a fallback rather than deleted: it is the documented battery
+        // service, and a version that populates it properly should still work.
+        let gauge = self
+            .relay_battery(&*provider, BatterySource::GasGauge)
+            .await;
+        match (&gauge, registry) {
+            (Ok(reading), _) if reading.level.is_some() => gauge,
+            // Neither had a level. Prefer whichever answered at all, so a
+            // temperature or charging flag on its own is not thrown away.
+            (_, Ok(reading)) => Ok(reading),
+            _ => gauge,
+        }
+    }
+
+    async fn relay_battery(
+        &self,
+        provider: &dyn idevice::provider::IdeviceProvider,
+        source: BatterySource,
+    ) -> Result<BatteryReading> {
+        let mut relay = DiagnosticsRelayClient::connect(provider)
             .await
             .map_err(|err| anyhow!("diagnostics relay connect: {err:?}"))?;
 
-        // The gas gauge is AppleSmartBattery's own reading. `ioregistry` on the
-        // same class answers the same keys where this comes back empty, which
-        // some iOS versions do.
-        let values = match relay.gasguage().await {
-            Ok(Some(values)) if !values.is_empty() => values,
-            _ => {
-                let mut relay = DiagnosticsRelayClient::connect(&*provider)
-                    .await
-                    .map_err(|err| anyhow!("diagnostics relay connect: {err:?}"))?;
-                relay
-                    .ioregistry(None, Some("AppleSmartBattery"), None)
-                    .await
-                    .map_err(|err| anyhow!("ioregistry: {err:?}"))?
-                    .ok_or_else(|| anyhow!("no battery information"))?
-            }
-        };
+        let values = match source {
+            BatterySource::Registry => relay
+                .ioregistry(None, Some("AppleSmartBattery"), None)
+                .await
+                .map_err(|err| anyhow!("ioregistry: {err:?}"))?,
+            BatterySource::GasGauge => relay
+                .gasguage()
+                .await
+                .map_err(|err| anyhow!("gasguage: {err:?}"))?,
+        }
+        .ok_or_else(|| anyhow!("{source:?} returned nothing"))?;
 
         Ok(parse_battery(&values))
     }
@@ -1306,6 +1358,44 @@ mod tests {
             out.insert((*key).to_owned(), value.clone());
         }
         out
+    }
+
+    /// The real `ioregistry AppleSmartBattery` shape, off an iPhone 13: capacity
+    /// is already a percentage, and there is **no Temperature key at all**.
+    #[test]
+    fn the_real_registry_shape_yields_a_level_and_a_state_but_no_temperature() {
+        let reading = parse_battery(&dict(&[
+            ("CurrentCapacity", 100u64.into()),
+            ("MaxCapacity", 100u64.into()),
+            ("IsCharging", false.into()),
+            ("ExternalConnected", true.into()),
+            ("CycleCount", 53u64.into()),
+        ]));
+
+        assert_eq!(reading.level, Some(1.0));
+        assert_eq!(reading.charging, Some(false));
+        assert_eq!(reading.temperature_c, None);
+    }
+
+    /// The real `gasguage` reply, off the same phone: nested under `GasGauge`,
+    /// and carrying no charge level. It must unwrap cleanly *and* report no
+    /// level, which is what makes `read_battery` fall through to the registry.
+    #[test]
+    fn the_real_gas_gauge_shape_unwraps_but_offers_no_level() {
+        let mut gauge = plist::Dictionary::new();
+        gauge.insert(
+            "GasGauge".into(),
+            plist::Value::Dictionary(dict(&[
+                ("CycleCount", 53u64.into()),
+                ("FullChargeCapacity", 100u64.into()),
+                ("Status", "Success".into()),
+            ])),
+        );
+
+        let reading = parse_battery(&gauge);
+
+        assert_eq!(reading.level, None);
+        assert_eq!(reading.charging, None);
     }
 
     #[test]
