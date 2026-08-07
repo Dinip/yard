@@ -1,0 +1,114 @@
+{
+  "title": "Device farm — devices",
+  "uid": "farm-devices",
+  "schemaVersion": 39,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "device",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "$${DS_PROMETHEUS}" },
+        "query": "label_values(farm_device_status, device)",
+        "includeAll": true,
+        "multi": true,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "CPU busy",
+      "description": "Everything but idle, as a fraction of total CPU time. Derived from counters, so the window follows the dashboard's.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": { "unit": "percentunit", "min": 0, "max": 1 },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum by (device) (rate(farm_device_cpu_seconds_total{device=~\"$device\",mode!=\"idle\"}[5m])) / sum by (device) (rate(farm_device_cpu_seconds_total{device=~\"$device\"}[5m]))",
+          "legendFormat": "{{device}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Memory used",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "bytes", "min": 0 }, "overrides": [] },
+      "targets": [
+        {
+          "expr": "farm_device_memory_used_bytes{device=~\"$device\"}",
+          "legendFormat": "{{device}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Temperature",
+      "description": "Battery temperature, plus any thermal zone the device let us read. A phone that throttles here streams badly and fails tests in ways that look like flaky software.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "celsius" }, "overrides": [] },
+      "targets": [
+        {
+          "expr": "farm_device_battery_temperature_celsius{device=~\"$device\"}",
+          "legendFormat": "{{device}} battery"
+        },
+        {
+          "expr": "farm_device_thermal_zone_celsius{device=~\"$device\"}",
+          "legendFormat": "{{device}} {{zone}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Battery",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "fieldConfig": {
+        "defaults": { "unit": "percentunit", "min": 0, "max": 1 },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "farm_device_battery_level_ratio{device=~\"$device\"}",
+          "legendFormat": "{{device}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Watched apps — PSS",
+      "description": "Only processes matching metrics.app_patterns in provider.yaml.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "bytes", "min": 0 }, "overrides": [] },
+      "targets": [
+        {
+          "expr": "farm_app_memory_pss_bytes{device=~\"$device\"}",
+          "legendFormat": "{{device}} {{app}}"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Device status",
+      "description": "One series per status, 1 on the current one. A device whose CPU series vanished but whose status is still reported has gone away; nothing at all means the exporter is down.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "fieldConfig": { "defaults": { "min": 0, "max": 1 }, "overrides": [] },
+      "targets": [
+        {
+          "expr": "farm_device_status{device=~\"$device\"} == 1",
+          "legendFormat": "{{device}} {{status}}"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+# Scrape config for a provider's metrics listener.
+#
+# The provider runs on the host during development, so the target is
+# host.docker.internal rather than a compose service name — providers are not
+# part of the dev stack, and on a real deployment they are on other machines
+# entirely.
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: farm-provider
+    static_configs:
+      - targets:
+          - host.docker.internal:9100

@@ -1,6 +1,15 @@
 # Development overlay: `docker compose -f docker-compose.dev.yml up`
 # Brings up only the stateful dependency. The coordinator and web run on the
 # host with `bun run dev` so both hot-reload.
+#
+# Prometheus and Grafana sit behind the `observability` profile, so the default
+# `up` is still one container: nothing in the test suite needs them, and every
+# developer running the DB tests would otherwise pay for two more.
+#
+#   docker compose -f docker-compose.dev.yml --profile observability up -d
+#
+# then Grafana on :3001 (anonymous admin), scraping a provider on the host at
+# :9100 — which needs `metrics:` enabled in provider.yaml.
 name: device-farm-dev
 
 services:
@@ -21,5 +30,38 @@ services:
       timeout: 5s
       retries: 20
 
+  prometheus:
+    image: prom/prometheus:v3.6.0
+    profiles: [observability]
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./docs/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-dev-data:/prometheus
+    extra_hosts:
+      # Providers are not part of this stack — they run on the host in dev and
+      # on other machines in production — so the scrape target is the host.
+      - "host.docker.internal:host-gateway"
+
+  grafana:
+    image: grafana/grafana:12.2.0
+    profiles: [observability]
+    restart: unless-stopped
+    depends_on: [prometheus]
+    environment:
+      # Dev only, and the reason this is not in docker-compose.yml.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    ports:
+      - "3001:3000"
+    volumes:
+      - ./docs/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./docs/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-dev-data:/var/lib/grafana
+
 volumes:
   postgres-dev-data:
+  prometheus-dev-data:
+  grafana-dev-data:

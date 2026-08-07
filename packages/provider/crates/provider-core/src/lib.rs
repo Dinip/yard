@@ -14,6 +14,7 @@ pub mod auth;
 pub mod backend;
 pub mod config;
 pub mod control;
+pub mod metrics;
 pub mod origins;
 pub mod server;
 pub mod session;
@@ -25,6 +26,7 @@ pub use backend::{
     InputEvent, MemoryBytes, NullProgress, ProgressSink, RemoteDebug, ThermalZone,
 };
 pub use config::{BackendKind, Config, DeviceConfig, MetricsConfig};
+pub use metrics::{MetricsCache, MetricsState};
 pub use origins::WebOrigins;
 pub use session::{Authorization, SessionRegistry};
 pub use supervisor::{Device, Supervisor};

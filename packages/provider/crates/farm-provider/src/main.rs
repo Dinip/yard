@@ -13,6 +13,7 @@ use farm_protocol::Platform;
 use provider_core::auth::TokenVerifier;
 use provider_core::config::{BackendKind, Config};
 use provider_core::control::ControlClient;
+use provider_core::metrics::{self, MetricsCache, MetricsState};
 use provider_core::origins::WebOrigins;
 use provider_core::server::{self, ServerState};
 use provider_core::session::SessionRegistry;
@@ -127,9 +128,20 @@ async fn main() -> Result<()> {
         web_origins,
     };
 
+    let metrics_state = MetricsState {
+        config: config.clone(),
+        supervisor: supervisor.clone(),
+        cache: MetricsCache::new(),
+    };
+
     let mut session_plane = tokio::spawn(server::serve(state));
     let mut control_plane = tokio::spawn(control.run());
     let mut poll_loop = tokio::spawn(supervisor.clone().run_poll_loop());
+    // Always spawned, even with metrics disabled — both park in that case, which
+    // keeps this to one code path rather than an `Option<JoinHandle>` that every
+    // `select!` arm below would have to special-case.
+    let mut metrics_plane = tokio::spawn(metrics::serve(metrics_state.clone()));
+    let mut metrics_sampler = tokio::spawn(metrics::run_sampler(metrics_state));
 
     tokio::select! {
         result = &mut session_plane => {
@@ -151,11 +163,24 @@ async fn main() -> Result<()> {
             error!(?result, "device poll loop ended");
             bail!("device poll loop ended")
         }
+        result = &mut metrics_plane => {
+            match result {
+                Ok(Ok(())) => bail!("metrics listener exited unexpectedly"),
+                Ok(Err(err)) => return Err(err).context("metrics listener failed"),
+                Err(err) => bail!("metrics listener panicked: {err}"),
+            }
+        }
+        result = &mut metrics_sampler => {
+            error!(?result, "metrics sampler ended");
+            bail!("metrics sampler ended")
+        }
         _ = shutdown() => {
             info!("shutting down");
             session_plane.abort();
             control_plane.abort();
             poll_loop.abort();
+            metrics_plane.abort();
+            metrics_sampler.abort();
             Ok(())
         }
     }

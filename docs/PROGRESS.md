@@ -1039,13 +1039,30 @@ provider-local, in the spirit of Phase 13's recorder.
 | `DeviceMetrics` + `AppFilter` on the backend trait | ✅ | `provider-core/src/backend.rs` |
 | Synthetic metrics for the mock | ✅ | `backend-mock/src/lib.rs` |
 | Per-device in-process counters | ✅ | `provider-core/src/video.rs`, `supervisor.rs` |
-| Sampler + cache | ⬜ | `provider-core/src/metrics.rs` |
-| Exporter + listener | ⬜ | `provider-core/src/metrics.rs` |
+| Sampler + cache | ✅ | `provider-core/src/metrics.rs` |
+| Exporter + listener | ✅ | `provider-core/src/metrics.rs` |
 | Android CPU / memory / thermal | ⬜ | `backend-android/src/lib.rs` |
 | Android per-app CPU + PSS | ⬜ | `backend-android/src/lib.rs` |
 | iOS diagnostics-relay probe | ⬜ | `backend-ios/examples/` |
 | iOS battery | ⬜ | `backend-ios/src/lib.rs` |
-| Dev observability stack | ⬜ | `docker-compose.dev.yml` |
+| Dev observability stack | ✅ | `docker-compose.dev.yml` |
+
+### Verified with no hardware
+
+`--profile observability` up, the real binary running two mock devices: Prometheus
+reports the target `up`, `farm_device_cpu_seconds_total` advances between scrapes,
+`sum by (device) (rate(...{mode!="idle"}[2m])) / sum by (device) (rate(...[2m]))`
+reads ~0.18 against the mock's ~0.15 ± wobble, `farm_app_memory_pss_bytes` exists
+for `com.example.demo.player` and not for `com.example.mock.app`, the iOS mock has
+no CPU series at all, and Grafana provisions the dashboard. With a deliberately
+bad provider token, `farm_provider_control_connected` reads 0 while every device
+metric keeps being served — the exporter does not depend on the coordinator.
+
+**A real bug the tests caught.** The encoder wrote each sample as it went, which
+is wrong: samples are gathered device-major, so families arrived interleaved and
+each was re-declared per device. Prometheus requires a family's samples contiguous
+under one `# HELP`/`# TYPE`. The encoder now buffers per family, and there is a
+unit test asserting the exact regrouped bytes.
 
 ### Decisions worth not relitigating
 

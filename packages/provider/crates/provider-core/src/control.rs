@@ -7,6 +7,7 @@
 //! reachability, so it works identically on the coordinator's host, in another
 //! datacentre, or behind office NAT.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -47,11 +48,21 @@ pub trait CommandHandler: Send + Sync + 'static {
 #[derive(Clone)]
 pub struct ControlSender {
     tx: mpsc::UnboundedSender<ProviderMessage>,
+    registered: Arc<AtomicBool>,
 }
 
 impl ControlSender {
     pub fn send(&self, msg: ProviderMessage) {
         let _ = self.tx.send(msg);
+    }
+
+    /// True between `hello.ack` and the next disconnect.
+    ///
+    /// Registration, not socket state: a connected socket that has not been
+    /// acked cannot carry a session token's issuer or an allowed origin, so from
+    /// everywhere else in the process it is indistinguishable from being down.
+    pub fn is_registered(&self) -> bool {
+        self.registered.load(Ordering::Relaxed)
     }
 }
 
@@ -65,6 +76,7 @@ pub struct ControlClient {
     verifier: Arc<crate::auth::TokenVerifier>,
     tx: mpsc::UnboundedSender<ProviderMessage>,
     rx: mpsc::UnboundedReceiver<ProviderMessage>,
+    registered: Arc<AtomicBool>,
 }
 
 impl ControlClient {
@@ -82,12 +94,14 @@ impl ControlClient {
             verifier,
             tx,
             rx,
+            registered: Arc::new(AtomicBool::new(false)),
         }
     }
 
     pub fn sender(&self) -> ControlSender {
         ControlSender {
             tx: self.tx.clone(),
+            registered: self.registered.clone(),
         }
     }
 
@@ -111,6 +125,7 @@ impl ControlClient {
                 }
             }
 
+            self.registered.store(false, Ordering::Relaxed);
             self.handler.on_disconnected().await;
 
             tokio::time::sleep(backoff).await;
@@ -235,6 +250,7 @@ impl ControlClient {
                 // session token fails its issuer check.
                 self.web_origins.set(web_origins);
                 self.verifier.set_issuer(issuer);
+                self.registered.store(true, Ordering::Relaxed);
 
                 let mut interval = tokio::time::interval(Duration::from_millis(
                     heartbeat_interval_ms.max(1) as u64,

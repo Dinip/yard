@@ -89,8 +89,6 @@ impl Device {
         )
     }
 
-
-
     pub async fn snapshot(&self) -> DeviceSnapshot {
         let info = self.info.read().await.clone();
         let status = *self.status.read().await;
@@ -204,6 +202,15 @@ impl Supervisor {
 
     pub fn sessions(&self) -> &SessionRegistry {
         &self.sessions
+    }
+
+    /// Whether the coordinator has acked this provider's `hello`.
+    pub async fn is_registered(&self) -> bool {
+        self.control
+            .read()
+            .await
+            .as_ref()
+            .is_some_and(|sender| sender.is_registered())
     }
 
     async fn push(&self, msg: ProviderMessage) {
