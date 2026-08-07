@@ -66,6 +66,9 @@ sha2 = "0.11"
 uuid = { version = "1", features = ["v4"] }
 bytes = "1"
 rand = "0.10"
+# Glob matching for the metrics app filter. `*`/`?` only and no transitive deps;
+# globset would pull regex + aho-corasick + memchr in to match a handful of names.
+wildmatch = "2.6"
 
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

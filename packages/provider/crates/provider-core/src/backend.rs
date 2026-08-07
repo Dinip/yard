@@ -9,6 +9,7 @@ use std::path::Path;
 
 use async_trait::async_trait;
 use farm_protocol::{AppInfo, Display, FileListing, Platform};
+use wildmatch::WildMatch;
 
 use crate::video::VideoHandle;
 
@@ -78,6 +79,120 @@ pub struct DeviceInfo {
     pub display: Option<Display>,
     pub battery_level: Option<f64>,
     pub battery_state: Option<String>,
+}
+
+/// A point-in-time read of a device's own resource usage, for the exporter.
+///
+/// Every field is optional because "this device cannot tell us" and "this device
+/// says zero" are different answers, and an *absent* Prometheus series is how the
+/// first one is spelled — see [`crate::metrics`].
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct DeviceMetrics {
+    pub cpu: Option<CpuTimes>,
+    pub memory: Option<MemoryBytes>,
+    /// 0..1, the same scale as [`DeviceInfo::battery_level`].
+    pub battery_level: Option<f64>,
+    pub battery_charging: Option<bool>,
+    pub battery_temperature_c: Option<f64>,
+    /// Empty means no zone was readable, which on Android is the common case:
+    /// `/sys/class/thermal` is usually SELinux-denied to an unrooted shell.
+    pub thermal_zones: Vec<ThermalZone>,
+    pub apps: Vec<AppMetrics>,
+}
+
+/// Cumulative seconds since boot, per mode — deliberately not a percentage.
+///
+/// These are exported as counters and the scraper differentiates them. Computing
+/// a percentage here would mean holding a previous sample *and* fixing the
+/// averaging window at ours; `rate()` lets the operator pick their own, and it
+/// already treats the counter reset of a rebooted device correctly. Nothing in
+/// this crate keeps a previous CPU sample, and nothing should need to.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct CpuTimes {
+    pub user: f64,
+    pub nice: Option<f64>,
+    pub system: f64,
+    pub idle: f64,
+    pub iowait: Option<f64>,
+    pub irq: Option<f64>,
+    pub softirq: Option<f64>,
+    pub steal: Option<f64>,
+}
+
+impl CpuTimes {
+    /// The modes present, as `(label, seconds)` — the exporter's `mode` label.
+    pub fn modes(&self) -> Vec<(&'static str, f64)> {
+        let mut out = vec![
+            ("user", self.user),
+            ("system", self.system),
+            ("idle", self.idle),
+        ];
+        for (label, value) in [
+            ("nice", self.nice),
+            ("iowait", self.iowait),
+            ("irq", self.irq),
+            ("softirq", self.softirq),
+            ("steal", self.steal),
+        ] {
+            if let Some(value) = value {
+                out.push((label, value));
+            }
+        }
+        out
+    }
+}
+
+/// `available` and `free` are deliberately separate: they mean different things,
+/// and reporting `free` when the kernel offers no `MemAvailable` overstates
+/// memory pressure by however much is sitting in reclaimable cache.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct MemoryBytes {
+    pub total: u64,
+    pub available: Option<u64>,
+    pub free: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ThermalZone {
+    pub name: String,
+    pub celsius: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AppMetrics {
+    /// The full process name, not the package: a leaked `com.foo.bar:push` is
+    /// precisely what someone watching these numbers is looking for, so it must
+    /// not be collapsed into `com.foo.bar`.
+    pub process: String,
+    pub cpu_seconds: Option<f64>,
+    pub pss_bytes: Option<u64>,
+}
+
+/// Compiled globs naming the processes worth per-app metrics.
+///
+/// Lives here rather than in [`crate::metrics`] so a backend need not depend on
+/// the exporter to answer a question about its own device.
+#[derive(Debug, Default)]
+pub struct AppFilter {
+    patterns: Vec<WildMatch>,
+}
+
+impl AppFilter {
+    pub fn new(patterns: &[String]) -> Self {
+        Self {
+            patterns: patterns.iter().map(|p| WildMatch::new(p.trim())).collect(),
+        }
+    }
+
+    /// Lets a backend skip an expensive read entirely rather than gathering
+    /// every process and discarding all of them.
+    pub fn is_empty(&self) -> bool {
+        self.patterns.is_empty()
+    }
+
+    pub fn matches(&self, process: &str) -> bool {
+        self.patterns.iter().any(|p| p.matches(process))
+    }
 }
 
 /// Pointer coordinates are normalised 0..1, not pixels.
@@ -207,11 +322,53 @@ pub trait DeviceBackend: Send + Sync + 'static {
     async fn is_healthy(&self) -> bool {
         true
     }
+
+    /// Resource usage, for the metrics exporter.
+    ///
+    /// The default refuses rather than answering an all-`None` struct, so "this
+    /// backend has no metrics at all" stays distinguishable from "this device
+    /// answered nothing this time" — the sampler treats the two differently, and
+    /// only the second is an error worth counting.
+    ///
+    /// `apps` is passed in rather than read from config by the backend so the
+    /// patterns stay one global concern, and so a backend can call
+    /// [`AppFilter::is_empty`] to skip an expensive read.
+    async fn metrics(&self, _apps: &AppFilter) -> Result<DeviceMetrics> {
+        Err(BackendError::Unsupported("device metrics"))
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{join_path, parent_of};
+    use super::{join_path, parent_of, AppFilter};
+
+    /// The `.` either side of the wildcard is what makes a pattern mean
+    /// "this vendor" rather than "anything containing these letters".
+    #[test]
+    fn an_app_pattern_respects_package_boundaries() {
+        let filter = AppFilter::new(&["*.demo.*".to_owned()]);
+
+        assert!(filter.matches("com.example.demo.player"));
+        // A separate process of a matched app is a distinct series on purpose.
+        assert!(filter.matches("com.example.demo.player:push"));
+        assert!(!filter.matches("com.example.demoted.app"));
+        assert!(!filter.matches("com.example.mock.app"));
+    }
+
+    #[test]
+    fn no_patterns_matches_nothing_and_says_so() {
+        let filter = AppFilter::new(&[]);
+        assert!(filter.is_empty());
+        assert!(!filter.matches("com.example.demo.player"));
+    }
+
+    #[test]
+    fn any_of_several_patterns_matches() {
+        let filter = AppFilter::new(&["*.demo.*".to_owned(), "com.android.systemui".to_owned()]);
+        assert!(filter.matches("com.android.systemui"));
+        assert!(filter.matches("com.example.demo.player"));
+        assert!(!filter.matches("com.android.settings"));
+    }
 
     #[test]
     fn walking_up_stops_at_the_root() {
