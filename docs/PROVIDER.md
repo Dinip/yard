@@ -156,7 +156,16 @@ crates/backend-ios/src/
 ```
 
 iOS 17.4+ only: below that the root-free `CoreDeviceProxy` tunnel does not
-exist, and bring-up fails loudly rather than half-working.
+exist, and bring-up fails loudly rather than half-working. There is no other
+iOS backend to hand an older device to.
+
+**USB only.** usbmuxd lists a Wi-Fi-synced device *twice* — once `USB`, once
+`Network` — in no guaranteed order, and `idevice`'s `get_device` is a `find`, so
+the transport the whole session was built over came down to list order.
+`pick_usb` takes the USB entry and refuses a device offered only over the
+network, saying so: the tunnel is built and tested over USB, and a session that
+silently came up over Wi-Fi fails later, in the media path, where the cause is
+invisible.
 
 One supervisor task rebuilds tunnel, media and HID **together**, because they
 are not independent — the HID surfaces authenticate against the live media
