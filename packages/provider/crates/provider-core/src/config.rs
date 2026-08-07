@@ -4,6 +4,7 @@
 //! orchestration that produced one container, one ZMQ connection and one config
 //! file *per device*. This process supervises every device on the host.
 
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -18,6 +19,15 @@ fn default_scratch() -> PathBuf {
 }
 fn default_max_upload_mb() -> u64 {
     2048
+}
+fn default_metrics_enabled() -> bool {
+    true
+}
+fn default_metrics_bind() -> String {
+    "0.0.0.0:9100".into()
+}
+fn default_metrics_interval() -> u64 {
+    30
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -56,6 +66,59 @@ pub struct Config {
 
     #[serde(default)]
     pub devices: Vec<DeviceConfig>,
+
+    /// Prometheus metrics. Absent means off; see [`MetricsConfig`].
+    #[serde(default)]
+    pub metrics: MetricsConfig,
+}
+
+/// Where the metrics exporter listens and how often it samples.
+///
+/// A listener of its own rather than a route on [`Config::bind`]: that port is
+/// browser-facing, carries a CORS layer and session tokens, and a scraper has
+/// neither. There is no auth here on purpose — the operator is expected to bind
+/// it to an interface only their monitoring can reach.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MetricsConfig {
+    /// Note the asymmetry with [`Default`] below, which is deliberate: an absent
+    /// `metrics:` block is off, but writing the block and omitting `enabled` is
+    /// on, because writing it at all is the intent.
+    #[serde(default = "default_metrics_enabled")]
+    pub enabled: bool,
+
+    #[serde(default = "default_metrics_bind")]
+    pub bind: String,
+
+    /// How often every device is sampled. The exporter serves a cache, so a
+    /// scrape never waits on a phone and two scrapers cannot double the load.
+    #[serde(default = "default_metrics_interval")]
+    pub interval_secs: u64,
+
+    /// Per-app CPU and memory, Android only. Globbed against the *process* name,
+    /// so `com.foo.bar:push` stays distinct from `com.foo.bar`. Empty means the
+    /// backend skips the expensive `dumpsys meminfo` round trip entirely.
+    #[serde(default)]
+    pub app_patterns: Vec<String>,
+}
+
+impl Default for MetricsConfig {
+    /// Used only when the `metrics:` key is absent, which is why `enabled` is
+    /// false here and true in [`default_metrics_enabled`].
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            bind: default_metrics_bind(),
+            interval_secs: default_metrics_interval(),
+            app_patterns: Vec::new(),
+        }
+    }
+}
+
+impl MetricsConfig {
+    pub fn interval(&self) -> Duration {
+        Duration::from_secs(self.interval_secs)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -152,6 +215,57 @@ impl Config {
                 bail!("duplicate device udid {:?}", device.udid);
             }
         }
+
+        self.validate_metrics()?;
+        Ok(())
+    }
+
+    /// Checked at load, so a typo is a startup error rather than a scrape target
+    /// that silently never appears in Prometheus.
+    fn validate_metrics(&self) -> Result<()> {
+        if !self.metrics.enabled {
+            return Ok(());
+        }
+
+        if self.metrics.bind.parse::<SocketAddr>().is_err() {
+            bail!(
+                "metrics.bind must be an address:port, got {:?}",
+                self.metrics.bind
+            );
+        }
+        if self.metrics.bind == self.bind {
+            bail!(
+                "metrics.bind {:?} collides with bind {:?}; the metrics listener is \
+                 deliberately separate from the browser-facing planes",
+                self.metrics.bind,
+                self.bind
+            );
+        }
+
+        // The floor is not arbitrary: below ~5s the Android backend's own adb
+        // round trips exceed the interval, and `dumpsys meminfo` at that rate is
+        // measurable load on the phone being tested.
+        if !(5..=3600).contains(&self.metrics.interval_secs) {
+            bail!(
+                "metrics.interval_secs must be between 5 and 3600, got {}",
+                self.metrics.interval_secs
+            );
+        }
+
+        for pattern in &self.metrics.app_patterns {
+            let trimmed = pattern.trim();
+            if trimmed.is_empty() {
+                bail!("metrics.app_patterns contains an empty pattern");
+            }
+            if trimmed.chars().all(|c| c == '*' || c == '?') {
+                bail!(
+                    "metrics.app_patterns entry {pattern:?} matches every process, which \
+                     would export a Prometheus series per process per device. Name the \
+                     apps you care about, e.g. \"*.example.*\"."
+                );
+            }
+        }
+
         Ok(())
     }
 
@@ -303,6 +417,85 @@ devices:
     #[test]
     fn unknown_keys_are_rejected_rather_than_silently_ignored() {
         let (_dir, path) = write(&format!("{MINIMAL}\nscreen_port: 7400\n"));
+        assert!(Config::load_with_env(&path, None).is_err());
+    }
+
+    #[test]
+    fn metrics_are_off_when_the_block_is_absent() {
+        let (_dir, path) = write(MINIMAL);
+        let config = Config::load_with_env(&path, None).unwrap();
+        assert!(!config.metrics.enabled);
+    }
+
+    /// Writing the block at all is the intent, so an omitted `enabled` is on —
+    /// the opposite of what an absent block means.
+    #[test]
+    fn an_empty_metrics_block_turns_metrics_on() {
+        let (_dir, path) = write(&format!("{MINIMAL}\nmetrics: {{}}\n"));
+        let config = Config::load_with_env(&path, None).unwrap();
+
+        assert!(config.metrics.enabled);
+        assert_eq!(config.metrics.bind, "0.0.0.0:9100");
+        assert_eq!(config.metrics.interval_secs, 30);
+        assert!(config.metrics.app_patterns.is_empty());
+    }
+
+    #[test]
+    fn a_full_metrics_block_parses() {
+        let (_dir, path) = write(&format!(
+            "{MINIMAL}\nmetrics:\n  enabled: true\n  bind: 127.0.0.1:9101\n  \
+             interval_secs: 60\n  app_patterns:\n    - \"*.bmw.*\"\n"
+        ));
+        let config = Config::load_with_env(&path, None).unwrap();
+
+        assert_eq!(config.metrics.bind, "127.0.0.1:9101");
+        assert_eq!(config.metrics.interval(), Duration::from_secs(60));
+        assert_eq!(config.metrics.app_patterns, vec!["*.bmw.*".to_owned()]);
+    }
+
+    #[test]
+    fn an_unparseable_metrics_bind_fails_at_load() {
+        let (_dir, path) = write(&format!("{MINIMAL}\nmetrics:\n  bind: not-an-address\n"));
+        let err = Config::load_with_env(&path, None).unwrap_err().to_string();
+        assert!(err.contains("metrics.bind"), "{err}");
+    }
+
+    #[test]
+    fn metrics_may_not_share_the_session_planes_port() {
+        let (_dir, path) = write(&format!("{MINIMAL}\nmetrics:\n  bind: 0.0.0.0:7100\n"));
+        let err = Config::load_with_env(&path, None).unwrap_err().to_string();
+        assert!(err.contains("collides with bind"), "{err}");
+    }
+
+    #[test]
+    fn too_frequent_sampling_is_rejected() {
+        let (_dir, path) = write(&format!("{MINIMAL}\nmetrics:\n  interval_secs: 1\n"));
+        let err = Config::load_with_env(&path, None).unwrap_err().to_string();
+        assert!(err.contains("interval_secs"), "{err}");
+    }
+
+    /// A bare `*` is a cardinality bomb: a series per process per device.
+    #[test]
+    fn a_match_everything_app_pattern_is_rejected() {
+        let (_dir, path) = write(&format!(
+            "{MINIMAL}\nmetrics:\n  app_patterns:\n    - \"*\"\n"
+        ));
+        let err = Config::load_with_env(&path, None).unwrap_err().to_string();
+        assert!(err.contains("matches every process"), "{err}");
+    }
+
+    /// A disabled block should not be able to block startup.
+    #[test]
+    fn a_disabled_metrics_block_is_not_validated() {
+        let (_dir, path) = write(&format!(
+            "{MINIMAL}\nmetrics:\n  enabled: false\n  bind: nonsense\n  interval_secs: 0\n"
+        ));
+        assert!(Config::load_with_env(&path, None).is_ok());
+    }
+
+    #[test]
+    fn unknown_keys_inside_the_metrics_block_are_rejected_too() {
+        let (_dir, path) = write(&format!("{MINIMAL}\nmetrics:\n  scrape_port: 9100\n"));
         assert!(Config::load_with_env(&path, None).is_err());
     }
 

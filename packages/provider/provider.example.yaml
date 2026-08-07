@@ -27,6 +27,26 @@ bind: 0.0.0.0:7100
 scratch_dir: /var/lib/farm/scratch
 max_upload_mb: 2048
 
+# Prometheus metrics. Optional — an absent block means off, but writing the block
+# and omitting `enabled` means on, because writing it at all is the intent.
+#
+# A listener of its own rather than a route on `bind`: that port is browser-facing,
+# carries a CORS layer and session tokens, and a scraper has neither. There is no
+# auth here on purpose — bind it to an interface only your monitoring can reach.
+metrics:
+  enabled: true
+  bind: 0.0.0.0:9100
+  # How often every device is sampled. The exporter serves a cache, so a scrape
+  # never waits on a phone and a second scraper cannot double the load.
+  interval_secs: 30
+  # Per-app CPU and memory, Android only. Globbed against the *process* name, so
+  # a leaked `com.foo.bar:push` stays distinct from `com.foo.bar`. Matching
+  # everything is refused at load: it would mint a series per process per device.
+  # This pattern matches exactly one of the two apps the mock Android device
+  # reports, so the filter is visible in a scrape without any hardware.
+  app_patterns:
+    - "*.demo.*"
+
 # Prefer FARM_PROVIDER_TOKEN or token_file over an inline token.
 # Precedence: env var > token_file > token.
 #   token: pft_...

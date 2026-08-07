@@ -1016,6 +1016,65 @@ tab surviving the popout handover.
 
 ---
 
+## Phase 14 — Device metrics 🚧
+
+*Done when: a Prometheus server scrapes CPU, memory, temperature and per-app
+usage off every device a provider owns, and a stale device's series disappear
+rather than going flat.*
+
+The provider supervised every device on a host but reported almost nothing about
+their *condition* — `DeviceSnapshot` carried battery level and charging state and
+that was all. A phone that is thermally throttling, swapping, or pinned by a
+leaked process streams badly and fails tests in ways that look like flaky
+software, and the only way to notice was for a tester to say a device "feels
+slow". The metric set is taken from `Dinip/adb_metrics`.
+
+**Nothing crosses the coordinator wire.** No zod schema, no `generated.rs`, no DB
+column, no UI — `bun run protocol:check` is unaffected. Don't go looking; this is
+provider-local, in the spirit of Phase 13's recorder.
+
+| Item | State | Where |
+|---|---|---|
+| `metrics:` config section | ✅ | `provider-core/src/config.rs` |
+| `DeviceMetrics` + `AppFilter` on the backend trait | ✅ | `provider-core/src/backend.rs` |
+| Synthetic metrics for the mock | ✅ | `backend-mock/src/lib.rs` |
+| Per-device in-process counters | ⬜ | `provider-core/src/video.rs`, `supervisor.rs` |
+| Sampler + cache | ⬜ | `provider-core/src/metrics.rs` |
+| Exporter + listener | ⬜ | `provider-core/src/metrics.rs` |
+| Android CPU / memory / thermal | ⬜ | `backend-android/src/lib.rs` |
+| Android per-app CPU + PSS | ⬜ | `backend-android/src/lib.rs` |
+| iOS diagnostics-relay probe | ⬜ | `backend-ios/examples/` |
+| iOS battery | ⬜ | `backend-ios/src/lib.rs` |
+| Dev observability stack | ⬜ | `docker-compose.dev.yml` |
+
+### Decisions worth not relitigating
+
+- **A listener of its own, not a route on 7100.** That port is browser-facing,
+  carries a CORS layer and session tokens, and is publicly TLS-terminated. There
+  is deliberately **no auth** on the metrics port; the operator binds it to an
+  interface only their monitoring reaches. A `/metrics` alias on 7100 "for
+  convenience" would inherit the CORS layer and defeat the whole point.
+- **It is not a fifth plane.** A plane in this codebase carries authenticated user
+  traffic; this has neither property. See ARCHITECTURE.md.
+- **A background sampler with a cache**, not sample-on-scrape: a scrape never
+  waits on a phone, and a second scraper cannot double the load on the devices.
+- **CPU is a counter, not a percent.** `/proc/stat` is already a monotonic jiffy
+  counter, so exporting `_total` means nothing here holds a previous sample,
+  `rate()` gives the operator any window they want, and a rebooted device's
+  counter reset is handled for free.
+- **A stale or failed device emits *no* device-sourced series at all.** Absence is
+  how Prometheus spells "no data". Re-emitting the last known value would be a
+  lie — an unplugged phone would show a flat, healthy 40 °C forever. The
+  operational metrics are read live and are never suppressed, which is what keeps
+  "device gone" distinguishable from "exporter broken".
+- **No metrics crate.** The values arrive as a snapshot and the exporter
+  transcribes them on GET. Both `prometheus-client` and
+  `metrics-exporter-prometheus` *retain* label sets they have seen, and making a
+  series disappear through a retaining registry is more code than emitting the
+  text format directly.
+
+---
+
 ## Open decisions
 
 - **Name.** The project is "Device Farm" as a placeholder. See

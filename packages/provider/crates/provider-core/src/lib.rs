@@ -21,9 +21,10 @@ pub mod supervisor;
 pub mod video;
 
 pub use backend::{
-    BackendError, DeviceBackend, DeviceInfo, InputEvent, NullProgress, ProgressSink, RemoteDebug,
+    AppFilter, AppMetrics, BackendError, CpuTimes, DeviceBackend, DeviceInfo, DeviceMetrics,
+    InputEvent, MemoryBytes, NullProgress, ProgressSink, RemoteDebug, ThermalZone,
 };
-pub use config::{BackendKind, Config, DeviceConfig};
+pub use config::{BackendKind, Config, DeviceConfig, MetricsConfig};
 pub use origins::WebOrigins;
 pub use session::{Authorization, SessionRegistry};
 pub use supervisor::{Device, Supervisor};
