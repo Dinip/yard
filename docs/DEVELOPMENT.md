@@ -116,6 +116,23 @@ On **Linux** uncomment the USB mounts in `docker-compose.yml` — the whole
 reboots re-enumerates under a new node — and make sure the host runs no adb
 server of its own, since only one may own a device.
 
+The container starts its own adb server on entry, so a Linux device entry takes
+**no `adb_server` option**; the one in the checked-in `provider.yaml` is there
+for the macOS shape below and pointing at `host.docker.internal` on Linux gets
+you `Connection refused (os error 111)`.
+
+Its keypair lives in the `adb-keys` volume, because the phone's "Allow USB
+debugging" grant is bound to that key's fingerprint — a regenerated key means
+tapping the dialog at the device again. Authorise once, tick *Always allow*, and
+recreates are silent. To reuse a key the devices already trust, seed the volume
+from the host's before the first start:
+
+```bash
+docker compose --profile provider create provider
+docker cp ~/.android/adbkey     device-farm-provider-1:/root/.android/
+docker cp ~/.android/adbkey.pub device-farm-provider-1:/root/.android/
+```
+
 On **macOS** Docker cannot pass USB through at all, so the container talks to
 the host's daemons instead:
 

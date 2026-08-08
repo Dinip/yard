@@ -322,11 +322,17 @@ dependency instead of a subprocess per operation. Two framings live in that one
 protocol and mixing them **hangs rather than errors** — the host protocol uses a
 4-digit hex length prefix, the sync subprotocol a 4-byte little-endian one.
 
-`adb_server` is per-device config. A Linux provider bundles adb in its image
-with `/dev/bus/usb` mounted (the directory, not a `--device` node: a phone that
-re-enumerates after a reboot gets a new node and a static binding would silently
-lose it). macOS cannot pass USB into Docker at all, so there the provider points
-at the host's adb server.
+`adb_server` is per-device config, defaulting to `127.0.0.1:5037`. A Linux
+provider bundles adb in its image with `/dev/bus/usb` mounted (the directory,
+not a `--device` node: a phone that re-enumerates after a reboot gets a new node
+and a static binding would silently lose it) and leaves the default alone.
+macOS cannot pass USB into Docker at all, so there the provider points at the
+host's adb server.
+
+Because the backend never shells out, *something else* has to start the server
+that owns the USB transport: `docker-entrypoint.sh` runs `adb start-server`
+before exec'ing the provider. Without it the container has the `adb` binary and
+no server, and every session retries against a refused connection.
 
 The scrcpy server is **embedded in the binary** and pushed to the phone at
 session start, so nothing is installed on a provider host for it. It is started
@@ -436,6 +442,11 @@ what lets an on-prem farm terminate TLS with a private CA.
 
 The builder uses the stub-source dependency-cache trick from
 `stf-ios-provider/Dockerfile`; dependency compilation dominates the build.
+
+The runtime stage runs as **root**, unlike the coordinator's. `privileged: true`
+grants access to the USB devices, not permission on them — the `/dev/bus/usb`
+nodes are root-owned, and the adb server has to write to them. The entrypoint
+starts that server; the container's only writable path is the scratch tmpfs.
 
 ## Testing
 
