@@ -6,6 +6,13 @@ import { useEffect, useState } from "react";
 import { z } from "zod";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -62,6 +69,8 @@ export const Route = createFileRoute("/_app/admin/audit")({
 function AuditPage() {
   const params = Route.useSearch();
   const navigate = Route.useNavigate();
+  /** The row whose whole record is on screen; the table itself only clamps. */
+  const [openEntry, setOpenEntry] = useState<AuditEntry | null>(null);
 
   /** Any filter change resets to the first page: page 4 of a new query is nothing. */
   const setFilter = (patch: Partial<Search>) =>
@@ -193,34 +202,58 @@ function AuditPage() {
         )}
       </div>
 
-      <Table>
+      {/* `table-fixed` with a width on every column is what actually stops one
+          long metadata blob from widening the whole table: under the default
+          auto layout the widest cell sets the column, and a `max-w-*` on the
+          cell never binds. Detail takes whatever is left and truncates. */}
+      <Table className="table-fixed">
         <TableHeader>
           <TableRow>
-            <TableHead>When</TableHead>
-            <TableHead>Who</TableHead>
-            <TableHead>Action</TableHead>
-            <TableHead>Target</TableHead>
+            <TableHead className="w-28">When</TableHead>
+            <TableHead className="w-36">Who</TableHead>
+            {/* Wide enough for the longest label, "Released at the session
+                limit" — a badge clipped mid-word looks like a broken border
+                rather than truncated text. */}
+            <TableHead className="w-56">Action</TableHead>
+            <TableHead className="w-56">Target</TableHead>
             <TableHead>Detail</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {entries.map((entry) => (
-            <TableRow key={entry.id}>
-              <TableCell className="whitespace-nowrap text-muted-foreground">
+            // The whole row opens the entry. `tabIndex` and the key handler are
+            // what make that reachable without a mouse, now that there is no
+            // button in a trailing column to tab to.
+            <TableRow
+              key={entry.id}
+              tabIndex={0}
+              aria-label={`Show the whole entry: ${auditActionLabel(entry.action)}`}
+              className="cursor-pointer focus-visible:bg-muted/50 focus-visible:outline-none"
+              onClick={() => setOpenEntry(entry)}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter" && event.key !== " ") return;
+                // Space scrolls the page otherwise, and the target link inside
+                // the row has its own Enter behaviour.
+                if (event.target !== event.currentTarget) return;
+                event.preventDefault();
+                setOpenEntry(entry);
+              }}
+            >
+              <TableCell className="text-muted-foreground">
                 <span title={new Date(entry.at).toLocaleString()}>{relativeTime(entry.at)}</span>
               </TableCell>
-              <TableCell>
+              <TableCell className="truncate">
                 <Actor entry={entry} />
               </TableCell>
               <TableCell>
-                <Badge variant="outline" title={entry.action}>
+                <Badge variant="outline" className="max-w-full truncate" title={entry.action}>
                   {auditActionLabel(entry.action)}
                 </Badge>
               </TableCell>
-              <TableCell className="font-mono text-xs">
+              <TableCell className="truncate font-mono text-xs">
                 <Target entry={entry} />
               </TableCell>
-              <TableCell className="max-w-md">
+              <TableCell className="truncate">
                 <Detail entry={entry} />
               </TableCell>
             </TableRow>
@@ -238,6 +271,8 @@ function AuditPage() {
           )}
         </TableBody>
       </Table>
+
+      <AuditEntryDialog entry={openEntry} onClose={() => setOpenEntry(null)} />
 
       <div className="flex items-center justify-between">
         <span className="text-muted-foreground text-sm">
@@ -353,31 +388,36 @@ function Target({ entry }: { entry: AuditEntry }) {
   if (!entry.targetId) return <span className="text-muted-foreground">—</span>;
   if (entry.targetType !== "device") return <span>{entry.targetId}</span>;
   return (
-    <Link to="/devices/$deviceId" params={{ deviceId: entry.targetId }} className="hover:underline">
+    <Link
+      to="/devices/$deviceId"
+      params={{ deviceId: entry.targetId }}
+      className="hover:underline"
+      // The row opens the entry; this link goes somewhere else entirely.
+      onClick={(event) => event.stopPropagation()}
+    >
       {entry.targetId}
     </Link>
   );
 }
 
+/**
+ * One line, always.
+ *
+ * The cell is `truncate` and the column has a fixed width, so anything longer
+ * is cut rather than allowed to set the table's width. The whole value is a
+ * click away in `AuditEntryDialog` — nothing here is the only copy.
+ */
 function Detail({ entry }: { entry: AuditEntry }) {
   const metadata = entry.metadata as Record<string, unknown> | null;
   if (!metadata) return <span className="text-muted-foreground">—</span>;
 
   if (entry.action === "device.install") {
-    const sha = typeof metadata.sha256 === "string" ? metadata.sha256 : null;
     return (
-      <div className="flex flex-col gap-0.5 text-xs">
-        <span className="truncate">
-          {String(metadata.filename ?? "unknown")}
-          {typeof metadata.size === "number" && ` · ${formatBytes(metadata.size)}`}
-          {metadata.ok === false && <span className="ml-1 text-destructive">failed</span>}
-        </span>
-        {sha && (
-          <span className="truncate font-mono text-muted-foreground" title={sha}>
-            {sha}
-          </span>
-        )}
-      </div>
+      <span className="text-xs">
+        {String(metadata.filename ?? "unknown")}
+        {typeof metadata.size === "number" && ` · ${formatBytes(metadata.size)}`}
+        {metadata.ok === false && <span className="ml-1 text-destructive">failed</span>}
+      </span>
     );
   }
 
@@ -385,9 +425,65 @@ function Detail({ entry }: { entry: AuditEntry }) {
   if (reason) return <span className="text-xs">{reason}</span>;
 
   return (
-    <span className="truncate font-mono text-muted-foreground text-xs">
-      {JSON.stringify(metadata)}
-    </span>
+    <span className="font-mono text-muted-foreground text-xs">{JSON.stringify(metadata)}</span>
+  );
+}
+
+/**
+ * The whole record, for when the row's one line was not enough.
+ *
+ * Every value here is shown in full and is selectable: an install's sha256 is
+ * the only surviving trace of a file that was deleted after it was installed,
+ * so it must be copyable, not merely visible.
+ */
+function AuditEntryDialog({ entry, onClose }: { entry: AuditEntry | null; onClose: () => void }) {
+  const metadata = entry?.metadata as Record<string, unknown> | null | undefined;
+
+  return (
+    <Dialog open={entry !== null} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>{entry ? auditActionLabel(entry.action) : ""}</DialogTitle>
+          <DialogDescription className="font-mono text-xs">{entry?.action}</DialogDescription>
+        </DialogHeader>
+
+        {entry && (
+          <div className="grid gap-3 text-sm">
+            <Row label="When">
+              {new Date(entry.at).toLocaleString()}{" "}
+              <span className="text-muted-foreground">({relativeTime(entry.at)})</span>
+            </Row>
+            <Row label="Who">
+              <Actor entry={entry} />
+            </Row>
+            <Row label="Target">
+              <span className="font-mono text-xs">
+                {entry.targetType ? `${entry.targetType} · ` : ""}
+                <Target entry={entry} />
+              </span>
+            </Row>
+            <Row label="Detail">
+              {metadata ? (
+                <pre className="max-h-80 overflow-auto rounded bg-muted p-3 font-mono text-xs">
+                  {JSON.stringify(metadata, null, 2)}
+                </pre>
+              ) : (
+                <span className="text-muted-foreground">—</span>
+              )}
+            </Row>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function Row({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="grid gap-1">
+      <span className="text-muted-foreground text-xs">{label}</span>
+      <div className="min-w-0">{children}</div>
+    </div>
   );
 }
 

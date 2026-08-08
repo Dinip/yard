@@ -166,6 +166,26 @@ desynchronise an in-flight event.
 `Pointer` state machine needs down/move/up to distinguish a drag from a tap — the
 regression `stf-ios-provider/src/control.rs` documents at length.
 
+`key` carries a free-form name, so hardware buttons need no new message type.
+The vocabulary the browser sends:
+
+| Name | Meaning | Android | iOS |
+|---|---|---|---|
+| `Home` | the **hardware** button | `KEYCODE_HOME` | HID consumer `0x40` |
+| `Back` | the hardware button | `KEYCODE_BACK` | — |
+| `AppSwitch` (or `Recents`) | task switcher | `KEYCODE_APP_SWITCH` | — |
+| `MoveHome` / `MoveEnd` | the **keyboard's** Home/End | `KEYCODE_MOVE_HOME/_END` | HID `0x4A`/`0x4D` |
+| `Enter`, `Backspace`, `Tab`, `Escape`, `Arrow*`, `PageUp`, `PageDown`, `Delete` | as named | ✓ | ✓ |
+
+The Home/MoveHome split is not cosmetic. The browser used to send the keyboard's
+Home key as `Home`, which Android maps to `KEYCODE_HOME`: pressing it while
+typing threw the device to the launcher. There is a regression test on each side.
+
+A hardware button is sent as a **down/up pair**. Android injects a keycode per
+edge and would otherwise leave the key held; iOS presses and releases on the
+down edge and discards the up. Printable characters do not use `key` at all —
+they go as `text`, which is also what carries IME output and paste.
+
 ## Artifact plane — browser → provider ✅ built
 
 Same port, same token. `POST /s/:deviceId/install`,

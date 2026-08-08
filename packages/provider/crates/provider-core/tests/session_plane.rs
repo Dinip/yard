@@ -17,6 +17,7 @@ use base64::Engine as _;
 use farm_protocol::Platform;
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
 use provider_core::auth::TokenVerifier;
+use provider_core::backend::InputEvent;
 use provider_core::config::Config;
 use provider_core::origins::WebOrigins;
 use provider_core::server::{router, ServerState};
@@ -843,6 +844,10 @@ async fn input_reaches_the_backend_and_clipboard_round_trips() {
         r#"{"type":"pointer.down","pointerId":0,"at":{"x":0.5,"y":0.25}}"#,
         r#"{"type":"pointer.move","pointerId":0,"at":{"x":0.5,"y":0.75}}"#,
         r#"{"type":"pointer.up","pointerId":0,"at":{"x":0.5,"y":0.75}}"#,
+        // A hardware button: the control surface sends the pair, because
+        // Android needs the up edge and iOS discards it.
+        r#"{"type":"key","key":"Home","down":true}"#,
+        r#"{"type":"key","key":"Home","down":false}"#,
         r#"{"type":"clipboard.set","text":"copied"}"#,
     ] {
         socket.send(Message::Text(message.into())).await.unwrap();
@@ -867,6 +872,16 @@ async fn input_reaches_the_backend_and_clipboard_round_trips() {
     }
 
     assert_eq!(clipboard.as_deref(), Some("copied"));
+
+    let events = h.device.state.events.lock().await;
+    let keys: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            InputEvent::Key { key, down } => Some((key.as_str(), *down)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(keys, vec![("Home", true), ("Home", false)]);
 }
 
 /// The popout window and the parent tab share one reservation, so both must be

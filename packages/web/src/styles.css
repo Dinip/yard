@@ -93,4 +93,42 @@
     font-family:
       ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
   }
+
+  /*
+   * Scrollbars, in both spellings.
+   *
+   * The platform default is a light-grey bar that reads as a seam on a dark
+   * page, and this app is mostly dark panels next to a black device screen.
+   * `scrollbar-*` is the standard property and covers Firefox; the WebKit
+   * pseudo-elements are what Chrome and Safari actually honour, and they need
+   * the colours spelled out again.
+   *
+   * Deliberately global rather than a utility class: a scrollbar that matched
+   * only where someone remembered to opt in would look like a bug.
+   */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background-color: var(--border);
+    border-radius: 9999px;
+    /* Drawn as a transparent border over the thumb's own background, which is
+       how you inset a WebKit thumb — there is no padding on this element. */
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--muted-foreground);
+  }
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
 }

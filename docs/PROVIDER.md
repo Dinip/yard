@@ -417,6 +417,16 @@ rotation cannot desynchronise an in-flight event.
 The backend's pointer state machine needs them to tell a drag from a tap — the
 regression `stf-ios-provider/src/control.rs` documents at length.
 
+`InputEvent::Key` carries the browser's key *name*, not a keycode, and each
+backend owns its own table: `keycode_for` in `backend-android` (scrcpy
+`INJECT_KEYCODE`, one injection per edge) and `named_button` then `special_key`
+in `backend-ios` (HID, where a hardware button presses and releases on the down
+edge and the up edge is discarded). An unmapped name is logged and dropped
+rather than guessed at. The full vocabulary is in
+[PROTOCOL.md](PROTOCOL.md#session-plane--browser--provider--built) — note in
+particular that `Home` is the hardware button and `MoveHome` is the keyboard
+key, which `named_button` being tried first on iOS is exactly why.
+
 ## Docker
 
 `debian:bookworm-slim` rather than `distroless/cc`, because the Android backend needs the

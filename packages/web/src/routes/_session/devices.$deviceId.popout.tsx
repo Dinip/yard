@@ -81,7 +81,6 @@ function PopoutPage() {
           platform={device.platform}
           active
           className="flex-1"
-          showPopout={false}
           controls="overlay"
           onRevoked={onRevoked}
         />

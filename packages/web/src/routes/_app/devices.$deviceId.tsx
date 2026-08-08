@@ -1,14 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, ExternalLink } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { DeviceConsole } from "@/components/device-console";
 import { formatCountdown, ReservationKeeper } from "@/components/reservation-keeper";
 import { SessionEndedDialog } from "@/components/session-ended-dialog";
+import { SidePanel } from "@/components/side-panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -22,6 +22,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useDeviceStream } from "@/hooks/use-device-stream";
 import { usePopoutPresence } from "@/hooks/use-popout-presence";
+import { openPopout } from "@/lib/popout";
+import { loadPanelOpen, savePanelOpen } from "@/lib/side-panels";
 import { trpc } from "@/lib/trpc";
 import { platformLabel, relativeTime } from "@/lib/utils";
 
@@ -186,10 +188,23 @@ function DevicePage() {
     if (requestState === "expired") toast("Your request to join went unanswered");
   }, [requestState]);
 
+  const [detailsOpen, setDetailsOpen] = useState(() => loadPanelOpen("details"));
+  const toggleDetails = () =>
+    setDetailsOpen((open) => {
+      savePanelOpen("details", !open);
+      return !open;
+    });
+
   if (!device) return null;
 
+  /** Whether there is a live session here — what the rail and screen need. */
+  const inSession = mine || observing;
+
   return (
-    <div className="flex flex-col gap-6">
+    // Locked to the viewport, so the screen gets every pixel the header and the
+    // rail do not: a device is used in portrait almost always, and the old page
+    // spent its height on chrome and then scrolled.
+    <div className="flex min-h-0 flex-1 flex-col gap-3">
       {/* Only the holder renews. Another user's tab must not keep a device
           they do not hold alive. */}
       {mine && (
@@ -222,22 +237,21 @@ function DevicePage() {
         />
       )}
 
-      <div className="flex items-center gap-3">
+      {/* One line, not two: every row here is a row the screen does not get.
+          It wraps rather than overflowing when the join/release cluster is at
+          its widest. */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <Button variant="ghost" size="icon" asChild>
           <Link to="/devices">
             <ArrowLeft className="size-4" />
           </Link>
         </Button>
-        <div>
-          <h1 className="font-semibold text-2xl">{device.name ?? device.id}</h1>
-          <p className="text-muted-foreground text-sm">
-            {platformLabel(device.platform)} {device.osVersion} · {device.model} ·{" "}
-            {device.provider.name}
-          </p>
-        </div>
-        <Badge variant="outline" className="ml-2">
-          {device.status}
-        </Badge>
+        <h1 className="font-semibold text-xl">{device.name ?? device.id}</h1>
+        <p className="text-muted-foreground text-sm">
+          {platformLabel(device.platform)} {device.osVersion} · {device.model} ·{" "}
+          {device.provider.name}
+        </p>
+        <Badge variant="outline">{device.status}</Badge>
         {mine && device.reservation && device.reservation.observers.length > 0 && (
           <Badge variant="outline" className="border-warning/30 bg-warning/15 text-warning">
             {describeObservers(device.reservation.observers)} in this session
@@ -248,6 +262,23 @@ function DevicePage() {
           <Badge variant="outline">{device.reservation.joinRequests.length} waiting to join</Badge>
         )}
         <div className="flex-1" />
+        {/* A page action rather than a device one, so it sits with Release
+            instead of in the rail: it is about this window, not the phone. */}
+        {inSession && !poppedOut && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() =>
+              openPopout(deviceId, {
+                width: device.displayWidth,
+                height: device.displayHeight,
+                scale: device.displayScale,
+              })
+            }
+          >
+            <ExternalLink className="size-4" /> Pop out
+          </Button>
+        )}
         {device.reservation ? (
           mine ? (
             <Button
@@ -330,54 +361,50 @@ function DevicePage() {
         )}
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
-        <Card className="min-h-[480px]">
-          <CardContent className="flex h-full min-h-0 items-center justify-center text-center text-muted-foreground text-sm">
-            {!mine && !observing ? (
-              device.reservation ? (
-                <p>
-                  {device.reservation.ownerName} is using this device.{" "}
-                  {awaitingAnswer
-                    ? "Your request to join is waiting for an answer."
-                    : "Ask to join, or wait for it to come free."}
-                </p>
-              ) : (
-                <p>Reserve this device to open a session.</p>
-              )
-            ) : observing ? (
-              <DeviceConsole
-                deviceId={deviceId}
-                platform={device.platform}
-                active
-                className="h-[70svh] w-full"
-                onRevoked={onRevoked}
-              />
-            ) : poppedOut ? (
-              // Two decoders on one device is waste the user never asked for,
-              // so this tab stands down while the popout has the stream.
-              <div className="flex flex-col items-center gap-3">
-                <p>This device is open in a popout window.</p>
-                <Button variant="outline" size="sm" onClick={reclaim}>
-                  Bring it back here
-                </Button>
-              </div>
+      <div className="flex min-h-0 flex-1 gap-3">
+        {/* No card around the screen: its border and padding were a frame
+            around the one thing on the page that wants the room. */}
+        {!inSession ? (
+          <div className="flex flex-1 items-center justify-center rounded-lg border border-dashed text-center text-muted-foreground text-sm">
+            {device.reservation ? (
+              <p>
+                {device.reservation.ownerName} is using this device.{" "}
+                {awaitingAnswer
+                  ? "Your request to join is waiting for an answer."
+                  : "Ask to join, or wait for it to come free."}
+              </p>
             ) : (
-              <DeviceConsole
-                deviceId={deviceId}
-                platform={device.platform}
-                active
-                className="h-[70svh] w-full"
-                onRevoked={onRevoked}
-              />
+              <p>Reserve this device to open a session.</p>
             )}
-          </CardContent>
-        </Card>
+          </div>
+        ) : poppedOut ? (
+          // Two decoders on one device is waste the user never asked for,
+          // so this tab stands down while the popout has the stream.
+          <div className="flex flex-1 flex-col items-center justify-center gap-3 rounded-lg border border-dashed text-center text-muted-foreground text-sm">
+            <p>This device is open in a popout window.</p>
+            <Button variant="outline" size="sm" onClick={reclaim}>
+              Bring it back here
+            </Button>
+          </div>
+        ) : (
+          <DeviceConsole
+            deviceId={deviceId}
+            platform={device.platform}
+            active
+            className="min-w-0 flex-1"
+            onRevoked={onRevoked}
+          />
+        )}
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Details</CardTitle>
-          </CardHeader>
-          <CardContent className="grid gap-2 text-sm">
+        <SidePanel
+          side="right"
+          open={detailsOpen}
+          onToggle={toggleDetails}
+          title="Details"
+          width="w-[320px]"
+          className="rounded-lg border"
+        >
+          <div className="grid gap-2 p-3 text-sm">
             <Detail label="Identifier" value={device.id} mono />
             <Detail label="Manufacturer" value={device.manufacturer} />
             {/* `serial` and `brand` are the same as the identifier and the
@@ -435,8 +462,8 @@ function DevicePage() {
                 onChanged={invalidate}
               />
             )}
-          </CardContent>
-        </Card>
+          </div>
+        </SidePanel>
       </div>
     </div>
   );

@@ -1,72 +1,16 @@
-import { useQuery } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
-import { Badge } from "@/components/ui/badge";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { trpc } from "@/lib/trpc";
-import { relativeTime } from "@/lib/utils";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 
+/**
+ * The read-only provider list used to live here, next to an admin page showing
+ * the same table with buttons on it. Only the admin one survives.
+ *
+ * This stays behind as a redirect rather than being deleted outright: the path
+ * was linked from the nav for long enough to be bookmarked, and a bare "Not
+ * found" is a poor answer to a link that used to work. A non-admin following it
+ * lands on `/admin/providers`, whose own guard sends them to `/devices`.
+ */
 export const Route = createFileRoute("/_app/providers")({
-  loader: ({ context }) =>
-    context.queryClient.ensureQueryData(context.trpc.provider.list.queryOptions()),
-  component: ProvidersPage,
+  beforeLoad: () => {
+    throw redirect({ to: "/admin/providers" });
+  },
 });
-
-function ProvidersPage() {
-  const { data: providers } = useQuery({
-    ...trpc.provider.list.queryOptions(),
-    refetchInterval: 10_000,
-  });
-
-  return (
-    <div className="flex flex-col gap-6">
-      <h1 className="font-semibold text-2xl">Providers</h1>
-
-      {!providers?.length ? (
-        <div className="rounded-lg border border-dashed py-20 text-center">
-          <p className="font-medium">No providers connected</p>
-          <p className="mt-1 text-muted-foreground text-sm">
-            Provider token issuance and the control-plane gateway land in phase 2.
-          </p>
-        </div>
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Devices</TableHead>
-              <TableHead>Public base URL</TableHead>
-              <TableHead>Version</TableHead>
-              <TableHead>Last seen</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {providers.map((p) => (
-              <TableRow key={p.id}>
-                <TableCell className="font-medium">{p.name}</TableCell>
-                <TableCell>
-                  <Badge variant={p.status === "online" ? "default" : "secondary"}>
-                    {p.status}
-                  </Badge>
-                </TableCell>
-                <TableCell>{p.deviceCount}</TableCell>
-                <TableCell className="font-mono text-xs">{p.publicBaseUrl}</TableCell>
-                <TableCell className="text-muted-foreground">{p.version ?? "—"}</TableCell>
-                <TableCell className="text-muted-foreground">
-                  {relativeTime(p.lastSeenAt)}
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
-    </div>
-  );
-}

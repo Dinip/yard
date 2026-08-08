@@ -94,66 +94,74 @@ export function DeviceScreen({
       : 9 / 16;
 
   return (
-    <div className={cn("flex min-h-0 items-center justify-center", className)}>
-      <div
-        className="relative flex max-h-full max-w-full items-center justify-center"
-        style={{ aspectRatio: aspect }}
-      >
-        <canvas
-          ref={canvasRef}
-          tabIndex={0}
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={endPointer}
-          onPointerCancel={endPointer}
-          onKeyDown={onKeyDown}
-          onKeyUp={onKeyUp}
-          onPaste={onPaste}
-          onContextMenu={(event) => event.preventDefault()}
-          className={cn(
-            "h-full max-h-full w-full max-w-full rounded-md bg-black outline-none",
-            "ring-offset-2 ring-offset-background focus-visible:ring-2 focus-visible:ring-ring",
-            interactive ? "touch-none" : "pointer-events-none",
-          )}
-        />
-        {/*
+    // The picture is laid out *out of flow*, so this box contributes no
+    // intrinsic height of its own. That is load-bearing: an aspect-ratio box in
+    // normal flow derives a height from the available width, and a tall thin
+    // device in a wide column asked for more height than the viewport had —
+    // which is how the whole page came to overflow. Nothing above it now has to
+    // be given a definite height to hold it in.
+    <div className={cn("relative min-h-0", className)}>
+      <div className="absolute inset-0 flex items-center justify-center">
+        <div
+          className="relative flex max-h-full max-w-full items-center justify-center"
+          style={{ aspectRatio: aspect }}
+        >
+          <canvas
+            ref={canvasRef}
+            tabIndex={0}
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={endPointer}
+            onPointerCancel={endPointer}
+            onKeyDown={onKeyDown}
+            onKeyUp={onKeyUp}
+            onPaste={onPaste}
+            onContextMenu={(event) => event.preventDefault()}
+            className={cn(
+              "h-full max-h-full w-full max-w-full rounded-md bg-black outline-none",
+              "ring-offset-2 ring-offset-background focus-visible:ring-2 focus-visible:ring-ring",
+              interactive ? "touch-none" : "pointer-events-none",
+            )}
+          />
+          {/*
           The fallback: still frames over multipart, ~3fps, no decode involved.
           It sits above the canvas rather than replacing it so the input surface
           underneath keeps working — a degraded picture is still a usable device.
         */}
-        {unsupported && fallbackUrl && (
-          <img
-            src={fallbackUrl}
-            alt="Device screen (fallback stream)"
-            className="pointer-events-none absolute inset-0 h-full w-full rounded-md object-contain"
-          />
-        )}
+          {unsupported && fallbackUrl && (
+            <img
+              src={fallbackUrl}
+              alt="Device screen (fallback stream)"
+              className="pointer-events-none absolute inset-0 h-full w-full rounded-md object-contain"
+            />
+          )}
 
-        {state !== "open" || (unsupported && !fallbackUrl) ? (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 rounded-md bg-black/70 text-center text-sm text-white">
-            {unsupported ? (
-              <>
-                <MonitorOff className="size-6" />
-                <p className="max-w-xs">
-                  This browser cannot decode the device's stream. WebCodecs needs a secure context
-                  and a matching hardware decoder.
-                </p>
-              </>
-            ) : (
-              <>
-                <Loader2 className="size-6 animate-spin" />
-                <p>{state === "closed" ? (detail ?? "Session closed") : "Connecting…"}</p>
-              </>
-            )}
-          </div>
-        ) : null}
+          {state !== "open" || (unsupported && !fallbackUrl) ? (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 rounded-md bg-black/70 text-center text-sm text-white">
+              {unsupported ? (
+                <>
+                  <MonitorOff className="size-6" />
+                  <p className="max-w-xs">
+                    This browser cannot decode the device's stream. WebCodecs needs a secure context
+                    and a matching hardware decoder.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <Loader2 className="size-6 animate-spin" />
+                  <p>{state === "closed" ? (detail ?? "Session closed") : "Connecting…"}</p>
+                </>
+              )}
+            </div>
+          ) : null}
 
-        {/* Say so, rather than letting a jerky picture look like a slow farm. */}
-        {unsupported && fallbackUrl && (
-          <span className="absolute top-2 left-2 rounded bg-black/70 px-2 py-1 text-white text-xs">
-            Fallback stream — ~3 fps, no hardware decoder here
-          </span>
-        )}
+          {/* Say so, rather than letting a jerky picture look like a slow farm. */}
+          {unsupported && fallbackUrl && (
+            <span className="absolute top-2 left-2 rounded bg-black/70 px-2 py-1 text-white text-xs">
+              Fallback stream — ~3 fps, no hardware decoder here
+            </span>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -173,22 +181,32 @@ function keyMessage(event: React.KeyboardEvent, down: boolean): ClientMessage | 
   if (event.key.length === 1) {
     return down ? { type: "text", text: event.key } : null;
   }
-  if (!NAMED_KEYS.has(event.key)) return null;
-  return { type: "key", key: event.key, down };
+  const name = NAMED_KEYS.get(event.key);
+  if (!name) return null;
+  return { type: "key", key: name, down };
 }
 
-const NAMED_KEYS = new Set([
-  "Enter",
-  "Backspace",
-  "Tab",
-  "Escape",
-  "ArrowUp",
-  "ArrowDown",
-  "ArrowLeft",
-  "ArrowRight",
-  "Home",
-  "End",
-  "PageUp",
-  "PageDown",
-  "Delete",
+/**
+ * Keyboard key → the name sent on the wire. Mostly identity.
+ *
+ * Home and End are the exception, and the reason this is a map rather than a
+ * set: `Home` on the wire is the *hardware* button, so sending the keyboard's
+ * Home key under that name threw the device to the launcher in the middle of
+ * typing. `MoveHome`/`MoveEnd` are the text-editing pair — Android
+ * `KEYCODE_MOVE_HOME`, iOS HID 0x4A.
+ */
+const NAMED_KEYS = new Map([
+  ["Enter", "Enter"],
+  ["Backspace", "Backspace"],
+  ["Tab", "Tab"],
+  ["Escape", "Escape"],
+  ["ArrowUp", "ArrowUp"],
+  ["ArrowDown", "ArrowDown"],
+  ["ArrowLeft", "ArrowLeft"],
+  ["ArrowRight", "ArrowRight"],
+  ["Home", "MoveHome"],
+  ["End", "MoveEnd"],
+  ["PageUp", "PageUp"],
+  ["PageDown", "PageDown"],
+  ["Delete", "Delete"],
 ]);

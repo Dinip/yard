@@ -1150,6 +1150,97 @@ something other than a fixture.
 
 ---
 
+## Phase 15 — UI rework: hardware buttons and a page that is mostly device ✅
+
+*Done when: the device page gives its whole height to the screen, Back and Home
+are one click away in both the page and the popout, a long audit metadata blob
+cannot widen the table, and there is one providers page instead of two.*
+
+Four unrelated complaints, one pass.
+
+| Item | State | Where |
+|---|---|---|
+| Navigation moved to a 56px left icon rail; `AppShell` bounded (`h-svh`) | ✅ | `.../components/app-shell.tsx` |
+| Viewport-locked device page: one-line header, full-height screen | ✅ | `.../routes/_app/devices.$deviceId.tsx` |
+| Both flanks are one collapsible `SidePanel`, open by default, persisted | ✅ | `.../components/side-panel.tsx`, `.../lib/side-panels.ts` |
+| Console actions grouped into Device / Screen / Files sections | ✅ | `.../components/device-console.tsx` |
+| Back / Home / Recents, platform-gated, sent as a down/up pair | ✅ | same |
+| Rail is one labelled button per row; popout overlay a floating icon column | ✅ | same |
+| `openPopout` lifted out of the console | ✅ | `.../lib/popout.ts` |
+| Keyboard Home/End split off as `MoveHome`/`MoveEnd` | ✅ | web + both backends |
+| Audit table `table-fixed`, one-line Detail, clickable row → dialog | ✅ | `.../routes/_app/admin.audit.tsx` |
+| `/providers` reduced to a redirect; one nav item | ✅ | `.../routes/_app/providers.tsx` |
+
+### The buttons needed no protocol work at all
+
+`{ type: "key", key, down }` has existed since phase 2, `provider-core` already
+routes it to `InputEvent::Key`, and both real backends already mapped `Back`
+(`KEYCODE_BACK`), `Home` and `AppSwitch`. `bun run protocol:check` is unaffected.
+The whole feature was a UI that never offered them.
+
+### The bug that fell out of adding a Home button
+
+The browser sent the *keyboard's* Home key as `key: "Home"`, and Android maps
+that to `KEYCODE_HOME` — so pressing Home while typing in a text field threw the
+device to the launcher. Adding a deliberate hardware Home button forced the two
+apart: the keyboard keys now go as `MoveHome`/`MoveEnd`
+(`KEYCODE_MOVE_HOME`/`_END`, HID `0x4A`/`0x4D`), and `End` was never mapped on
+Android at all, so it started working in the same change. Regression tests on
+both backends and a `key` case in `session_plane.rs`.
+
+### The top bar was the last row worth reclaiming
+
+Once the page header was one line, the row *above* it was the remaining waste: a
+top bar carrying, for a non-admin, a product name and a single link — and the
+device page stacked its own header under it either way. Navigation is now a 56px
+icon rail down the left edge, labels in tooltips, account menu at the bottom. It
+costs width, which is the axis a portrait device leaves spare, and it took the
+canvas from 648px tall to 721px on the same screen.
+
+`APP_NAME` still never appears as a literal: the rail's brand mark carries it as
+a tooltip, from `user.capabilities`. See RENAMING.md.
+
+### `min-h-full` is not a height
+
+The first cut of the device page overflowed vertically. Flex only bounds a child
+when the container's height is **definite**, and `min-height: 100%` is not that —
+`flex-1` fell back to content height and `DeviceScreen`'s aspect-ratio box sized
+itself from the available *width*, producing a box taller than the viewport. The
+fix is `h-full` on the shell's content column with the padding and the scroll
+moved onto `main`. Worth remembering before adding another full-height page.
+
+### Verified in the browser, against a real Galaxy S22
+
+Not just typechecked: page scroll is zero on both axes, the rail carries all ten
+actions with the right labels and platform gating, Details collapses and the
+state survives a reload, the popout's column is 46px wide and stays inside the
+window, a 600-character metadata blob truncates with an ellipsis and opens in
+full in the dialog, and `/providers` redirects.
+
+### Decisions worth not relitigating
+
+- **The rail sits beside the screen, not under it.** A portrait device leaves the
+  horizontal space empty anyway, and every row of controls below the screen is a
+  row of screen nobody gets. This is the whole point of the phase.
+- **Both renderings are columns.** Every horizontal cut of this failed: two
+  icons across in the rail wasted the height it had and read as scattered, and
+  the popout's controls wrapped onto two rows and filled the window's width —
+  the one direction a phone-shaped window has none of. A column is also why the
+  rail can afford to *label* its buttons, which the overlay cannot: it floats
+  over the picture, so it stays icon-only with the label in the tooltip. That is
+  why every action's label is a phrase — "Copy from device", not "Copy".
+- **No divider lines between the groups**, in either rendering. A vertical
+  separator was left dangling at the end of a row the moment the pill wrapped,
+  and once both were columns, proximity and the rail's headings did the job
+  without drawing anything.
+- **The audit table needed `table-fixed`, not a `max-w-*`.** Under auto layout
+  the widest cell sets the column, so a cap on the cell never binds.
+- **`/providers` is a redirect, not a deletion.** It was in the nav long enough
+  to be bookmarked, and a bare "Not found" is a poor answer to a link that used
+  to work.
+
+---
+
 ## Open decisions
 
 - **Name.** The project is "Device Farm" as a placeholder. See
