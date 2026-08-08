@@ -179,16 +179,24 @@ decisions:
   - **a PR is labelled `build`** → tagged `pr-<number>`, for trying a branch on
     real hardware before it merges. It never touches `latest`.
 
-Both paths are gated on CI. The release path builds a commit CI already passed
-on `main`; the PR path waits for that PR's own run. That is why the label case
-has two triggers — `workflow_run`, for a push to a PR that is already labelled,
-and `labeled`, for a label added after CI has finished. The `resolve` job is
-where either one turns into "build this sha, call it these tags", so the build
-jobs never reason about the event that started them.
+A PR build requires **both**, for the same commit: the `build` label is on the
+PR, and CI concluded successfully for that commit. Neither implies the other —
+the label is often added long after CI, and CI finishing says nothing about
+whether anyone wanted an image — so both are checked every time, and the label is
+read from the PR at decision time rather than from the event that fired.
 
-Removing and re-adding the label rebuilds. `pr-<number>` is overwritten each
-time, so a test host on that tag gets the newest push after a `docker compose
-pull`.
+That is also why the label case has two triggers: `workflow_run`, for a push to a
+PR that is already labelled, and `labeled`, for a label added after CI has
+already finished, where no further CI run is coming. The second polls for that
+commit's CI conclusion instead of assuming it. The `resolve` job is where either
+one turns into "build this sha, call it these tags", so the build jobs never
+reason about the event that started them.
+
+A commit that is no longer the PR head is skipped: a push during a build has its
+own CI run coming, and letting both proceed would race for `pr-<number>` with the
+older image able to win. Removing and re-adding the label rebuilds; `pr-<number>`
+is overwritten each time, so a test host on that tag picks up the newest push
+after a `docker compose pull`.
 
 ## Full stack in Docker
 

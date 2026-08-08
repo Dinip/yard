@@ -88,30 +88,49 @@ jobs:
             exit 0
           fi
 
-          # Both PR paths need the same two facts: the label is on, and CI is
-          # green for this exact commit.
+          # A PR build requires BOTH, for the same commit, whichever event asked:
+          #
+          #   1. the `build` label is on the PR right now, and
+          #   2. CI concluded successfully for that exact commit.
+          #
+          # Neither implies the other. The label can be added long after CI, and
+          # CI finishing says nothing about whether anyone asked for an image.
+
+          # Which event this is only decides where the PR and commit come from.
           if [ "$EVENT" = "workflow_run" ]; then
             [ "$RUN_EVENT" = "pull_request" ] || skip "CI run was not for a PR"
-            [ "$RUN_CONCLUSION" = "success" ] || skip "CI concluded $RUN_CONCLUSION"
             [ -n "${PR_NUMBER:-}" ] || skip "no PR attached to this CI run"
           else
             [ "$LABEL" = "build" ] || skip "label $LABEL is not 'build'"
           fi
 
-          labelled=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
-            --json labels --jq '[.labels[].name] | index("build") != null')
+          pr=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
+            --json labels,headRefOid)
+
+          # 1. The label, read from the PR now rather than from the event, so a
+          #    label removed while CI was running does not still publish.
+          labelled=$(jq -r '[.labels[].name] | index("build") != null' <<<"$pr")
           [ "$labelled" = "true" ] || skip "PR #$PR_NUMBER is not labelled build"
 
-          # On the `labeled` path CI may still be running, or may never have been
-          # started for this commit. Wait rather than publish something untested.
-          if [ "$EVENT" = "pull_request" ]; then
+          # A commit that is no longer the PR head has been superseded by a push
+          # whose own CI run will arrive here in a moment. Building it would race
+          # that one for the pr-N tag, and could win with the older image.
+          head=$(jq -r '.headRefOid' <<<"$pr")
+          [ "$head" = "$PR_SHA" ] || skip "$PR_SHA is no longer the head of #$PR_NUMBER"
+
+          # 2. CI, for that commit. On the workflow_run path the event carries the
+          #    answer; on the `labeled` path CI may still be running, or may never
+          #    have run — wait rather than publish something untested.
+          if [ "$EVENT" = "workflow_run" ]; then
+            [ "$RUN_CONCLUSION" = "success" ] || skip "CI concluded $RUN_CONCLUSION"
+          else
             for _ in $(seq 1 60); do
               conclusion=$(gh run list --repo "$GITHUB_REPOSITORY" \
                 --workflow CI --commit "$PR_SHA" --limit 1 \
                 --json conclusion --jq '.[0].conclusion // "pending"')
               case "$conclusion" in
                 success) break ;;
-                pending|null|"") echo "CI has not concluded yet; waiting"; sleep 30 ;;
+                pending|null|"") echo "CI has not concluded for $PR_SHA; waiting"; sleep 30 ;;
                 *) skip "CI concluded $conclusion for $PR_SHA" ;;
               esac
             done
