@@ -1,0 +1,35 @@
+# TLS terminator for a provider host — see docs/DEPLOYMENT.md.
+#
+# Used by docker-compose.provider.yml, the standalone shape: a machine with the
+# phones plugged into it, running nothing else. The coordinator never connects
+# here; browsers do, for video, uploads and screenshots.
+#
+# TLS is a hard requirement, not a nicety: WebCodecs refuses to decode outside a
+# secure context, and the failure is a blank screen with no error. This is the
+# terminator that makes provider.yaml's `public_base_url` an https:// URL.
+{$PROVIDER_SITE_ADDRESS} {
+	# No `encode`. Everything this host serves is already compressed — H.264/HEVC
+	# access units, PNG screenshots, APK/IPA bodies — so gzip would spend CPU per
+	# frame to save nothing.
+
+	# An IPA is routinely over a gigabyte, and the provider enforces its own
+	# ceiling from `max_upload_mb`. Keep this above it, or Caddy rejects the
+	# upload first and the user gets a 413 the provider never saw.
+	request_body {
+		max_size 2200MB
+	}
+
+	# Session plane (WebSocket) and artifact plane (HTTP) are the same port and
+	# the same prefix. Caddy proxies the upgrade without configuration.
+	reverse_proxy provider:7100 {
+		# Flush every write straight through instead of buffering. The MJPEG
+		# fallback stream at /s/:deviceId/mjpeg is an unbounded response, and a
+		# buffering proxy holds each frame until its buffer fills — which looks
+		# exactly like a device that stopped sending.
+		flush_interval -1
+	}
+}
+
+# The metrics listener (9100) is deliberately absent. It carries no auth by
+# design, so it must not be reachable from the internet — expose it on the
+# host's private interface and let Prometheus scrape it there.

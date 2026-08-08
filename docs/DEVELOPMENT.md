@@ -33,7 +33,7 @@ Sign out and back in — role changes are masked by the 60s session cookie cache
 ## Running against synthetic devices
 
 No hardware is needed to develop or test anything above the provider. Sign in as
-an admin, go to **Manage → Add provider**, create one (id `lab-1`, any HTTPS base
+an admin, go to **Providers → Add provider**, create one (id `lab-1`, any HTTPS base
 URL), issue it a token, then:
 
 ```bash
@@ -94,6 +94,16 @@ cp .env.example .env.docker      # then fill in, or see below
 docker compose --env-file .env.docker up -d
 docker compose --env-file .env.docker exec coordinator \
   bun /app/grant-admin.js you@example.com
+```
+
+The compose files pull CI-published images from
+`ghcr.io/dinip/device-farm/{coordinator,web,provider}` rather than building, so
+this brings up `main`, not your working tree. To run a local change, build over
+the image name first — compose uses what it already has:
+
+```bash
+docker build -f packages/coordinator/Dockerfile \
+  -t ghcr.io/dinip/device-farm/coordinator:latest .
 ```
 
 `PUBLIC_URL=http://farm.localhost` is worth knowing about: `*.localhost` is a
@@ -159,11 +169,22 @@ silent no-op.
 
 ```bash
 cp .env.example .env    # set PUBLIC_URL, AUTH_SECRET, SITE_ADDRESS
-docker compose up --build
+docker compose up -d    # pulls the published images; nothing is built here
 ```
 
 Migrations run automatically from the coordinator's entrypoint, so this is a
 one-command deploy on a single node.
+
+`.env.example` is grouped by deploy unit — postgres, migrations, coordinator,
+web+caddy, provider — because the units can be deployed separately. Its
+**Shared across deploy units** block at the top is the list of values that then
+have to agree in more than one place (`DATABASE_URL`, the `PUBLIC_URL` host
+against Caddy's `SITE_ADDRESS` and the provider's `coordinator_url`, and so on).
+On a single node every section goes in one file and the question does not arise.
+
+This section is the local, one-host shape. Deploying it for real — TLS,
+the first admin, provider hosts of their own — is
+**[DEPLOYMENT.md](./DEPLOYMENT.md)**.
 
 The `provider` service is behind a profile because it needs host device access:
 

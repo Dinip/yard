@@ -1241,6 +1241,104 @@ full in the dialog, and `/providers` redirects.
 
 ---
 
+## `.env.example` is grouped by deploy unit ✅
+
+The file was grouped by topic, which only describes the single-node
+`docker compose up`. The stack is five independently deployable units —
+postgres, migrations, coordinator, web+caddy, provider — and a split deployment
+has to set several values in more than one of them, with matching values.
+Nothing said so, so the failure mode was a coordinator whose `PUBLIC_URL` host
+disagreed with Caddy's `SITE_ADDRESS`, or a provider dialling a `coordinator_url`
+that was not the coordinator's public origin.
+
+Now: a **Shared across deploy units** block at the top lists every value that
+appears in more than one unit and what breaks when they disagree; the body is
+grouped by unit; and any key read by more than one unit carries an inline
+`# also: …` tag. Keys that were consumed by code but never documented are in
+too, commented out — `MIGRATIONS_DIR`, `COORDINATOR_URL` (the vite dev proxy),
+`PROVIDER_PORT`, `USBMUXD_BRIDGE_PORT`, `NODE_ENV`.
+
+The key set is unchanged, so `cp .env.example .env` still works. Inline comments
+parse correctly under both consumers — verified with `bun --env-file` and
+`docker compose --env-file … config`, and by importing the coordinator's
+`env.ts` against the file so the t3-env schema validates it.
+
+`APP_NAME` is noted as coordinator-only: the SPA reads it over the API, so
+setting it on the web unit does nothing.
+
+---
+
+## Deployment documentation ✅
+
+[DEPLOYMENT.md](./DEPLOYMENT.md) — single machine and multi machine, end to end:
+configure, first admin, register a provider, TLS, metrics, upgrades, backups,
+and a troubleshooting table built from the invariants rather than from guesses.
+
+The multi-machine half needed files, not just prose. A provider host had no
+compose file of its own — the only one bundled the whole stack behind a
+`provider` profile — so a second machine had nothing to run:
+
+- **`docker-compose.provider.yml`** — the provider and its own Caddy, nothing
+  else. Metrics publish on `127.0.0.1` by default, since that port carries no
+  auth by design.
+- **`packages/provider/Caddyfile`** — the terminator that makes
+  `public_base_url` an `https://` URL. `request_body max_size` above
+  `max_upload_mb`, or Caddy 413s an upload the provider never saw;
+  `flush_interval -1`, or a buffering proxy holds MJPEG frames and looks like a
+  device that stopped sending. No `encode` — every byte this host serves is
+  already compressed.
+
+### What the writing turned up
+
+- **The nav rework left a stale doc reference.** DEVELOPMENT.md still said
+  **Manage → Add provider**; there is no Manage section any more, the rail is
+  flat. Fixed.
+- **CORS is the multi-machine trap worth naming.** A provider's allowlist
+  arrives in `hello.ack` and is empty until it registers, so a failed upload
+  points at the *control plane*, not at Caddy. That is in the troubleshooting
+  table and next to the cross-host checklist.
+- **`RESERVATION_TTL` only seeds.** Once `reservation.ttlSeconds` exists,
+  editing the env var does nothing — which is correct, and worth stating before
+  an operator changes it and waits for an effect.
+- **`/health` is not public on the coordinator.** The first draft told operators
+  to `curl https://…/health`; Caddy routes `/api/*` and the JWKS and hands
+  everything else to the SPA, so that returns `index.html` with a 200. Caught by
+  running the command as written. The provider's `/health` *is* public, because
+  its terminator proxies everything.
+
+### The compose files pull, they do not build
+
+CI has published `coordinator`, `web` and `provider` to
+`ghcr.io/dinip/device-farm/*` since phase 6 — multi-arch, tagged `latest` and
+the commit sha — but both compose files still built from source, so every deploy
+recompiled the Rust provider for nothing. They now carry `image:` alone, with
+`IMAGE_TAG` selecting the tag, which is also what makes a rollback an env edit
+rather than a checkout.
+
+Consequences worth knowing:
+
+- **A provider host no longer needs a clone.** It needs three files, and
+  `PROVIDER_CONFIG` / `PROVIDER_CADDYFILE` let the two configs live anywhere.
+- **`docker compose up` brings up `main`, not your working tree.** Building over
+  the image name is how you test a local change; DEVELOPMENT.md says so where it
+  describes the containerised run.
+- **The packages are private today**, so a deploy host needs `docker login
+  ghcr.io` until their visibility is changed. Noted in DEPLOYMENT.md rather than
+  assumed away.
+
+### Verified without hardware
+
+The whole multi-machine shape, run as two compose projects on one machine: the
+standalone provider registered against the containerised coordinator, fetched
+the JWKS, reported a mock device to `ready`, served `/health` and a CORS
+preflight through its own Caddy, and exposed metrics on loopback. The
+coordinator's `provider` row went `online` with the advertised
+`public_base_url`, and the two devices absent from the config reconciled to
+`absent` — the behaviour the troubleshooting table describes. `--check` and
+`caddy validate` both pass on the new files.
+
+---
+
 ## Open decisions
 
 - **Name.** The project is "Device Farm" as a placeholder. See

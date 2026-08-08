@@ -64,6 +64,7 @@ packages/
 | [PROTOCOL.md](docs/PROTOCOL.md) | Wire contract |
 | [REFERENCES.md](docs/REFERENCES.md) | The STF sources kept on disk, and what to read in them |
 | [DEVELOPMENT.md](docs/DEVELOPMENT.md) | Setup, commands, conventions |
+| [DEPLOYMENT.md](docs/DEPLOYMENT.md) | Running it in production, on one machine or many |
 | [RENAMING.md](docs/RENAMING.md) | How to rename the project |
 
 ## Stack

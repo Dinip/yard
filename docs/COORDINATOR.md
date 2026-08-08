@@ -26,7 +26,10 @@ src/
 
 Everything is validated by `env.ts` at import time — the process refuses to
 start on a bad config rather than failing on the first request. See
-`.env.example` for the full list. The ones with sharp edges:
+`.env.example` for the full list — it is grouped by deploy unit, so the
+coordinator's sections are the ones marked as such, plus whatever its **Shared
+across deploy units** block says the coordinator has in common with postgres,
+Caddy or a provider. The ones with sharp edges:
 
 | Var | Why it matters |
 |---|---|

@@ -1,0 +1,60 @@
+# A provider host, on its own — the multi-machine shape. See docs/DEPLOYMENT.md.
+#
+#   docker compose -f docker-compose.provider.yml up -d
+#
+# Nothing is built here, so this file plus a provider.yaml and a Caddyfile is all
+# a provider host needs; both config paths default to the repo's copies and are
+# overridable for a host without a clone.
+name: device-farm-provider
+
+services:
+  provider:
+    image: ghcr.io/dinip/device-farm/provider:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      FARM_CONFIG: /etc/farm/provider.yaml
+      FARM_PROVIDER_TOKEN: ${FARM_PROVIDER_TOKEN:?issue one under /admin/providers}
+      FARM_LOG: ${FARM_LOG:-info}
+    volumes:
+      - ${PROVIDER_CONFIG:-./packages/provider/provider.yaml}:/etc/farm/provider.yaml:ro
+      # Linux, where the devices are: uncomment these and `privileged`. Mount
+      # the whole /dev/bus/usb *directory*, not individual --device nodes — a
+      # phone that reboots re-enumerates under a new node and a static binding
+      # silently loses it. The host must not run its own adb server; only one
+      # process may own a device.
+      # - /var/run/usbmuxd:/var/run/usbmuxd     # iOS
+      # - /dev/bus/usb:/dev/bus/usb             # Android
+    # privileged: true                          # USB access
+    ports:
+      # Metrics, bound to an interface only the monitoring network can reach.
+      # There is no auth on this port by design. Drop the host part only if the
+      # machine is not internet-facing.
+      - "${METRICS_BIND_ADDRESS:-127.0.0.1}:${METRICS_PORT:-9100}:9100"
+    tmpfs:
+      # Staged APK/IPA uploads only. Nothing here outlives an install.
+      - /var/lib/farm/scratch:size=4g
+
+  # Wait for the provider to be healthy first: a terminator that starts ahead of
+  # it turns a slow device probe into 502s that look like a broken deploy.
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      provider:
+        condition: service_healthy
+    environment:
+      # This host's public name — the same value as provider.yaml's
+      # `public_base_url`, without the scheme. Caddy provisions TLS for it
+      # automatically, which is what makes that URL https://.
+      PROVIDER_SITE_ADDRESS: ${PROVIDER_SITE_ADDRESS:?set it to this host's public hostname}
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ${PROVIDER_CADDYFILE:-./packages/provider/Caddyfile}:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  caddy-data:
+  caddy-config:
