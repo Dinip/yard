@@ -206,6 +206,14 @@ owns the USB transport — and its address is config (`adb_server`), so a Linux
 host bundles adb in the provider image with the USB bus passed through, while
 macOS, where Docker cannot pass USB through at all, points at the host's server.
 
+**Bundling adb is not the same as running it.** The first Linux deployment hit
+`Connection refused (os error 111)` on `127.0.0.1:5037` in the scrcpy retry
+loop: the image had the binary, the entrypoint was the provider binary, and the
+backend never shells out, so no server ever existed. `docker-entrypoint.sh` now
+runs `adb start-server` first, and the runtime stage runs as root — `privileged`
+grants access to the `/dev/bus/usb` nodes, not permission on them, and the adb
+server writes to them.
+
 **Two bugs found by leaving it running**, both fixed and both invisible to a
 short test:
 

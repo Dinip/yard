@@ -56,13 +56,18 @@ FROM debian:bookworm-slim AS runtime
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates adb \
  && rm -rf /var/lib/apt/lists/* \
- && useradd --system --uid 10001 --create-home farm \
- && mkdir -p /var/lib/farm/scratch \
- && chown -R farm:farm /var/lib/farm
+ && mkdir -p /var/lib/farm/scratch
 
 COPY --from=builder /build/target/release/farm-provider /usr/local/bin/farm-provider
+COPY packages/provider/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-USER farm
+# Runs as root, unlike the coordinator: on Linux the container owns the USB bus,
+# and the /dev/bus/usb
+# nodes are root-owned — `privileged` grants the device access, not the file
+# permission. The adb server needs to write to them, so it has to be root. The
+# process still has nothing on disk worth reaching: the only writable path is
+# the scratch tmpfs, which nothing outlives an install in.
 EXPOSE 7100
 ENV FARM_CONFIG=/etc/farm/provider.yaml
 
@@ -71,4 +76,4 @@ ENV FARM_CONFIG=/etc/farm/provider.yaml
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD ["/usr/local/bin/farm-provider", "--config", "/etc/farm/provider.yaml", "--check"]
 
-ENTRYPOINT ["/usr/local/bin/farm-provider"]
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

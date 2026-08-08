@@ -85,7 +85,8 @@ services:
   # the whole /dev/bus/usb *directory*, not individual --device nodes — a phone
   # that reboots re-enumerates under a new node and a static binding silently
   # loses it. The host must not run its own adb server; only one may own a
-  # device.
+  # device — and drop the `adb_server` option from provider.yaml, since the
+  # container starts its own on entry rather than borrowing the host's.
   #
   # macOS: Docker cannot pass USB through at all. Reach the host's daemons
   # instead — see docker-compose.macos.yml, which is what this repo's own
@@ -104,6 +105,10 @@ services:
       FARM_LOG: ${FARM_LOG:-info}
     volumes:
       - ./packages/provider/provider.yaml:/etc/farm/provider.yaml:ro
+      # adb's keypair. Not a cache: the phone's "Allow USB debugging" grant is
+      # bound to this key's fingerprint, so a container that regenerates it on
+      # recreate has to be re-authorised by hand, at the device, every time.
+      - adb-keys:/root/.android
       # - /var/run/usbmuxd:/var/run/usbmuxd     # Linux: iOS
       # - /dev/bus/usb:/dev/bus/usb             # Linux: Android
     # privileged: true                          # Linux: USB access
@@ -115,3 +120,4 @@ volumes:
   postgres-data:
   caddy-data:
   caddy-config:
+  adb-keys:
