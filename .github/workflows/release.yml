@@ -2,45 +2,43 @@
 #
 # Two ways to get an image, and both are deliberate acts:
 #
-#   release published     ghcr.io/<repo>/<image>:<tag> — plus :latest unless it
-#                         is a prerelease. This is what deployments track.
+#   release published     ghcr.io/<repo>/<image>:<version> — plus :latest unless
+#                         it is a prerelease. This is what deployments track.
 #   PR labelled `build`   :pr-<number>, for trying a branch on real hardware
 #                         before it merges. Never moves :latest.
 #
 # Every build is gated on CI. A release is built from a commit CI already passed
-# on main; a PR build waits for that PR's CI run to conclude successfully, which
-# is why the label path has a `workflow_run` trigger *and* a `labeled` one —
-# labelling after CI has finished must still build, and labelling before it
-# finishes must not build twice.
+# on main; a PR build waits for that PR's CI run to conclude successfully before
+# it starts.
+#
+# The label is consumed: it is removed once the run finishes, so the PR ends up
+# back where it started and building again is adding it again. That is also the
+# only way to rebuild — `labeled` does not fire for a label already present.
 
 name: Release
 
 on:
   release:
     types: [published]
-  # Fires when CI finishes. Covers a push to an already-labelled PR.
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
-  # Covers labelling a PR whose CI has already finished; `resolve` waits for it.
   pull_request:
     types: [labeled]
 
 concurrency:
-  # Keyed on what is being built, not on the event that asked for it: a push to
-  # a labelled PR and the label itself must not race to publish :pr-N.
+  # Keyed on what is being built, not on the run that asked for it.
   group: >-
     ${{ github.workflow }}-${{
       github.event_name == 'release' && github.event.release.tag_name
-      || github.event_name == 'pull_request' && github.event.pull_request.number
-      || github.event.workflow_run.head_sha
+      || github.event.pull_request.number
     }}
   cancel-in-progress: true
 
+env:
+  REGISTRY: ghcr.io
+
 jobs:
-  # Decides whether this event is a build at all, what commit it is of, and what
-  # to call the result. Everything downstream reads its outputs and asks nothing
-  # about the event that started the run.
+  # Decides whether this event is a build at all, and of what. Everything
+  # downstream reads its outputs and asks nothing about the event that started
+  # the run.
   resolve:
     runs-on: ubuntu-24.04
     permissions:
@@ -50,97 +48,70 @@ jobs:
     outputs:
       build: ${{ steps.decide.outputs.build }}
       sha: ${{ steps.decide.outputs.sha }}
-      tags: ${{ steps.decide.outputs.tags }}
-      registry: ${{ steps.name.outputs.registry }}
+      pr_tag: ${{ steps.decide.outputs.pr_tag }}
+      # Set for any run that came from a `build` label, built or not — it is what
+      # the label is removed from at the end.
+      pr: ${{ steps.decide.outputs.pr }}
+      repo: ${{ steps.name.outputs.repo }}
     steps:
       # A repository name may contain capitals; a container reference may not.
       - id: name
-        run: echo "registry=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+        run: echo "repo=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
       - id: decide
         env:
           GH_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
-          # A prerelease publishes its version and nothing else: :latest is what
-          # a deployment left on the default tag follows.
-          PRERELEASE: ${{ github.event.release.prerelease }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
           RELEASE_SHA: ${{ github.sha }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
           LABEL: ${{ github.event.label.name }}
-          PR_NUMBER: ${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number }}
-          PR_SHA: ${{ github.event.pull_request.head.sha || github.event.workflow_run.head_sha }}
-          RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
-          RUN_EVENT: ${{ github.event.workflow_run.event }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_SHA: ${{ github.event.pull_request.head.sha }}
+          # A fork's PR gets a read-only token, so a build could not push even if
+          # we wanted it to. Refuse clearly rather than fail three jobs later.
+          SAME_REPO: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
         run: |
           set -euo pipefail
 
           skip() { echo "build=false" >> "$GITHUB_OUTPUT"; echo "$1"; exit 0; }
 
           if [ "$EVENT" = "release" ]; then
-            tags="$RELEASE_TAG $RELEASE_SHA"
-            [ "$PRERELEASE" = "true" ] || tags="$tags latest"
             {
               echo "build=true"
               echo "sha=$RELEASE_SHA"
-              echo "tags=$tags"
             } >> "$GITHUB_OUTPUT"
-            echo "release $RELEASE_TAG → $tags"
+            echo "release $RELEASE_TAG → $RELEASE_SHA"
             exit 0
           fi
 
-          # A PR build requires BOTH, for the same commit, whichever event asked:
-          #
-          #   1. the `build` label is on the PR right now, and
-          #   2. CI concluded successfully for that exact commit.
-          #
-          # Neither implies the other. The label can be added long after CI, and
-          # CI finishing says nothing about whether anyone asked for an image.
+          # Any other label is not a build request.
+          [ "$LABEL" = "build" ] || skip "label $LABEL is not 'build'"
 
-          # Which event this is only decides where the PR and commit come from.
-          if [ "$EVENT" = "workflow_run" ]; then
-            [ "$RUN_EVENT" = "pull_request" ] || skip "CI run was not for a PR"
-            [ -n "${PR_NUMBER:-}" ] || skip "no PR attached to this CI run"
-          else
-            [ "$LABEL" = "build" ] || skip "label $LABEL is not 'build'"
-          fi
+          # From here the label is consumed whatever happens — the `unlabel` job
+          # reads this — so asking again is always add-the-label-again.
+          echo "pr=$PR_NUMBER" >> "$GITHUB_OUTPUT"
 
-          pr=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
-            --json labels,headRefOid)
+          [ "$SAME_REPO" = "true" ] || skip "PR #$PR_NUMBER is from a fork"
 
-          # 1. The label, read from the PR now rather than from the event, so a
-          #    label removed while CI was running does not still publish.
-          labelled=$(jq -r '[.labels[].name] | index("build") != null' <<<"$pr")
-          [ "$labelled" = "true" ] || skip "PR #$PR_NUMBER is not labelled build"
-
-          # A commit that is no longer the PR head has been superseded by a push
-          # whose own CI run will arrive here in a moment. Building it would race
-          # that one for the pr-N tag, and could win with the older image.
-          head=$(jq -r '.headRefOid' <<<"$pr")
-          [ "$head" = "$PR_SHA" ] || skip "$PR_SHA is no longer the head of #$PR_NUMBER"
-
-          # 2. CI, for that commit. On the workflow_run path the event carries the
-          #    answer; on the `labeled` path CI may still be running, or may never
-          #    have run — wait rather than publish something untested.
-          if [ "$EVENT" = "workflow_run" ]; then
-            [ "$RUN_CONCLUSION" = "success" ] || skip "CI concluded $RUN_CONCLUSION"
-          else
-            for _ in $(seq 1 60); do
-              conclusion=$(gh run list --repo "$GITHUB_REPOSITORY" \
-                --workflow CI --commit "$PR_SHA" --limit 1 \
-                --json conclusion --jq '.[0].conclusion // "pending"')
-              case "$conclusion" in
-                success) break ;;
-                pending|null|"") echo "CI has not concluded for $PR_SHA; waiting"; sleep 30 ;;
-                *) skip "CI concluded $conclusion for $PR_SHA" ;;
-              esac
-            done
-            [ "${conclusion:-}" = "success" ] || skip "timed out waiting for CI on $PR_SHA"
-          fi
+          # The label says someone wants an image; it says nothing about whether
+          # the code is good. CI may still be running for this commit, or may
+          # never have run. Wait rather than publish something untested.
+          for _ in $(seq 1 60); do
+            conclusion=$(gh run list --repo "$GITHUB_REPOSITORY" \
+              --workflow CI --commit "$PR_SHA" --limit 1 \
+              --json conclusion --jq '.[0].conclusion // "pending"')
+            case "$conclusion" in
+              success) break ;;
+              pending|null|"") echo "CI has not concluded for $PR_SHA; waiting"; sleep 30 ;;
+              *) skip "CI concluded $conclusion for $PR_SHA" ;;
+            esac
+          done
+          [ "${conclusion:-}" = "success" ] || skip "timed out waiting for CI on $PR_SHA"
 
           {
             echo "build=true"
             echo "sha=$PR_SHA"
-            echo "tags=pr-$PR_NUMBER $PR_SHA"
+            echo "pr_tag=pr-$PR_NUMBER"
           } >> "$GITHUB_OUTPUT"
           echo "PR #$PR_NUMBER → pr-$PR_NUMBER"
 
@@ -169,17 +140,23 @@ jobs:
           - { arch: amd64, tag: linux/amd64, runner: ubuntu-24.04 }
           - { arch: arm64, tag: linux/arm64, runner: ubuntu-24.04-arm }
     steps:
-      # Explicit: on `workflow_run` the checkout default is the default branch,
-      # not the commit CI passed on.
-      - uses: actions/checkout@v5
+      # Explicit: a PR build must be of the head commit CI passed on, not of the
+      # merge ref, which is a commit that will never exist again.
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.resolve.outputs.sha }}
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
         with:
-          registry: ghcr.io
+          registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Only the labels are used here — the tags are named by the manifest job.
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ needs.resolve.outputs.repo }}/${{ matrix.image.name }}
 
       - name: Build and push by digest
         id: build
@@ -188,11 +165,15 @@ jobs:
           context: .
           file: ${{ matrix.image.dockerfile }}
           platforms: ${{ matrix.platform.tag }}
+          labels: ${{ steps.meta.outputs.labels }}
           # Pushed without a tag: an arch-specific tag would be a lie the moment
           # the other architecture lands on it. The manifest job names them.
-          outputs: type=image,name=${{ needs.resolve.outputs.registry }}/${{ matrix.image.name }},push-by-digest=true,name-canonical=true,push=true
-          cache-from: type=gha,scope=${{ matrix.image.name }}-${{ matrix.platform.arch }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.image.name }}-${{ matrix.platform.arch }}
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ needs.resolve.outputs.repo }}/${{ matrix.image.name }},push-by-digest=true,name-canonical=true,push=true
+          # Registry cache rather than GHA's: builds are rare now that a merge
+          # publishes nothing, and GitHub evicts its cache per branch and by age
+          # — which is exactly the cache a release would want and never find.
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ needs.resolve.outputs.repo }}/${{ matrix.image.name }}:buildcache-${{ matrix.platform.arch }}
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/${{ needs.resolve.outputs.repo }}/${{ matrix.image.name }}:buildcache-${{ matrix.platform.arch }},mode=max
 
       - name: Export the digest
         env:
@@ -224,12 +205,26 @@ jobs:
       matrix:
         image: [coordinator, web, provider]
     steps:
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
         with:
-          registry: ghcr.io
+          registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The tag policy, in one place:
+      #   release      the version, and the commit sha
+      #   prerelease   the same, but `latest=auto` withholds :latest
+      #   PR build     pr-<number> only
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ needs.resolve.outputs.repo }}/${{ matrix.image }}
+          flavor: latest=auto
+          tags: |
+            type=semver,pattern={{version}},enable=${{ github.event_name == 'release' }}
+            type=raw,value=${{ needs.resolve.outputs.sha }},enable=${{ github.event_name == 'release' }}
+            type=raw,value=${{ needs.resolve.outputs.pr_tag }},enable=${{ needs.resolve.outputs.pr_tag != '' }}
 
       - uses: actions/download-artifact@v8
         with:
@@ -238,23 +233,46 @@ jobs:
           path: /tmp/digests
 
       - name: Create the manifest list
-        working-directory: /tmp/digests
         env:
-          IMAGE: ${{ needs.resolve.outputs.registry }}/${{ matrix.image }}
-          TAGS: ${{ needs.resolve.outputs.tags }}
+          IMAGE: ${{ env.REGISTRY }}/${{ needs.resolve.outputs.repo }}/${{ matrix.image }}
+          TAGS: ${{ steps.meta.outputs.tags }}
         run: |
           set -euo pipefail
-          args=()
-          for tag in $TAGS; do args+=(--tag "$IMAGE:$tag"); done
-          # Word splitting is the point: one argument per digest file.
-          # shellcheck disable=SC2046
-          docker buildx imagetools create "${args[@]}" \
-            $(printf "$IMAGE@sha256:%s " *)
 
-      - name: Show what was published
-        env:
-          IMAGE: ${{ needs.resolve.outputs.registry }}/${{ matrix.image }}
-          TAGS: ${{ needs.resolve.outputs.tags }}
-        run: |
-          set -euo pipefail
-          docker buildx imagetools inspect "$IMAGE:${TAGS%% *}"
+          # metadata-action emits one tag per line.
+          names=()
+          while IFS= read -r tag; do
+            if [ -n "$tag" ]; then names+=("$tag"); fi
+          done <<< "$TAGS"
+          [ ${#names[@]} -gt 0 ] || { echo "no tags resolved"; exit 1; }
+
+          args=()
+          for name in "${names[@]}"; do args+=(--tag "$name"); done
+
+          images=()
+          for digest in /tmp/digests/*; do
+            images+=("$IMAGE@sha256:$(basename "$digest")")
+          done
+
+          docker buildx imagetools create "${args[@]}" "${images[@]}"
+          docker buildx imagetools inspect "${names[0]}"
+
+  # The label is a request, and a request is consumed. Removing it is also what
+  # makes "build it again" a gesture that exists: `labeled` does not fire for a
+  # label that is already there, so leaving it on would mean a second build of
+  # the same PR could never be asked for.
+  #
+  # `always()`: removed whether the build succeeded, failed, or never started
+  # because CI was red. A label left behind after a red build is one nobody can
+  # re-apply.
+  unlabel:
+    needs: [resolve, manifest]
+    if: always() && needs.resolve.outputs.pr != ''
+    runs-on: ubuntu-24.04
+    permissions:
+      pull-requests: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ needs.resolve.outputs.pr }}
+        run: gh pr edit "$PR" --repo "$GITHUB_REPOSITORY" --remove-label build

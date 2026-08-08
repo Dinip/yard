@@ -1336,21 +1336,21 @@ Now `ci.yml` is tests only, and `release.yml` owns publishing on two triggers: a
 published release (version + sha, plus `latest` unless prerelease), and a PR
 labelled `build` (`pr-<number>`, never `latest`). Both are gated on CI.
 
-- **A PR build needs both conditions, for the same commit** — the label present
-  now, and a green CI run for that exact sha. Neither implies the other, so both
-  are checked on every path, and the label is read from the PR rather than from
-  the event (a label removed while CI ran must not still publish).
-- **The label needs two triggers, not one.** `workflow_run` catches a push to an
-  already-labelled PR; `labeled` catches a label added after CI has already
-  finished, where no further CI run is coming. The second path polls for that
-  commit's CI conclusion rather than trusting the label alone.
-- **A superseded commit is skipped.** Push twice quickly and two `workflow_run`
-  builds are eligible at once; both write `pr-N`, and the older one can land
-  last. The head-sha check drops it.
-- **A `resolve` job decides everything.** Build or not, which sha, which tags —
-  so the matrix jobs never branch on `github.event_name`, and `workflow_run`'s
-  default checkout (the default branch, not the tested commit) is corrected in
-  exactly one place.
+- **A PR build needs both conditions, for the same commit** — the label, and a
+  green CI run for that exact sha. Neither implies the other, so `resolve` waits
+  on CI rather than trusting the label to mean the code is good.
+- **The label is consumed at the end of the run**, published or not. `labeled`
+  does not fire for a label already present, so leaving it on would make a
+  second build of that PR impossible to ask for; removing it makes re-adding the
+  rebuild gesture.
+- **Tags come from `docker/metadata-action`.** `flavor: latest=auto` is the
+  whole of the latest-on-release-but-not-on-prerelease rule, replacing a
+  hand-rolled tag string. Borrowed from `stf-ios-provider`'s release workflow,
+  along with its registry layer cache: builds are rare now, and GHA's cache is
+  scoped per branch and evicted by age, so a release would find nothing.
+- **A `resolve` job decides everything.** Build or not, and which commit — so the
+  matrix jobs never branch on `github.event_name`, and the checkout is pinned to
+  the sha CI passed on rather than to a PR merge ref that will never exist again.
 - **Prereleases do not move `latest`.** A deployment left on the default tag
   follows releases; that is the whole contract of the tag.
 

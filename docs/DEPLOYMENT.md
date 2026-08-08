@@ -41,13 +41,13 @@ and `provider` under `ghcr.io/dinip/device-farm/` — are published by the
 
 | Tag | Published when | Use it for |
 |---|---|---|
-| `v1.2.3` | a release is published | production. This is the one to pin. |
+| `1.2.3` | a release is published — the `v` is stripped | production. This is the one to pin. |
 | `latest` | the same, unless the release is a prerelease | tracking releases without editing `.env` |
-| `<commit sha>` | every build | pinning to an exact commit, or rolling back |
+| `<commit sha>` | every release build | pinning to an exact commit, or rolling back |
 | `pr-42` | a PR is labelled `build` | trying a branch on real hardware before it merges. Never reaches `latest`. |
 
 ```dotenv
-IMAGE_TAG=v1.2.3      # pin a release
+IMAGE_TAG=1.2.3       # pin a release
 IMAGE_TAG=latest      # default: newest non-prerelease release
 IMAGE_TAG=pr-42       # a branch build, for a test host
 ```
@@ -371,8 +371,8 @@ docker compose -f docker-compose.provider.yml pull
 docker compose -f docker-compose.provider.yml up -d
 ```
 
-On `IMAGE_TAG=latest` the `pull` is what moves you; on a pinned sha, edit `.env`
-first and the `pull` fetches that tag. Rolling back is the same edit in reverse —
+On `IMAGE_TAG=latest` the `pull` is what moves you; on a pinned version or sha,
+edit `.env` first and the `pull` fetches that tag. Rolling back is the same edit in reverse —
 the old images are still in GHCR — with one caveat: migrations are forward-only,
 so rolling the coordinator back across a schema change needs the database
 restored to match. Providers carry no state and roll back freely.

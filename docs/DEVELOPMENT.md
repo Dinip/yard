@@ -172,31 +172,30 @@ decisions:
 
 - **`ci.yml`** — tests, on every PR and every push to `main`. Nothing else. It
   publishes nothing, so a merge to `main` produces no image.
-- **`release.yml`** — builds and pushes the three images to GHCR, multi-arch,
-  and only when asked:
-  - **a release is published** → tagged with the release version and the commit
-    sha, plus `latest` unless it is a prerelease;
+- **`release.yml`** — builds and pushes the three images to GHCR, multi-arch, on
+  two events and no others:
+  - **a release is published** → tagged with the version (`1.2.3`, the `v` is
+    stripped) and the commit sha, plus `latest` unless it is a prerelease;
   - **a PR is labelled `build`** → tagged `pr-<number>`, for trying a branch on
     real hardware before it merges. It never touches `latest`.
 
-A PR build requires **both**, for the same commit: the `build` label is on the
-PR, and CI concluded successfully for that commit. Neither implies the other —
-the label is often added long after CI, and CI finishing says nothing about
-whether anyone wanted an image — so both are checked every time, and the label is
-read from the PR at decision time rather than from the event that fired.
+A PR build needs **both**: someone asked for it, and CI is green for that
+commit. The label is only the first — so `resolve` waits for that commit's CI run
+to conclude, and refuses if it failed or never ran. A fork's PR is refused too;
+its token cannot push a package anyway.
 
-That is also why the label case has two triggers: `workflow_run`, for a push to a
-PR that is already labelled, and `labeled`, for a label added after CI has
-already finished, where no further CI run is coming. The second polls for that
-commit's CI conclusion instead of assuming it. The `resolve` job is where either
-one turns into "build this sha, call it these tags", so the build jobs never
-reason about the event that started them.
+**The label is consumed.** Whatever the outcome — published, failed, or skipped
+because CI was red — the run removes it at the end. That is not tidiness: the
+`labeled` event does not fire for a label that is already on the PR, so a label
+left in place would make a second build of that PR impossible to ask for. Adding
+it again is the rebuild gesture, and `pr-<number>` is overwritten, so a test host
+on that tag picks up the newer image after a `docker compose pull`.
 
-A commit that is no longer the PR head is skipped: a push during a build has its
-own CI run coming, and letting both proceed would race for `pr-<number>` with the
-older image able to win. Removing and re-adding the label rebuilds; `pr-<number>`
-is overwritten each time, so a test host on that tag picks up the newest push
-after a `docker compose pull`.
+Tags come from `docker/metadata-action`, which is where the `latest`-on-release,
+not-on-prerelease rule actually lives (`flavor: latest=auto`). Layer cache is a
+registry tag per image and arch (`:buildcache-amd64`), not GitHub's cache:
+publishing is rare now, and GHA's cache is scoped per branch and evicted by age —
+so a release would reliably find nothing.
 
 ## Full stack in Docker
 
