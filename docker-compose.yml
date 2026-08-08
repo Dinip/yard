@@ -73,7 +73,8 @@ services:
       - caddy-data:/data
       - caddy-config:/config
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1/index.html"]
+      # Probes the admin API: a hostname SITE_ADDRESS makes 127.0.0.1 match no site.
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:2019/config/"]
       interval: 30s
       timeout: 5s
       retries: 3
