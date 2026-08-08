@@ -179,13 +179,13 @@ decisions:
   - **a PR is labelled `build`** → tagged `pr-<number>`, for trying a branch on
     real hardware before it merges. It never touches `latest`.
 
-A PR build needs **both**: someone asked for it, and CI is green for that
-commit. The label is only the first — so `resolve` waits for that commit's CI run
-to conclude, and refuses if it failed or never ran. A fork's PR is refused too;
-its token cannot push a package anyway.
+Publishing does not wait on CI. The two events are the whole of the policy: a
+release is cut from a commit you have already seen tested, and a `build` label is
+an explicit "I want this image" — checking the PR is green before labelling it is
+yours to do. A fork's PR is refused, since its token cannot push a package.
 
-**The label is consumed.** Whatever the outcome — published, failed, or skipped
-because CI was red — the run removes it at the end. That is not tidiness: the
+**The label is consumed.** Published or failed, the run removes it at the end.
+That is not tidiness: the
 `labeled` event does not fire for a label that is already on the PR, so a label
 left in place would make a second build of that PR impossible to ask for. Adding
 it again is the rebuild gesture, and `pr-<number>` is overwritten, so a test host

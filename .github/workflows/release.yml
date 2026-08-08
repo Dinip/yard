@@ -7,10 +7,6 @@
 #   PR labelled `build`   :pr-<number>, for trying a branch on real hardware
 #                         before it merges. Never moves :latest.
 #
-# Every build is gated on CI. A release is built from a commit CI already passed
-# on main; a PR build waits for that PR's CI run to conclude successfully before
-# it starts.
-#
 # The label is consumed: it is removed once the run finishes, so the PR ends up
 # back where it started and building again is adding it again. That is also the
 # only way to rebuild — `labeled` does not fire for a label already present.
@@ -36,84 +32,44 @@ env:
   REGISTRY: ghcr.io
 
 jobs:
-  # Decides whether this event is a build at all, and of what. Everything
-  # downstream reads its outputs and asks nothing about the event that started
-  # the run.
+  # What is being built, and under what name. Everything downstream reads these
+  # and asks nothing about the event that started the run.
   resolve:
     runs-on: ubuntu-24.04
+    # A fork's PR gets a read-only token, so a build could not push a package
+    # even if it ran. Refuse here rather than fail three jobs later.
+    if: >-
+      github.event_name == 'release'
+      || (github.event.label.name == 'build'
+          && github.event.pull_request.head.repo.full_name == github.repository)
     permissions:
       contents: read
-      actions: read
-      pull-requests: read
     outputs:
-      build: ${{ steps.decide.outputs.build }}
       sha: ${{ steps.decide.outputs.sha }}
       pr_tag: ${{ steps.decide.outputs.pr_tag }}
-      # Set for any run that came from a `build` label, built or not — it is what
-      # the label is removed from at the end.
+      # Set only for a label build — it is what the label is removed from.
       pr: ${{ steps.decide.outputs.pr }}
-      repo: ${{ steps.name.outputs.repo }}
+      repo: ${{ steps.decide.outputs.repo }}
     steps:
-      # A repository name may contain capitals; a container reference may not.
-      - id: name
-        run: echo "repo=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
-
       - id: decide
         env:
-          GH_TOKEN: ${{ github.token }}
-          EVENT: ${{ github.event_name }}
-          RELEASE_SHA: ${{ github.sha }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-          LABEL: ${{ github.event.label.name }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_SHA: ${{ github.event.pull_request.head.sha }}
-          # A fork's PR gets a read-only token, so a build could not push even if
-          # we wanted it to. Refuse clearly rather than fail three jobs later.
-          SAME_REPO: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
         run: |
           set -euo pipefail
 
-          skip() { echo "build=false" >> "$GITHUB_OUTPUT"; echo "$1"; exit 0; }
+          # A repository name may contain capitals; a container reference may not.
+          echo "repo=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
-          if [ "$EVENT" = "release" ]; then
+          if [ "$GITHUB_EVENT_NAME" = "release" ]; then
+            echo "sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+          else
             {
-              echo "build=true"
-              echo "sha=$RELEASE_SHA"
+              echo "sha=$PR_SHA"
+              echo "pr=$PR_NUMBER"
+              echo "pr_tag=pr-$PR_NUMBER"
             } >> "$GITHUB_OUTPUT"
-            echo "release $RELEASE_TAG → $RELEASE_SHA"
-            exit 0
           fi
-
-          # Any other label is not a build request.
-          [ "$LABEL" = "build" ] || skip "label $LABEL is not 'build'"
-
-          # From here the label is consumed whatever happens — the `unlabel` job
-          # reads this — so asking again is always add-the-label-again.
-          echo "pr=$PR_NUMBER" >> "$GITHUB_OUTPUT"
-
-          [ "$SAME_REPO" = "true" ] || skip "PR #$PR_NUMBER is from a fork"
-
-          # The label says someone wants an image; it says nothing about whether
-          # the code is good. CI may still be running for this commit, or may
-          # never have run. Wait rather than publish something untested.
-          for _ in $(seq 1 60); do
-            conclusion=$(gh run list --repo "$GITHUB_REPOSITORY" \
-              --workflow CI --commit "$PR_SHA" --limit 1 \
-              --json conclusion --jq '.[0].conclusion // "pending"')
-            case "$conclusion" in
-              success) break ;;
-              pending|null|"") echo "CI has not concluded for $PR_SHA; waiting"; sleep 30 ;;
-              *) skip "CI concluded $conclusion for $PR_SHA" ;;
-            esac
-          done
-          [ "${conclusion:-}" = "success" ] || skip "timed out waiting for CI on $PR_SHA"
-
-          {
-            echo "build=true"
-            echo "sha=$PR_SHA"
-            echo "pr_tag=pr-$PR_NUMBER"
-          } >> "$GITHUB_OUTPUT"
-          echo "PR #$PR_NUMBER → pr-$PR_NUMBER"
 
   # Built per architecture on its own native runner, then merged into one
   # manifest list. The alternative — one job with QEMU emulation — is what this
@@ -124,7 +80,6 @@ jobs:
     # platform tag and runner included.
     name: ${{ matrix.image.name }} (${{ matrix.platform.arch }})
     needs: resolve
-    if: needs.resolve.outputs.build == 'true'
     runs-on: ${{ matrix.platform.runner }}
     permissions:
       contents: read
@@ -262,9 +217,8 @@ jobs:
   # label that is already there, so leaving it on would mean a second build of
   # the same PR could never be asked for.
   #
-  # `always()`: removed whether the build succeeded, failed, or never started
-  # because CI was red. A label left behind after a red build is one nobody can
-  # re-apply.
+  # `always()`: removed whether the build succeeded or failed. A label left
+  # behind after a failed build is one nobody can re-apply.
   unlabel:
     needs: [resolve, manifest]
     if: always() && needs.resolve.outputs.pr != ''

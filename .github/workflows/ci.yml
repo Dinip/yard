@@ -1,8 +1,7 @@
 # What has to hold before main moves.
 #
-# Tests only. Publishing lives in release.yml, which waits for this to pass
-# before it builds anything — so a green run here is the gate, not a side effect
-# of one.
+# Tests only. Publishing lives in release.yml, on its own triggers — a merge
+# here produces no image.
 #
 # The Rust and TypeScript halves are separate jobs because they fail for
 # unrelated reasons and waiting for the other's toolchain to install helps

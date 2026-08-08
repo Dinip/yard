@@ -1334,11 +1334,13 @@ meant to ship, and a PR could not be built at all without merging it first.
 
 Now `ci.yml` is tests only, and `release.yml` owns publishing on two triggers: a
 published release (version + sha, plus `latest` unless prerelease), and a PR
-labelled `build` (`pr-<number>`, never `latest`). Both are gated on CI.
+labelled `build` (`pr-<number>`, never `latest`).
 
-- **A PR build needs both conditions, for the same commit** — the label, and a
-  green CI run for that exact sha. Neither implies the other, so `resolve` waits
-  on CI rather than trusting the label to mean the code is good.
+- **Publishing does not wait on CI.** An earlier version polled for the commit's
+  CI conclusion before building. It went: the two triggers *are* the policy — a
+  release comes off a commit already seen tested, and labelling is an explicit
+  request. A workflow that second-guesses the person who labelled it is just a
+  slower way to say yes.
 - **The label is consumed at the end of the run**, published or not. `labeled`
   does not fire for a label already present, so leaving it on would make a
   second build of that PR impossible to ask for; removing it makes re-adding the
@@ -1348,11 +1350,15 @@ labelled `build` (`pr-<number>`, never `latest`). Both are gated on CI.
   hand-rolled tag string. Borrowed from `stf-ios-provider`'s release workflow,
   along with its registry layer cache: builds are rare now, and GHA's cache is
   scoped per branch and evicted by age, so a release would find nothing.
-- **A `resolve` job decides everything.** Build or not, and which commit — so the
-  matrix jobs never branch on `github.event_name`, and the checkout is pinned to
-  the sha CI passed on rather than to a PR merge ref that will never exist again.
+- **`resolve` is now four `echo`s.** Once the gate went, deciding what to build
+  is a sha and a tag; the fork check that remains is a job-level `if`, since a
+  fork's token cannot push a package at all.
 - **Prereleases do not move `latest`.** A deployment left on the default tag
   follows releases; that is the whole contract of the tag.
+
+`.env.example` lost half its prose in the same pass. Grouping by deploy unit and
+naming the shared values is the part that carries information; a paragraph per
+variable explaining what breaks is what reference docs are for.
 
 ### Verified without hardware
 
