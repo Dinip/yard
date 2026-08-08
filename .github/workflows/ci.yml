@@ -1,5 +1,9 @@
 # What has to hold before main moves.
 #
+# Tests only. Publishing lives in release.yml, which waits for this to pass
+# before it builds anything — so a green run here is the gate, not a side effect
+# of one.
+#
 # The Rust and TypeScript halves are separate jobs because they fail for
 # unrelated reasons and waiting for the other's toolchain to install helps
 # nobody.
@@ -78,119 +82,3 @@ jobs:
       # Regenerates and diffs: the generated Rust is piped through rustfmt, so
       # `cargo fmt --check` and this cannot demand different bytes.
       - run: bun run protocol:check
-
-  # A repository name may contain capitals; a container reference may not.
-  # Computed once here rather than lowercased in both jobs below.
-  prepare:
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    runs-on: ubuntu-24.04
-    outputs:
-      registry: ${{ steps.name.outputs.registry }}
-    steps:
-      - id: name
-        run: echo "registry=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
-
-  # Built per architecture on its own native runner, then merged into one
-  # manifest list. The alternative — one job with QEMU emulation — is what this
-  # used to do, and cross-building the Rust provider under emulation is slow
-  # enough to dominate the whole pipeline.
-  images:
-    # Without this the job name is every matrix value joined — dockerfile path,
-    # platform tag and runner included.
-    name: ${{ matrix.image.name }} (${{ matrix.platform.arch }})
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    needs: [typescript, rust, prepare]
-    runs-on: ${{ matrix.platform.runner }}
-    permissions:
-      contents: read
-      packages: write
-    strategy:
-      fail-fast: false
-      matrix:
-        image:
-          - { name: coordinator, dockerfile: packages/coordinator/Dockerfile }
-          - { name: web, dockerfile: packages/web/Dockerfile }
-          - { name: provider, dockerfile: packages/provider/Dockerfile }
-        platform:
-          - { arch: amd64, tag: linux/amd64, runner: ubuntu-24.04 }
-          - { arch: arm64, tag: linux/arm64, runner: ubuntu-24.04-arm }
-    steps:
-      - uses: actions/checkout@v5
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push by digest
-        id: build
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: ${{ matrix.image.dockerfile }}
-          platforms: ${{ matrix.platform.tag }}
-          # Pushed without a tag: an arch-specific tag would be a lie the moment
-          # the other architecture lands on it. The manifest job names them.
-          outputs: type=image,name=${{ needs.prepare.outputs.registry }}/${{ matrix.image.name }},push-by-digest=true,name-canonical=true,push=true
-          cache-from: type=gha,scope=${{ matrix.image.name }}-${{ matrix.platform.arch }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.image.name }}-${{ matrix.platform.arch }}
-
-      - name: Export the digest
-        env:
-          DIGEST: ${{ steps.build.outputs.digest }}
-        run: |
-          mkdir -p /tmp/digests
-          # The filename is the digest with its `sha256:` prefix stripped, and
-          # the file itself is empty — the manifest job only needs the names.
-          # The prefix has to go: an artifact path may not contain a colon.
-          touch "/tmp/digests/${DIGEST#sha256:}"
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: digest-${{ matrix.image.name }}-${{ matrix.platform.arch }}
-          path: /tmp/digests/*
-          retention-days: 1
-          if-no-files-found: error
-
-  # One manifest list per image, pointing at both architectures. Until this
-  # runs the digests are pushed but unnamed, so nothing can pull them.
-  manifest:
-    name: manifest (${{ matrix.image }})
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    needs: [images, prepare]
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-      packages: write
-    strategy:
-      matrix:
-        image: [coordinator, web, provider]
-    steps:
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - uses: actions/download-artifact@v8
-        with:
-          pattern: digest-${{ matrix.image }}-*
-          merge-multiple: true
-          path: /tmp/digests
-
-      - name: Create the manifest list
-        working-directory: /tmp/digests
-        env:
-          IMAGE: ${{ needs.prepare.outputs.registry }}/${{ matrix.image }}
-        run: |
-          docker buildx imagetools create \
-            --tag "$IMAGE:latest" \
-            --tag "$IMAGE:${{ github.sha }}" \
-            $(printf "$IMAGE@sha256:%s " *)
-
-      - name: Show what was published
-        env:
-          IMAGE: ${{ needs.prepare.outputs.registry }}/${{ matrix.image }}
-        run: docker buildx imagetools inspect "$IMAGE:latest"

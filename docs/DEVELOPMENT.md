@@ -96,10 +96,10 @@ docker compose --env-file .env.docker exec coordinator \
   bun /app/grant-admin.js you@example.com
 ```
 
-The compose files pull CI-published images from
+The compose files pull published images from
 `ghcr.io/dinip/device-farm/{coordinator,web,provider}` rather than building, so
-this brings up `main`, not your working tree. To run a local change, build over
-the image name first — compose uses what it already has:
+this brings up the last *release*, not your working tree. To run a local change,
+build over the image name first — compose uses what it already has:
 
 ```bash
 docker build -f packages/coordinator/Dockerfile \
@@ -164,6 +164,31 @@ bun run protocol:check    # tests + regen + diff, as CI runs it
 `protocol:check` is the drift guard: `generated.rs` is committed, so a zod schema
 edit that wasn't regenerated fails here rather than shipping to a provider as a
 silent no-op.
+
+## CI, and how an image gets published
+
+Two workflows, split so that testing a change and shipping one are separate
+decisions:
+
+- **`ci.yml`** — tests, on every PR and every push to `main`. Nothing else. It
+  publishes nothing, so a merge to `main` produces no image.
+- **`release.yml`** — builds and pushes the three images to GHCR, multi-arch,
+  and only when asked:
+  - **a release is published** → tagged with the release version and the commit
+    sha, plus `latest` unless it is a prerelease;
+  - **a PR is labelled `build`** → tagged `pr-<number>`, for trying a branch on
+    real hardware before it merges. It never touches `latest`.
+
+Both paths are gated on CI. The release path builds a commit CI already passed
+on `main`; the PR path waits for that PR's own run. That is why the label case
+has two triggers — `workflow_run`, for a push to a PR that is already labelled,
+and `labeled`, for a label added after CI has finished. The `resolve` job is
+where either one turns into "build this sha, call it these tags", so the build
+jobs never reason about the event that started them.
+
+Removing and re-adding the label rebuilds. `pr-<number>` is overwritten each
+time, so a test host on that tag gets the newest push after a `docker compose
+pull`.
 
 ## Full stack in Docker
 

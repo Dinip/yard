@@ -1326,6 +1326,27 @@ Consequences worth knowing:
   ghcr.io` until their visibility is changed. Noted in DEPLOYMENT.md rather than
   assumed away.
 
+### CI split from publishing
+
+`ci.yml` did both: it tested, and then on every push to `main` it built and
+pushed three images. So `latest` moved on merge, whether or not anything was
+meant to ship, and a PR could not be built at all without merging it first.
+
+Now `ci.yml` is tests only, and `release.yml` owns publishing on two triggers: a
+published release (version + sha, plus `latest` unless prerelease), and a PR
+labelled `build` (`pr-<number>`, never `latest`). Both are gated on CI.
+
+- **The label needs two triggers, not one.** `workflow_run` catches a push to an
+  already-labelled PR; `labeled` catches a label added after CI has already
+  finished, where no further CI run is coming. The second path polls for that
+  commit's CI conclusion rather than trusting the label alone.
+- **A `resolve` job decides everything.** Build or not, which sha, which tags —
+  so the matrix jobs never branch on `github.event_name`, and `workflow_run`'s
+  default checkout (the default branch, not the tested commit) is corrected in
+  exactly one place.
+- **Prereleases do not move `latest`.** A deployment left on the default tag
+  follows releases; that is the whole contract of the tag.
+
 ### Verified without hardware
 
 The whole multi-machine shape, run as two compose projects on one machine: the

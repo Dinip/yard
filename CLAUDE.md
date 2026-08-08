@@ -137,3 +137,8 @@ branch.
 
 **Ask before opening a PR.** Finishing a unit of work is not permission to
 publish it; propose the title and body and wait for a yes.
+
+**Merging to `main` publishes nothing.** Images are built by `release.yml` when
+a release is published, or when a PR carries the `build` label (`:pr-<number>`,
+for hardware testing). `ci.yml` is tests only. See
+[DEVELOPMENT.md](docs/DEVELOPMENT.md#ci-and-how-an-image-gets-published).

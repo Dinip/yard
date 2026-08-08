@@ -35,19 +35,29 @@ coordinator host carries tRPC calls and one WebSocket per provider, and nothing
 that scales with device count or resolution. Bandwidth planning belongs on the
 provider hosts.
 
-Nothing is built at deploy time. CI publishes three multi-arch images to GHCR on
-every push to `main` — `coordinator`, `web` and `provider` under
-`ghcr.io/dinip/device-farm/` — each tagged `latest` and the commit sha, and the
-compose files pull them. `IMAGE_TAG` selects which:
+Nothing is built at deploy time. Three multi-arch images — `coordinator`, `web`
+and `provider` under `ghcr.io/dinip/device-farm/` — are published by the
+**Release** workflow, and the compose files pull them. `IMAGE_TAG` selects which:
+
+| Tag | Published when | Use it for |
+|---|---|---|
+| `v1.2.3` | a release is published | production. This is the one to pin. |
+| `latest` | the same, unless the release is a prerelease | tracking releases without editing `.env` |
+| `<commit sha>` | every build | pinning to an exact commit, or rolling back |
+| `pr-42` | a PR is labelled `build` | trying a branch on real hardware before it merges. Never reaches `latest`. |
 
 ```dotenv
-IMAGE_TAG=latest      # default
-IMAGE_TAG=a1b2c3d…    # pin a deployment, or roll back, without editing a file
+IMAGE_TAG=v1.2.3      # pin a release
+IMAGE_TAG=latest      # default: newest non-prerelease release
+IMAGE_TAG=pr-42       # a branch build, for a test host
 ```
 
-Pin it in production. `latest` means the next `docker compose pull` moves you to
-whatever landed on `main`, which is rarely what you want on a machine people are
-using.
+Prefer a version in production. `latest` moves on every release, so a
+`docker compose pull` takes whatever was released last — usually fine, but it is
+a decision made for you at pull time rather than at deploy time.
+
+Nothing publishes on a merge to `main` any more. A commit reaches a deployment
+only through a release, or through a PR build you asked for by label.
 
 GHCR packages start private. While these are, a deploy host has to authenticate
 before it can pull — a classic PAT with `read:packages` is enough, and it is the

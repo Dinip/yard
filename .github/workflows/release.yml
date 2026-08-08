@@ -1,0 +1,241 @@
+# Builds and publishes the container images. Nothing else does.
+#
+# Two ways to get an image, and both are deliberate acts:
+#
+#   release published     ghcr.io/<repo>/<image>:<tag> — plus :latest unless it
+#                         is a prerelease. This is what deployments track.
+#   PR labelled `build`   :pr-<number>, for trying a branch on real hardware
+#                         before it merges. Never moves :latest.
+#
+# Every build is gated on CI. A release is built from a commit CI already passed
+# on main; a PR build waits for that PR's CI run to conclude successfully, which
+# is why the label path has a `workflow_run` trigger *and* a `labeled` one —
+# labelling after CI has finished must still build, and labelling before it
+# finishes must not build twice.
+
+name: Release
+
+on:
+  release:
+    types: [published]
+  # Fires when CI finishes. Covers a push to an already-labelled PR.
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+  # Covers labelling a PR whose CI has already finished; `resolve` waits for it.
+  pull_request:
+    types: [labeled]
+
+concurrency:
+  # Keyed on what is being built, not on the event that asked for it: a push to
+  # a labelled PR and the label itself must not race to publish :pr-N.
+  group: >-
+    ${{ github.workflow }}-${{
+      github.event_name == 'release' && github.event.release.tag_name
+      || github.event_name == 'pull_request' && github.event.pull_request.number
+      || github.event.workflow_run.head_sha
+    }}
+  cancel-in-progress: true
+
+jobs:
+  # Decides whether this event is a build at all, what commit it is of, and what
+  # to call the result. Everything downstream reads its outputs and asks nothing
+  # about the event that started the run.
+  resolve:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    outputs:
+      build: ${{ steps.decide.outputs.build }}
+      sha: ${{ steps.decide.outputs.sha }}
+      tags: ${{ steps.decide.outputs.tags }}
+      registry: ${{ steps.name.outputs.registry }}
+    steps:
+      # A repository name may contain capitals; a container reference may not.
+      - id: name
+        run: echo "registry=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      - id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          # A prerelease publishes its version and nothing else: :latest is what
+          # a deployment left on the default tag follows.
+          PRERELEASE: ${{ github.event.release.prerelease }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_SHA: ${{ github.sha }}
+          LABEL: ${{ github.event.label.name }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number }}
+          PR_SHA: ${{ github.event.pull_request.head.sha || github.event.workflow_run.head_sha }}
+          RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          RUN_EVENT: ${{ github.event.workflow_run.event }}
+        run: |
+          set -euo pipefail
+
+          skip() { echo "build=false" >> "$GITHUB_OUTPUT"; echo "$1"; exit 0; }
+
+          if [ "$EVENT" = "release" ]; then
+            tags="$RELEASE_TAG $RELEASE_SHA"
+            [ "$PRERELEASE" = "true" ] || tags="$tags latest"
+            {
+              echo "build=true"
+              echo "sha=$RELEASE_SHA"
+              echo "tags=$tags"
+            } >> "$GITHUB_OUTPUT"
+            echo "release $RELEASE_TAG → $tags"
+            exit 0
+          fi
+
+          # Both PR paths need the same two facts: the label is on, and CI is
+          # green for this exact commit.
+          if [ "$EVENT" = "workflow_run" ]; then
+            [ "$RUN_EVENT" = "pull_request" ] || skip "CI run was not for a PR"
+            [ "$RUN_CONCLUSION" = "success" ] || skip "CI concluded $RUN_CONCLUSION"
+            [ -n "${PR_NUMBER:-}" ] || skip "no PR attached to this CI run"
+          else
+            [ "$LABEL" = "build" ] || skip "label $LABEL is not 'build'"
+          fi
+
+          labelled=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
+            --json labels --jq '[.labels[].name] | index("build") != null')
+          [ "$labelled" = "true" ] || skip "PR #$PR_NUMBER is not labelled build"
+
+          # On the `labeled` path CI may still be running, or may never have been
+          # started for this commit. Wait rather than publish something untested.
+          if [ "$EVENT" = "pull_request" ]; then
+            for _ in $(seq 1 60); do
+              conclusion=$(gh run list --repo "$GITHUB_REPOSITORY" \
+                --workflow CI --commit "$PR_SHA" --limit 1 \
+                --json conclusion --jq '.[0].conclusion // "pending"')
+              case "$conclusion" in
+                success) break ;;
+                pending|null|"") echo "CI has not concluded yet; waiting"; sleep 30 ;;
+                *) skip "CI concluded $conclusion for $PR_SHA" ;;
+              esac
+            done
+            [ "${conclusion:-}" = "success" ] || skip "timed out waiting for CI on $PR_SHA"
+          fi
+
+          {
+            echo "build=true"
+            echo "sha=$PR_SHA"
+            echo "tags=pr-$PR_NUMBER $PR_SHA"
+          } >> "$GITHUB_OUTPUT"
+          echo "PR #$PR_NUMBER → pr-$PR_NUMBER"
+
+  # Built per architecture on its own native runner, then merged into one
+  # manifest list. The alternative — one job with QEMU emulation — is what this
+  # used to do, and cross-building the Rust provider under emulation is slow
+  # enough to dominate the whole pipeline.
+  images:
+    # Without this the job name is every matrix value joined — dockerfile path,
+    # platform tag and runner included.
+    name: ${{ matrix.image.name }} (${{ matrix.platform.arch }})
+    needs: resolve
+    if: needs.resolve.outputs.build == 'true'
+    runs-on: ${{ matrix.platform.runner }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - { name: coordinator, dockerfile: packages/coordinator/Dockerfile }
+          - { name: web, dockerfile: packages/web/Dockerfile }
+          - { name: provider, dockerfile: packages/provider/Dockerfile }
+        platform:
+          - { arch: amd64, tag: linux/amd64, runner: ubuntu-24.04 }
+          - { arch: arm64, tag: linux/arm64, runner: ubuntu-24.04-arm }
+    steps:
+      # Explicit: on `workflow_run` the checkout default is the default branch,
+      # not the commit CI passed on.
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ${{ matrix.image.dockerfile }}
+          platforms: ${{ matrix.platform.tag }}
+          # Pushed without a tag: an arch-specific tag would be a lie the moment
+          # the other architecture lands on it. The manifest job names them.
+          outputs: type=image,name=${{ needs.resolve.outputs.registry }}/${{ matrix.image.name }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.image.name }}-${{ matrix.platform.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image.name }}-${{ matrix.platform.arch }}
+
+      - name: Export the digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p /tmp/digests
+          # The filename is the digest with its `sha256:` prefix stripped, and
+          # the file itself is empty — the manifest job only needs the names.
+          # The prefix has to go: an artifact path may not contain a colon.
+          touch "/tmp/digests/${DIGEST#sha256:}"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: digest-${{ matrix.image.name }}-${{ matrix.platform.arch }}
+          path: /tmp/digests/*
+          retention-days: 1
+          if-no-files-found: error
+
+  # One manifest list per image, pointing at both architectures. Until this
+  # runs the digests are pushed but unnamed, so nothing can pull them.
+  manifest:
+    name: manifest (${{ matrix.image }})
+    needs: [images, resolve]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        image: [coordinator, web, provider]
+    steps:
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: digest-${{ matrix.image }}-*
+          merge-multiple: true
+          path: /tmp/digests
+
+      - name: Create the manifest list
+        working-directory: /tmp/digests
+        env:
+          IMAGE: ${{ needs.resolve.outputs.registry }}/${{ matrix.image }}
+          TAGS: ${{ needs.resolve.outputs.tags }}
+        run: |
+          set -euo pipefail
+          args=()
+          for tag in $TAGS; do args+=(--tag "$IMAGE:$tag"); done
+          # Word splitting is the point: one argument per digest file.
+          # shellcheck disable=SC2046
+          docker buildx imagetools create "${args[@]}" \
+            $(printf "$IMAGE@sha256:%s " *)
+
+      - name: Show what was published
+        env:
+          IMAGE: ${{ needs.resolve.outputs.registry }}/${{ matrix.image }}
+          TAGS: ${{ needs.resolve.outputs.tags }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools inspect "$IMAGE:${TAGS%% *}"
