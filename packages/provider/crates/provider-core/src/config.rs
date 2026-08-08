@@ -29,6 +29,9 @@ fn default_metrics_bind() -> String {
 fn default_metrics_interval() -> u64 {
     30
 }
+fn default_debug_ports() -> String {
+    "7200-7249".into()
+}
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -70,6 +73,51 @@ pub struct Config {
     /// Prometheus metrics. Absent means off; see [`MetricsConfig`].
     #[serde(default)]
     pub metrics: MetricsConfig,
+
+    /// Ports `adb connect` reaches an exposed device on.
+    #[serde(default)]
+    pub remote_debug: RemoteDebugConfig,
+}
+
+/// The port range remote debugging draws from.
+///
+/// A range rather than a port per device: these have to be published by
+/// whatever runs the provider, and naming one per phone does not scale past a
+/// handful. Devices claim from it while exposed and give it back on release.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RemoteDebugConfig {
+    #[serde(default = "default_debug_ports")]
+    pub ports: String,
+}
+
+impl Default for RemoteDebugConfig {
+    fn default() -> Self {
+        Self {
+            ports: default_debug_ports(),
+        }
+    }
+}
+
+impl RemoteDebugConfig {
+    /// `"7200-7249"`, or a single `"7200"`.
+    pub fn range(&self) -> Result<std::ops::RangeInclusive<u16>> {
+        let text = self.ports.trim();
+        let (start, end) = match text.split_once('-') {
+            Some((start, end)) => (start.trim(), end.trim()),
+            None => (text, text),
+        };
+        let parse = |value: &str| -> Result<u16> {
+            value
+                .parse::<u16>()
+                .with_context(|| format!("remote_debug.ports: {value:?} is not a port"))
+        };
+        let (start, end) = (parse(start)?, parse(end)?);
+        if start == 0 || start > end {
+            bail!("remote_debug.ports must be a range like 7200-7249, got {text:?}");
+        }
+        Ok(start..=end)
+    }
 }
 
 /// Where the metrics exporter listens and how often it samples.
@@ -217,6 +265,9 @@ impl Config {
         }
 
         self.validate_metrics()?;
+        // At load, so a malformed range is a startup error rather than one that
+        // surfaces the first time somebody clicks Expose.
+        self.remote_debug.range()?;
         Ok(())
     }
 

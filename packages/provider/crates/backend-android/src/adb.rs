@@ -48,9 +48,6 @@ pub const DEFAULT_ADB_SERVER: &str = "127.0.0.1:5037";
 /// Sync-protocol chunks are capped by adb itself; a larger DATA is rejected.
 const SYNC_CHUNK: usize = 64 * 1024;
 
-/// Where `adbd` listens once `tcpip:` has been issued.
-const DEVICE_ADB_PORT_STR: &str = "5555";
-
 /// How long to wait for the server to answer a request.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -510,25 +507,16 @@ impl Adb {
         }
     }
 
-    /// Expose a device's adb transport on a TCP port of the provider host, for
-    /// remote debugging from a developer's machine.
-    pub async fn forward(&self, serial: &str, local_port: u16) -> Result<()> {
-        let mut stream = AdbStream::connect(&self.server).await?;
-        stream
-            .request(&format!(
-                "host-serial:{serial}:forward:tcp:{local_port};tcp:{DEVICE_ADB_PORT_STR}"
-            ))
-            .await?;
-        stream.status("forward").await
-    }
-
-    pub async fn forward_remove(&self, serial: &str, local_port: u16) -> Result<()> {
-        let mut stream = AdbStream::connect(&self.server).await?;
-        stream
-            .request(&format!(
-                "host-serial:{serial}:killforward:tcp:{local_port}"
-            ))
-            .await
+    /// Open a stream to a TCP port on the *device*, over its USB transport.
+    ///
+    /// This is what `adb forward` does internally, without the listener adb
+    /// would own: `forward`'s local socket binds the adb server's loopback, so
+    /// in a container nothing outside it can ever reach the port. The provider
+    /// binds its own listener instead and splices it here.
+    pub async fn device_tcp(&self, serial: &str, port: u16) -> Result<TcpStream> {
+        let mut stream = self.transport(serial).await?;
+        stream.request(&format!("tcp:{port}")).await?;
+        Ok(stream.into_inner())
     }
 }
 

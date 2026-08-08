@@ -27,6 +27,13 @@ bind: 0.0.0.0:7100
 scratch_dir: /var/lib/farm/scratch
 max_upload_mb: 2048
 
+# Ports `adb connect` reaches an exposed device on. A device claims one while it
+# is being debugged and gives it back on release, so the range caps how many can
+# be debugged at once — not how many devices this provider has. Publish the same
+# range from whatever runs the provider.
+remote_debug:
+  ports: 7200-7249
+
 # Prometheus metrics. Optional — an absent block means off, but writing the block
 # and omitting `enabled` means on, because writing it at all is the intent.
 #

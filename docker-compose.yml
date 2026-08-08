@@ -100,6 +100,9 @@ services:
     restart: unless-stopped
     ports:
       - "${PROVIDER_PORT:-7100}:7100"
+      # Remote debugging draws from this range; keep it and remote_debug.ports
+      # in provider.yaml in step.
+      - "${DEBUG_PORTS:-7200-7249}:${DEBUG_PORTS:-7200-7249}"
     environment:
       FARM_CONFIG: /etc/farm/provider.yaml
       FARM_PROVIDER_TOKEN: ${FARM_PROVIDER_TOKEN:?issue one under /admin/providers}
