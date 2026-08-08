@@ -81,6 +81,13 @@ pub fn special_key(name: &str) -> Option<u64> {
         "Tab" => 0x2B,
         "CapsLock" => 0x39,
         "Delete" => 0x4C,
+        // Text-editing home/end. Spelled `Move*` because the bare names belong
+        // to the hardware buttons — see `named_button`, which is tried first
+        // and would otherwise swallow `Home`.
+        "MoveHome" => 0x4A,
+        "MoveEnd" => 0x4D,
+        "PageUp" => 0x4B,
+        "PageDown" => 0x4E,
         "ArrowRight" => 0x4F,
         "ArrowLeft" => 0x50,
         "ArrowDown" => 0x51,
@@ -364,6 +371,17 @@ mod tests {
         // STF's vocabulary is gone; nothing should still answer to it.
         assert_eq!(special_key("dpad_up"), None);
         assert_eq!(special_key("del"), None);
+    }
+
+    #[test]
+    fn the_home_button_wins_over_the_home_key() {
+        // `named_button` is tried first, so a bare `Home` must stay the
+        // hardware button; text-editing home arrives spelled differently.
+        assert!(named_button("Home").is_some());
+        assert_eq!(special_key("Home"), None);
+        assert_eq!(special_key("MoveHome"), Some(0x4A));
+        assert_eq!(special_key("MoveEnd"), Some(0x4D));
+        assert!(named_button("MoveHome").is_none());
     }
 
     #[test]

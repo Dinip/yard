@@ -14,7 +14,8 @@ src/
 │   ├── types.ts          RouterInputs / RouterOutputs helpers
 │   └── utils.ts          cn(), relativeTime()
 ├── components/
-│   ├── app-shell.tsx     header, nav, account menu
+│   ├── app-shell.tsx     left nav rail, account menu
+│   ├── side-panel.tsx    the collapsible column both device flanks are
 │   ├── device-card.tsx
 │   ├── device-console.tsx / device-screen.tsx
 │   └── ui/               shadcn components
@@ -25,7 +26,8 @@ src/
     ├── _app/
     │   ├── devices.index.tsx
     │   ├── devices.$deviceId.tsx
-    │   ├── providers.tsx
+    │   ├── providers.tsx  redirect only → /admin/providers
+    │   ├── admin.providers.tsx
     │   └── admin.users.tsx
     ├── _session.tsx      same guard, no shell
     └── _session/
@@ -43,6 +45,12 @@ to go.
 Admin routes add a second `beforeLoad` check against `context.user.role`. That
 is a *UX* guard, not a security boundary — `adminProcedure` on the server is the
 real one.
+
+There is **one** providers page, `/admin/providers`. A read-only copy at
+`/providers` used to sit next to it in the nav showing the same table minus the
+buttons; `/providers` is now a redirect, kept only so an old bookmark still
+works. A non-admin following it hits the admin guard and lands on `/devices` —
+a provider's name reaches them on the device page anyway.
 
 ## Types flow from the server
 
@@ -80,6 +88,19 @@ lightness flip rather than a second hand-tuned palette. Add components with:
 cd packages/web && bunx --bun shadcn@latest add <component>
 ```
 
+Scrollbars are restyled globally in `styles.css` — `scrollbar-color` for Firefox
+and the `::-webkit-scrollbar-*` pseudo-elements for Chrome and Safari, which
+need the colours spelled out a second time. Global rather than a utility class:
+a scrollbar that matched only where someone remembered to opt in would look like
+a bug, and the platform default reads as a pale seam against a dark panel.
+
+One recurring detail: a small caption beside a large heading (`Devices 7 of 7 ·
+live`, `Users 8 total`) is `items-center` **with `leading-none` on every item**.
+Both halves matter. A line box carries its own leading — 8px of it on a 2xl
+heading — so centring the boxes alone leaves the small text sitting low, and
+matching baselines instead makes it hang lower still. Stripped to the font box,
+the optical centres agree to within a pixel.
+
 ## The control surface
 
 ```
@@ -90,12 +111,75 @@ src/lib/screen/
 src/lib/download.ts                    saveBlob + formatBytes
 src/hooks/use-device-session.ts
 src/components/device-screen.tsx       canvas + input capture
-src/components/device-console.tsx      screen + toolbar + drop target
+src/components/device-console.tsx      screen + controls + drop target
 src/components/device-files-dialog.tsx browse the device, download a file
+src/lib/popout.ts                      open the popout, sized to the device
+src/lib/side-panels.ts                 which flanks are open, per user
 ```
 
 `DeviceConsole` is shared verbatim by `/devices/:id` and the popout, so there is
 one control surface, not two that drift.
+
+### Controls: one grouped list, two renderings
+
+The actions are built once as three sections — **Device** (Back, Home, Recents),
+**Screen** (Rotate, Screenshot, Record) and **Files** (Install, Files, Copy from
+device, Paste to device) — and the `controls` prop chooses how they are drawn. A
+control that exists in one rendering and not the other is how the popout ends up
+a lesser window than the page.
+
+- `"rail"` — a bordered strip left of the screen: one **labelled** button per
+  row, a heading per section. It sits beside the screen rather than under it
+  because a portrait device leaves that space empty anyway, and every row of
+  controls below the screen is a row of screen nobody gets. The rail is the tall
+  thin space next to a tall thin device — it has height to spend and no width
+  worth saving, so the actions are spelled out. It scrolls if a viewport is short.
+- `"overlay"` — the popout's floating column, behind a draggable corner handle,
+  icon-only because it sits *over* the picture. Also a column, for the same
+  reason: a popout is a window shaped like a phone, so ten controls across is
+  the one direction that cannot fit. It grows away from its own corner and caps
+  at `100svh - 4rem`.
+
+Icon-only rendering is why every action's label is a phrase (`Copy from device`,
+not `Copy`): in the overlay it is the tooltip and the accessible name.
+
+**Hardware buttons send a down/up pair.** Android injects a keycode per edge and
+would leave the key held without the up; iOS presses and releases on the down
+edge and discards the up. One shape satisfies both. Android gets `Back`, `Home`
+and `AppSwitch`; iOS gets `Home` alone, which is all the hardware it has.
+
+`Home` on the wire is the *hardware button*. The keyboard's Home and End keys go
+as `MoveHome`/`MoveEnd`, because sending them as `Home` mapped to
+`KEYCODE_HOME` — pressing Home while typing threw the device to the launcher.
+
+### A device page that is mostly device
+
+`/devices/:id` is locked to the viewport and does not scroll. The header is one
+wrapping line and the screen takes everything the two flanking panels do not.
+
+Both flanks are one component, `SidePanel`: same border, same header, same
+toggle, and the collapsed width is `w-11` rather than a round number because
+`w-10` with `p-2` leaves 24px for a 36px icon button and clips it off-centre.
+Both default to open — a control surface that hid itself until you found the
+toggle is a worse first impression than a slightly narrower screen — and each
+remembers its state per user in `lib/side-panels.ts`, the same shape as
+`lib/controls-corner.ts`.
+
+This is what `AppShell`'s `h-svh` and `h-full` content column exist for: flex
+only bounds a child when the container's height is **definite**, and under
+`min-h-full` the screen sized itself from its aspect ratio and overflowed. Pages
+taller than the viewport still overflow that column and scroll `main`.
+
+### Navigation is a left rail, not a top bar
+
+`AppShell` puts navigation in a 56px icon rail down the left edge: brand mark,
+then the pages, then the account menu at the bottom. Labels are tooltips, and
+the brand's tooltip is the only place `APP_NAME` appears in the chrome — it
+still comes from `user.capabilities`, never a literal.
+
+A top bar spent a whole row of *every* page on, for a non-admin, a product name
+and one link, and the device page then stacked its own header underneath it. The
+rail costs width instead, which is the axis a portrait device leaves spare.
 
 **Everything on this path goes to the provider's origin.** The coordinator is
 asked for one thing — a session token, from `device.sessionToken` — and is then

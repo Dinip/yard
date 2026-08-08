@@ -1001,11 +1001,17 @@ pub fn keycode_for(key: &str) -> Option<u32> {
         "ArrowDown" => 20,
         "ArrowLeft" => 21,
         "ArrowRight" => 22,
-        "Home" => 3,
+        // The *text-editing* keys. `Home` is not one of them: it is the
+        // hardware button below, and a browser that sent the keyboard's Home
+        // key as `Home` threw the device to the launcher mid-sentence.
+        "MoveHome" => 122,
+        "MoveEnd" => 123,
         "Delete" => 112,
         "PageUp" => 92,
         "PageDown" => 93,
-        // Android-specific names a control surface may send.
+        // Hardware buttons, and Android-specific names a control surface may
+        // send. These leave whatever app is in front.
+        "Home" => 3,
         "Back" => 4,
         "AppSwitch" | "Recents" => 187,
         "Power" => 26,
@@ -1093,6 +1099,18 @@ mod tests {
         assert_eq!(rotation_steps(90, 90), 0);
         assert_eq!(rotation_steps(0, 270), 3);
         assert_eq!(rotation_steps(180, 90), 3);
+    }
+
+    #[test]
+    fn the_home_button_and_the_home_key_are_different_keys() {
+        // The regression: the browser sent the keyboard's Home key as `Home`,
+        // so pressing it while typing left the app for the launcher.
+        assert_eq!(keycode_for("Home"), Some(3), "KEYCODE_HOME, the button");
+        assert_eq!(keycode_for("MoveHome"), Some(122));
+        assert_eq!(keycode_for("MoveEnd"), Some(123));
+        assert_eq!(keycode_for("End"), None, "the browser sends MoveEnd");
+        assert_eq!(keycode_for("Back"), Some(4));
+        assert_eq!(keycode_for("AppSwitch"), keycode_for("Recents"));
     }
 
     #[test]

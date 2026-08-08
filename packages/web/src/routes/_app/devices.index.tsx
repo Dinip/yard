@@ -40,11 +40,18 @@ function DevicesPage() {
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-center gap-3">
-        <h1 className="font-semibold text-2xl">Devices</h1>
-        <span className="text-muted-foreground text-sm">
-          {filtered.length} of {devices?.length ?? 0}
-        </span>
-        <LiveIndicator connected={connected} />
+        {/* Centred, and `leading-none` on every item so that means something:
+            each line box otherwise carries its own leading — 8px of it on the
+            2xl heading — so centring the *boxes* leaves the small text sitting
+            low against the heading's glyphs. Stripped to the font box, the
+            three optical centres line up. */}
+        <div className="flex items-center gap-3">
+          <h1 className="font-semibold text-2xl leading-none">Devices</h1>
+          <span className="text-muted-foreground text-sm leading-none">
+            {filtered.length} of {devices?.length ?? 0}
+          </span>
+          <LiveIndicator connected={connected} />
+        </div>
         <div className="flex-1" />
         <div className="flex rounded-md border p-0.5">
           {PLATFORMS.map((p) => (
@@ -107,7 +114,7 @@ function EmptyState({ hasAny }: { hasAny: boolean }) {
 function LiveIndicator({ connected }: { connected: boolean }) {
   return (
     <span
-      className="flex items-center gap-1.5 text-muted-foreground text-xs"
+      className="flex items-center gap-1.5 text-muted-foreground text-xs leading-none"
       title={connected ? "Receiving live updates" : "Live stream unavailable — polling every 5s"}
     >
       <span
