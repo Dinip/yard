@@ -27,7 +27,7 @@ single-command local stack.
 | Reservation exclusivity tests (concurrent race) | ✅ | `packages/coordinator/test/` |
 | TanStack Router SPA + shadcn shell, devices/providers/admin routes | ✅ | `packages/web/` |
 | Dockerfiles (coordinator, web), compose with postgres + caddy | ✅ | root, `packages/*/Dockerfile` |
-| First-admin bootstrap CLI | ✅ | `.../src/cli/grant-admin.ts` |
+| First-admin bootstrap (first sign-up + CLI) | ✅ | `.../src/auth.ts`, `.../src/cli/grant-admin.ts` |
 
 **Deferred out of phase 1 deliberately:** live device-list updates (still polling
 at 5s until the `stream` subscription lands with the gateway), provider token
