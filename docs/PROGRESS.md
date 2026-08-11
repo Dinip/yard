@@ -683,8 +683,14 @@ at ~12s remaining and the reaper's own reason explains the release afterwards.
   and no `refetchInterval`, so the only thing that could tell it was a
   `session.revoke` over the session socket. An idle release therefore left the
   window streaming a device the holder no longer had, with the warning dialog
-  still up and nothing to click. It subscribes now, and treats a session that
-  has left the inventory as ended however it learned it.
+  still up and nothing to click. It subscribes now.
+
+  Both windows share `useSessionEnded`, which watches *both* signals: the
+  provider's revoke carries a reason but needs a live socket, and a session
+  gone from `device.get` has ended whatever the socket did. The device page
+  had the second signal all along and never acted on it, so an idle release
+  there turned the page quietly back into an unreserved device and explained
+  nothing.
 - **The warning dialog counted past zero.** The reaper sweeps every 30s, so the
   deadline always passes before the release does, and the dialog sat at 0:00
   still offering "Keep it" — a button that races a sweep that may already have

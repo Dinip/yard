@@ -1,11 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { DeviceConsole } from "@/components/device-console";
 import { ReservationKeeper, useReservationKeeper } from "@/components/reservation-keeper";
 import { SessionEndedDialog } from "@/components/session-ended-dialog";
 import { useDeviceStream } from "@/hooks/use-device-stream";
 import { usePopoutHeartbeat } from "@/hooks/use-popout-presence";
+import { useSessionEnded } from "@/hooks/use-session-ended";
 import { trpc } from "@/lib/trpc";
 
 /**
@@ -51,17 +52,7 @@ function PopoutPage() {
   const heldReservation = useRef<string | undefined>(undefined);
   if (device?.reservation?.id) heldReservation.current = device.reservation.id;
 
-  const [ended, setEnded] = useState<{ reason?: string } | null>(null);
-  const onRevoked = useCallback((reason?: string) => setEnded({ reason }), []);
-
-  // A session that is gone from the inventory ended, whatever the socket did or
-  // did not say. `SessionEndedDialog` reads the reason off the reservation, so
-  // this still explains itself.
-  const hadSession = useRef(false);
-  useEffect(() => {
-    if (inSession) hadSession.current = true;
-    else if (hadSession.current) setEnded((previous) => previous ?? {});
-  }, [inSession]);
+  const { ended, reportEnded } = useSessionEnded(inSession);
 
   // Tells the parent tab to stand down, and closes this window when it asks
   // for the stream back.
@@ -95,7 +86,7 @@ function PopoutPage() {
           active
           className="flex-1"
           controls="overlay"
-          onRevoked={onRevoked}
+          onRevoked={reportEnded}
         />
       ) : (
         <div className="flex flex-1 items-center justify-center text-center text-muted-foreground text-sm">

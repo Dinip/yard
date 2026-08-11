@@ -26,6 +26,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useDeviceStream } from "@/hooks/use-device-stream";
 import { usePopoutPresence } from "@/hooks/use-popout-presence";
+import { useSessionEnded } from "@/hooks/use-session-ended";
 import { openPopout } from "@/lib/popout";
 import { loadPanelOpen, savePanelOpen } from "@/lib/side-panels";
 import { trpc } from "@/lib/trpc";
@@ -57,6 +58,8 @@ function DevicePage() {
   const observing = Boolean(
     me && device?.reservation?.observers.some((o) => o.userId === me.id) && !mine,
   );
+  /** Whether there is a live session here — what the rail and screen need. */
+  const inSession = mine || observing;
 
   // Only worth asking about while somebody else has it and we are not already
   // in. The device stream invalidates this along with everything else.
@@ -92,15 +95,14 @@ function DevicePage() {
    */
   const releasedHere = useRef(false);
 
-  const [ended, setEnded] = useState<{ reason?: string } | null>(null);
+  const { ended, reportEnded } = useSessionEnded(inSession, releasedHere);
   const onRevoked = useCallback(
     (reason?: string) => {
       // The header still offered "Release" for a device the user no longer has.
       invalidate();
-      if (releasedHere.current) return;
-      setEnded({ reason });
+      reportEnded(reason);
     },
-    [invalidate],
+    [invalidate, reportEnded],
   );
 
   const reserve = useMutation(
@@ -204,9 +206,6 @@ function DevicePage() {
     });
 
   if (!device) return null;
-
-  /** Whether there is a live session here — what the rail and screen need. */
-  const inSession = mine || observing;
 
   return (
     // Locked to the viewport, so the screen gets every pixel the header and the
