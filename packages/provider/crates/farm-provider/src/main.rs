@@ -15,6 +15,7 @@ use provider_core::config::{BackendKind, Config};
 use provider_core::control::ControlClient;
 use provider_core::metrics::{self, MetricsCache, MetricsState};
 use provider_core::origins::WebOrigins;
+use provider_core::ports::PortPool;
 use provider_core::server::{self, ServerState};
 use provider_core::session::SessionRegistry;
 use provider_core::supervisor::Supervisor;
@@ -75,8 +76,10 @@ async fn main() -> Result<()> {
     let sessions = SessionRegistry::new();
     let mut supervisor = Supervisor::new(sessions.clone());
 
+    let debug_ports = PortPool::new(config.remote_debug.range()?);
+
     for device in &config.devices {
-        let backend = build_backend(device)?;
+        let backend = build_backend(device, &debug_ports)?;
         info!(udid = %device.udid, backend = ?device.backend, "device configured");
         supervisor.add(device.udid.clone(), backend);
     }
@@ -186,7 +189,10 @@ async fn main() -> Result<()> {
     }
 }
 
-fn build_backend(device: &provider_core::config::DeviceConfig) -> Result<Arc<dyn DeviceBackend>> {
+fn build_backend(
+    device: &provider_core::config::DeviceConfig,
+    debug_ports: &Arc<PortPool>,
+) -> Result<Arc<dyn DeviceBackend>> {
     let name = device.name.clone().unwrap_or_else(|| device.udid.clone());
 
     match device.backend {
@@ -213,8 +219,9 @@ fn build_backend(device: &provider_core::config::DeviceConfig) -> Result<Arc<dyn
             Ok(backend_ios::IosBackend::new(options, device.name.clone()))
         }
         BackendKind::Android => {
-            let options = backend_android::AndroidOptions::parse(&device.udid, &device.options)
+            let mut options = backend_android::AndroidOptions::parse(&device.udid, &device.options)
                 .with_context(|| format!("device {}", device.udid))?;
+            options.debug_ports = Some(Arc::clone(debug_ports));
             Ok(backend_android::AndroidBackend::new(
                 options,
                 device.name.clone(),

@@ -26,6 +26,7 @@ use provider_core::backend::{
     join_path, parent_of, AppFilter, BackendError, DeviceBackend, DeviceInfo, DeviceMetrics,
     InputEvent, ProgressSink, RemoteDebug, Result as BackendResult,
 };
+use provider_core::ports::{PortLease, PortPool};
 use provider_core::video::{channel, VideoGeometry, VideoHandle, VideoPublisher};
 use tokio::net::TcpStream;
 use tokio::sync::{watch, Mutex};
@@ -63,6 +64,10 @@ const CONTACT_MAX: Duration = Duration::from_secs(10);
 pub struct AndroidOptions {
     pub serial: String,
     pub adb_server: String,
+    /// Where remote debugging draws its listening port from. Absent means the
+    /// device cannot be exposed at all — set by the provider from
+    /// `remote_debug.ports`, not by this device's own `options:` block.
+    pub debug_ports: Option<Arc<PortPool>>,
     pub scrcpy: ScrcpyOptions,
 }
 
@@ -96,6 +101,7 @@ impl AndroidOptions {
                 })
                 .transpose()?
                 .unwrap_or_else(|| adb::DEFAULT_ADB_SERVER.to_owned()),
+            debug_ports: None,
             scrcpy: ScrcpyOptions {
                 max_size: number("max_size")?.unwrap_or(defaults.max_size),
                 bit_rate: number("bit_rate")?.unwrap_or(defaults.bit_rate),
@@ -145,7 +151,13 @@ pub struct AndroidBackend {
     restart: Arc<tokio::sync::Notify>,
     pointer: Mutex<Pointer>,
     clipboard_sequence: std::sync::atomic::AtomicU64,
-    exposed_port: Mutex<Option<u16>>,
+    exposed: Mutex<Option<Exposed>>,
+}
+
+/// A live remote-debugging listener: the accept loop, and the port it holds.
+struct Exposed {
+    lease: PortLease,
+    task: tokio::task::JoinHandle<()>,
 }
 
 impl AndroidBackend {
@@ -166,7 +178,7 @@ impl AndroidBackend {
             restart: restart.clone(),
             pointer: Mutex::new(Pointer::default()),
             clipboard_sequence: std::sync::atomic::AtomicU64::new(1),
-            exposed_port: Mutex::new(None),
+            exposed: Mutex::new(None),
         });
 
         tokio::spawn(supervise(Supervisor {
@@ -635,11 +647,23 @@ impl DeviceBackend for AndroidBackend {
     ///
     /// This is remote debugging: a developer runs `adb connect provider:port`
     /// and gets the device on their own machine. `service.adb.tcp.port` is what
-    /// makes the device listen at all; without it the forward reaches nothing.
+    /// makes the device listen at all; without it the proxy reaches nothing.
+    ///
+    /// The listener is the provider's own, on a port claimed from the pool
+    /// `remote_debug.ports` configures. `adb forward` cannot serve this: its
+    /// socket binds the adb server's loopback, so a containerised provider
+    /// forwards to a port nothing outside the container can reach, on an
+    /// ephemeral number nothing could have published.
     async fn remote_debug(&self) -> BackendResult<RemoteDebug> {
-        if let Some(port) = *self.exposed_port.lock().await {
-            return Ok(RemoteDebug { port });
+        if let Some(exposed) = self.exposed.lock().await.as_ref() {
+            return Ok(RemoteDebug {
+                port: exposed.lease.port(),
+            });
         }
+
+        let pool = self.options.debug_ports.as_ref().ok_or_else(|| {
+            BackendError::Failed("remote debugging is not configured on this provider".into())
+        })?;
 
         // Make the device listen before forwarding to it. `tcpip:` is a
         // transport service; the setprop recipe needs root and fails silently.
@@ -654,36 +678,38 @@ impl DeviceBackend for AndroidBackend {
         // everything after it races the restart.
         self.await_adb_port(Some(DEVICE_ADB_PORT)).await?;
 
-        let port = pick_port().map_err(|err| BackendError::Failed(err.to_string()))?;
-        self.adb
-            .forward(&self.options.serial, port)
+        let (lease, listener) = bind_from_pool(pool)
             .await
             .map_err(|err| BackendError::Failed(format!("{err:#}")))?;
+        let port = lease.port();
 
-        *self.exposed_port.lock().await = Some(port);
+        let task = tokio::spawn(serve_debug_proxy(
+            listener,
+            self.adb.clone(),
+            self.options.serial.clone(),
+        ));
+
+        *self.exposed.lock().await = Some(Exposed { lease, task });
         info!(serial = %self.options.serial, port, "adb transport exposed");
         Ok(RemoteDebug { port })
     }
 
     /// Stop remote debugging, and stop the *device* listening too.
     ///
-    /// Removing the forward alone would leave `adbd` bound to port 5555 on
+    /// Closing the listener alone would leave `adbd` bound to port 5555 on
     /// whatever network the phone is on, reachable by anyone who can route to
     /// it, for as long as the device stays up. A farm device must not be left
     /// in that state because someone finished debugging.
     async fn remote_debug_stop(&self) -> BackendResult<()> {
-        let exposed = self.exposed_port.lock().await.take();
-
-        if let Some(port) = exposed {
-            // Best effort. The forward may already be gone — an adb server
-            // restart loses every one of them — and that must not stop the
-            // part that closes the device's listener.
-            if let Err(err) = self.adb.forward_remove(&self.options.serial, port).await {
-                debug!(port, error = %format!("{err:#}"), "forward was already gone");
-            }
+        // Aborting drops the listener, and any connection still spliced through
+        // it dies with the task — a developer must not keep driving a device
+        // after the reservation that granted it ended. Dropping the lease with
+        // it is what returns the port to the pool.
+        if let Some(exposed) = self.exposed.lock().await.take() {
+            exposed.task.abort();
         }
 
-        // Runs even when no forward was recorded: a provider restart loses that
+        // Runs even when no listener was recorded: a provider restart loses that
         // memory while the device keeps listening, and this is the only thing
         // that closes it.
         self.adb
@@ -1034,10 +1060,61 @@ fn listening_port(value: &str) -> Option<u16> {
     }
 }
 
-/// A free TCP port, chosen by binding one and letting the OS pick.
-fn pick_port() -> Result<u16> {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
-    Ok(listener.local_addr()?.port())
+/// Claim a port from the pool and listen on it, skipping any the host already
+/// has taken — the pool tracks what this provider handed out, not what else on
+/// the machine happens to be bound.
+async fn bind_from_pool(pool: &Arc<PortPool>) -> Result<(PortLease, tokio::net::TcpListener)> {
+    // Held rather than dropped as we go, so a port that failed to bind is not
+    // immediately handed back out and retried in the same loop.
+    let mut taken = Vec::new();
+
+    let outcome = loop {
+        let Some(lease) = pool.claim() else {
+            break Err(anyhow!(
+                "every remote-debugging port is in use; widen remote_debug.ports"
+            ));
+        };
+
+        match tokio::net::TcpListener::bind(("0.0.0.0", lease.port())).await {
+            Ok(listener) => break Ok((lease, listener)),
+            Err(err) => {
+                debug!(port = lease.port(), error = %err, "debug port is not bindable");
+                taken.push(lease);
+            }
+        }
+    };
+
+    drop(taken);
+    outcome
+}
+
+/// Accept `adb connect` clients and splice each one to the device's own adbd.
+///
+/// One task per connection, and a failed dial closes only that connection: the
+/// listener outlives it, because a phone that drops mid-debug otherwise takes
+/// the port with it until the session ends.
+async fn serve_debug_proxy(listener: tokio::net::TcpListener, adb: Adb, serial: String) {
+    loop {
+        let Ok((mut client, peer)) = listener.accept().await else {
+            return;
+        };
+
+        let adb = adb.clone();
+        let serial = serial.clone();
+        tokio::spawn(async move {
+            let mut device = match adb.device_tcp(&serial, DEVICE_ADB_PORT).await {
+                Ok(device) => device,
+                Err(err) => {
+                    warn!(%serial, %peer, error = %format!("{err:#}"), "remote debug dial failed");
+                    return;
+                }
+            };
+
+            if let Err(err) = tokio::io::copy_bidirectional(&mut client, &mut device).await {
+                debug!(%serial, %peer, error = %err, "remote debug connection ended");
+            }
+        });
+    }
 }
 
 /// A short unique suffix for staged filenames. It only has to keep two
@@ -1156,5 +1233,123 @@ mod tests {
         let mut options = serde_json::Map::new();
         options.insert("max_size".into(), serde_json::json!("big"));
         assert!(AndroidOptions::parse("serial", &options).is_err());
+    }
+
+    #[tokio::test]
+    async fn a_bound_port_is_skipped_and_kept_out_of_the_next_claim() {
+        let pool = PortPool::new(7200..=7201);
+
+        // Stand on the first port the pool would hand out, as another process
+        // on the host might be.
+        let squatter = tokio::net::TcpListener::bind(("0.0.0.0", 7200))
+            .await
+            .expect("7200 free in the test environment");
+
+        let (lease, listener) = bind_from_pool(&pool).await.unwrap();
+        assert_eq!(lease.port(), 7201, "skipped the port already bound");
+        assert_eq!(pool.available(), 1, "7200 went back, 7201 is held");
+
+        drop(squatter);
+        drop(listener);
+        drop(lease);
+        assert_eq!(pool.available(), 2);
+    }
+
+    #[tokio::test]
+    async fn an_exhausted_pool_is_an_error_not_a_random_port() {
+        let pool = PortPool::new(7200..=7200);
+        let held = pool.claim().unwrap();
+        assert!(bind_from_pool(&pool).await.is_err());
+        drop(held);
+    }
+
+    /// A fake adb server that answers `host:transport:` then `tcp:5555`, and
+    /// echoes whatever the proxy forwards afterwards — standing in for the
+    /// `adbd` an `adb connect` would be talking to.
+    async fn fake_transport() -> String {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    for _ in 0..2 {
+                        let mut length = [0u8; 4];
+                        if socket.read_exact(&mut length).await.is_err() {
+                            return;
+                        }
+                        let n =
+                            usize::from_str_radix(std::str::from_utf8(&length).unwrap(), 16).unwrap();
+                        let mut service = vec![0u8; n];
+                        socket.read_exact(&mut service).await.unwrap();
+                        socket.write_all(b"OKAY").await.unwrap();
+                    }
+
+                    let mut buffer = [0u8; 64];
+                    while let Ok(n) = socket.read(&mut buffer).await {
+                        if n == 0 || socket.write_all(&buffer[..n]).await.is_err() {
+                            return;
+                        }
+                    }
+                });
+            }
+        });
+
+        addr
+    }
+
+    #[tokio::test]
+    async fn the_debug_proxy_carries_bytes_to_the_device_transport() {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+        let server = fake_transport().await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let task = tokio::spawn(serve_debug_proxy(
+            listener,
+            Adb::new(server),
+            "R5CY82FT35T".to_owned(),
+        ));
+
+        // What `adb connect 127.0.0.1:port` would open.
+        let mut client = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        client.write_all(b"CNXN").await.unwrap();
+
+        let mut echoed = [0u8; 4];
+        client.read_exact(&mut echoed).await.unwrap();
+        assert_eq!(&echoed, b"CNXN");
+
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn the_debug_proxy_survives_a_connection_that_cannot_reach_the_device() {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+        // No adb server at all: the first connection fails, and the listener
+        // must stay up — a phone unplugged mid-debug otherwise takes the port
+        // with it until the session is torn down.
+        let dead = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let dead_addr = dead.local_addr().unwrap().to_string();
+        drop(dead);
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let task = tokio::spawn(serve_debug_proxy(
+            listener,
+            Adb::new(dead_addr),
+            "R5CY82FT35T".to_owned(),
+        ));
+
+        let mut doomed = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        let mut buffer = [0u8; 1];
+        assert_eq!(doomed.read(&mut buffer).await.unwrap(), 0, "closed, not hung");
+
+        let mut second = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        assert!(second.write_all(b"CNXN").await.is_ok());
+
+        task.abort();
     }
 }

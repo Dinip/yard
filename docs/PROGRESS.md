@@ -353,6 +353,11 @@ TTL so the two cannot drift. The popout deliberately does *not* renew — it
 shares the parent tab's reservation, and a popout left open should not keep a
 device nobody is watching.
 
+Fronting a provider at `/p` needs `uri strip_prefix /p` — the provider serves
+`/s/:deviceId` at the root, so an unstripped prefix 404s and the device page
+sits on "Session closed". Caddy's healthcheck probes the admin API now; the old
+one probed `127.0.0.1`, which matches no site once `SITE_ADDRESS` is a hostname.
+
 Also fixed: the app shell hardcoded "Device Farm" in its header, which
 [RENAMING.md](./RENAMING.md) exists to prevent. It reads `APP_NAME` through
 `user.capabilities` now, like the sign-in page always did.
@@ -506,8 +511,12 @@ uneven — `hello` carries a whole inventory — so `emitTaggedUnion` now emits
 `#[allow(clippy::large_enum_variant)]`. Fixing it in the generator rather than
 in `generated.rs`, which is never hand-edited.
 
-**Not yet exercised on real hardware:** the `adb connect` round-trip and the
-Android metadata read.
+**`adb forward` could not serve this.** Exercising it on a containerised
+provider showed the forward binding the adb server's *loopback*, on an ephemeral
+port — unreachable from any other machine, and unpublishable besides. The
+provider runs its own listener now and splices each connection to the device's
+`adbd` over the USB transport, on a port claimed from the `remote_debug.ports`
+pool and returned on release.
 
 ---
 

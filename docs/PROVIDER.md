@@ -334,6 +334,12 @@ that owns the USB transport: `docker-entrypoint.sh` runs `adb start-server`
 before exec'ing the provider. Without it the container has the `adb` binary and
 no server, and every session retries against a refused connection.
 
+**Remote debugging is the provider's own listener**, not `adb forward`, whose
+socket binds the adb server's loopback and so is unreachable from a container.
+Each connection is spliced to the device's `adbd` over the USB transport. Ports
+come from the `remote_debug.ports` pool, claimed while exposed and returned on
+release, because they have to be published by whoever runs the provider.
+
 The scrcpy server is **embedded in the binary** and pushed to the phone at
 session start, so nothing is installed on a provider host for it. It is started
 with `tunnel_forward=true`, which makes it listen on a device-side abstract

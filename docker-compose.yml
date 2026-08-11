@@ -73,7 +73,8 @@ services:
       - caddy-data:/data
       - caddy-config:/config
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1/index.html"]
+      # Probes the admin API: a hostname SITE_ADDRESS makes 127.0.0.1 match no site.
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:2019/config/"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -99,6 +100,9 @@ services:
     restart: unless-stopped
     ports:
       - "${PROVIDER_PORT:-7100}:7100"
+      # Remote debugging draws from this range; keep it and remote_debug.ports
+      # in provider.yaml in step.
+      - "${DEBUG_PORTS:-7200-7249}:${DEBUG_PORTS:-7200-7249}"
     environment:
       FARM_CONFIG: /etc/farm/provider.yaml
       FARM_PROVIDER_TOKEN: ${FARM_PROVIDER_TOKEN:?issue one under /admin/providers}

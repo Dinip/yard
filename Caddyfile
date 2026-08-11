@@ -15,7 +15,11 @@
 	# origin. Traffic passes through Caddy but never through the coordinator.
 	# Multi-machine deploys skip this and let each provider advertise its own
 	# publicBaseUrl with its own terminator.
+	#
+	# The provider mounts its routes at the root, so the prefix must be stripped
+	# or every request 404s. Point its `public_base_url` at https://<host>/p.
 	# handle /p/* {
+	# 	uri strip_prefix /p
 	# 	reverse_proxy provider:7100
 	# }
 
