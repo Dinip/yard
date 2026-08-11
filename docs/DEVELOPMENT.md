@@ -21,8 +21,9 @@ bun run dev:coordinator                            # :3000
 bun run dev:web                                    # :5173
 ```
 
-Open http://localhost:5173, create an account (email/password is enabled by
-default for exactly this), then make yourself an admin:
+Open http://localhost:5173 and create an account (email/password is enabled by
+default for exactly this). The first account on an empty database is an admin
+automatically. To promote anyone after that:
 
 ```bash
 bun --env-file=.env packages/coordinator/src/cli/grant-admin.ts you@example.com

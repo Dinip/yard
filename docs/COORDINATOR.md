@@ -153,8 +153,12 @@ providers dial *out*, this is not a transparent scale-out — it needs Postgres
 
 ## Bootstrapping the first admin
 
-Promoting a user is itself an admin-only action, so the first one comes from the
-CLI:
+Promoting a user is an admin-only action, so an empty farm could never get its
+first admin. The account created on an empty `user` table is therefore made
+`admin` automatically, in a better-auth `user.create.before` hook (`auth.ts`).
+
+Every case after that — a farm whose only admin left, a promotion done out of
+band — uses the CLI:
 
 ```bash
 bun --env-file=.env packages/coordinator/src/cli/grant-admin.ts you@example.com
