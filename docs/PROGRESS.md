@@ -651,6 +651,39 @@ release and confirm the "Session ended" dialog names the admin; set the idle
 timeout to two minutes and leave a session alone, confirming the warning appears
 at ~12s remaining and the reaper's own reason explains the release afterwards.
 
+**That two-minute run was done, and found three bugs — all fixed:**
+
+- **`last_activity_at` was written in the coordinator's local timezone.**
+  `renew` clamps with `greatest(last_activity_at, $interacted)`, and a raw
+  ``sql`` `` parameter skips drizzle's column serializer: the driver renders a
+  `Date` with the server's UTC offset, which `timestamp without time zone`
+  then *drops*, storing local wall clock in a column every other writer —
+  including the provider's own activity reports — fills with UTC. On a UTC+1
+  host the countdown read "releases in 60:14" and the reaper could never
+  reclaim the device. It binds `toISOString()::timestamp` now. The test
+  ("the activity clock is UTC whatever timezone the coordinator runs in")
+  pins `TZ` to Asia/Tokyo, because a UTC test host cannot see this class of
+  bug at all.
+- **The details panel and the warning dialog were two different clocks.** The
+  panel derived its own deadline from `lastActivityAt`; the hook uses
+  `max(lastActivityAt, local interaction)`. The panel therefore hit 0:00 while
+  the dialog beside it still had ~15s. `useReservationRenewal` exposes
+  `idleDeadline` and everything renders that one value — the route calls
+  `useReservationKeeper` (one instance per window, since it drives the
+  heartbeat) and passes the result to `<ReservationKeeper>`.
+- **The countdown only moved when something else re-rendered the page.** It was
+  `Date.now()` evaluated inline, so it sat still between query refetches. A
+  `<Countdown>` component owns the one-second tick, so only the number
+  re-renders. It appears only inside the last 15% of the idle budget
+  (`COUNTDOWN_FRACTION`, just above the 10% that opens the dialog): a number
+  ticking for a whole session, resetting at every touch, is noise, and it is
+  not actionable until the end. Above that the row states the policy alone.
+- **The warning dialog counted past zero.** The reaper sweeps every 30s, so the
+  deadline always passes before the release does, and the dialog sat at 0:00
+  still offering "Keep it" — a button that races a sweep that may already have
+  taken the device. Past zero it says the device is being released and offers
+  only to close.
+
 ### 10.4 Admin joins a session ✅
 
 Force-release was the only thing an admin could do to a session in progress, and

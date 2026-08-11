@@ -1,10 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { ArrowLeft, ExternalLink } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { DeviceConsole } from "@/components/device-console";
-import { formatCountdown, ReservationKeeper } from "@/components/reservation-keeper";
+import {
+  Countdown,
+  ReservationKeeper,
+  useReservationKeeper,
+} from "@/components/reservation-keeper";
 import { SessionEndedDialog } from "@/components/session-ended-dialog";
 import { SidePanel } from "@/components/side-panel";
 import { Badge } from "@/components/ui/badge";
@@ -188,6 +192,10 @@ function DevicePage() {
     if (requestState === "expired") toast("Your request to join went unanswered");
   }, [requestState]);
 
+  // Only the holder renews. Another user's tab must not keep a device they do
+  // not hold alive — but it still gets `idleDeadline`, which needs no renewal.
+  const renewal = useReservationKeeper(device?.reservation, mine);
+
   const [detailsOpen, setDetailsOpen] = useState(() => loadPanelOpen("details"));
   const toggleDetails = () =>
     setDetailsOpen((open) => {
@@ -205,15 +213,7 @@ function DevicePage() {
     // rail do not: a device is used in portrait almost always, and the old page
     // spent its height on chrome and then scrolled.
     <div className="flex min-h-0 flex-1 flex-col gap-3">
-      {/* Only the holder renews. Another user's tab must not keep a device
-          they do not hold alive. */}
-      {mine && (
-        <ReservationKeeper
-          reservationId={device.reservation?.id}
-          expiresAt={device.reservation?.expiresAt}
-          lastActivityAt={device.reservation?.lastActivityAt}
-        />
-      )}
+      {mine && <ReservationKeeper renewal={renewal} />}
       <SessionEndedDialog
         reservationId={heldReservation.current}
         fallbackReason={ended?.reason}
@@ -441,14 +441,22 @@ function DevicePage() {
                 value={new Date(device.reservation.expiresAt).toLocaleTimeString()}
               />
             )}
-            {device.reservation && policy?.idleTimeoutSeconds != null && (
+            {policy?.idleTimeoutSeconds != null && renewal.idleDeadline !== null && (
               <Detail
                 label="Idle timeout"
-                value={`${Math.round(policy.idleTimeoutSeconds / 60)} min · releases in ${formatCountdown(
-                  new Date(device.reservation.lastActivityAt).getTime() +
-                    policy.idleTimeoutSeconds * 1000 -
-                    Date.now(),
-                )}`}
+                value={
+                  <>
+                    {Math.round(policy.idleTimeoutSeconds / 60)} min
+                    {/* Only once the deadline is near: a countdown ticking all
+                        session long, resetting at every touch, is noise. */}
+                    {renewal.nearing && (
+                      <>
+                        {" · releases in "}
+                        <Countdown deadline={renewal.idleDeadline} />
+                      </>
+                    )}
+                  </>
+                }
               />
             )}
 
@@ -769,7 +777,7 @@ function differing(value: string | null | undefined, against: string | null | un
   return value.toLowerCase() === (against ?? "").toLowerCase() ? null : value;
 }
 
-function Detail({ label, value, mono }: { label: string; value?: string | null; mono?: boolean }) {
+function Detail({ label, value, mono }: { label: string; value?: ReactNode; mono?: boolean }) {
   if (!value) return null;
   return (
     <div className="flex justify-between gap-4">

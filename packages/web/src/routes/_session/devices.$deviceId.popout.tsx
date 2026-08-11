@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { DeviceConsole } from "@/components/device-console";
-import { ReservationKeeper } from "@/components/reservation-keeper";
+import { ReservationKeeper, useReservationKeeper } from "@/components/reservation-keeper";
 import { SessionEndedDialog } from "@/components/session-ended-dialog";
 import { usePopoutHeartbeat } from "@/hooks/use-popout-presence";
 import { trpc } from "@/lib/trpc";
@@ -50,6 +50,8 @@ function PopoutPage() {
   // for the stream back.
   usePopoutHeartbeat(deviceId, inSession);
 
+  const renewal = useReservationKeeper(device?.reservation, mine);
+
   if (!device) return null;
 
   return (
@@ -68,13 +70,7 @@ function PopoutPage() {
           device nobody is watching — but that guard cost a user who closed the
           parent tab their device mid-session, and the idle timeout is the real
           backstop for the case it was written for. */}
-      {mine && (
-        <ReservationKeeper
-          reservationId={device.reservation?.id}
-          expiresAt={device.reservation?.expiresAt}
-          lastActivityAt={device.reservation?.lastActivityAt}
-        />
-      )}
+      {mine && <ReservationKeeper renewal={renewal} />}
       {inSession ? (
         <DeviceConsole
           deviceId={deviceId}

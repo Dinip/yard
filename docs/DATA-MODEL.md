@@ -9,6 +9,13 @@ bun run db:generate   # after editing schema — writes packages/db/drizzle/*.sq
 bun run db:migrate    # apply
 ```
 
+**Every timestamp column is `timestamp without time zone` holding UTC.** Drizzle
+serializes a `Date` to ISO, so column assignment is always right; a `Date`
+interpolated into a raw ``sql`` `` fragment is **not** — the driver renders it
+with the process's local offset, which Postgres then drops on the way into the
+column, silently storing local wall clock. Bind `date.toISOString()::timestamp`
+in raw SQL. `reservation.lastActivityAt` shipped with this bug.
+
 ## better-auth tables (`auth.ts`)
 
 `user`, `session`, `account`, `verification`, plus the `admin` plugin's
