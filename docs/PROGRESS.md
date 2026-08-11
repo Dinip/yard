@@ -678,6 +678,13 @@ at ~12s remaining and the reaper's own reason explains the release afterwards.
   (`COUNTDOWN_FRACTION`, just above the 10% that opens the dialog): a number
   ticking for a whole session, resetting at every touch, is noise, and it is
   not actionable until the end. Above that the row states the policy alone.
+- **The popout never learned its session had ended.** It had no
+  `useDeviceStream` of its own — the opener's does not reach another window —
+  and no `refetchInterval`, so the only thing that could tell it was a
+  `session.revoke` over the session socket. An idle release therefore left the
+  window streaming a device the holder no longer had, with the warning dialog
+  still up and nothing to click. It subscribes now, and treats a session that
+  has left the inventory as ended however it learned it.
 - **The warning dialog counted past zero.** The reaper sweeps every 30s, so the
   deadline always passes before the release does, and the dialog sat at 0:00
   still offering "Keep it" — a button that races a sweep that may already have

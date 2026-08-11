@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { DeviceConsole } from "@/components/device-console";
 import { ReservationKeeper, useReservationKeeper } from "@/components/reservation-keeper";
 import { SessionEndedDialog } from "@/components/session-ended-dialog";
+import { useDeviceStream } from "@/hooks/use-device-stream";
 import { usePopoutHeartbeat } from "@/hooks/use-popout-presence";
 import { trpc } from "@/lib/trpc";
 
@@ -24,7 +25,14 @@ export const Route = createFileRoute("/_session/devices/$deviceId/popout")({
 
 function PopoutPage() {
   const { deviceId } = Route.useParams();
-  const { data: device } = useQuery(trpc.device.get.queryOptions({ id: deviceId }));
+  // Its own subscription: the opener's does not reach this window, and without
+  // one the only thing that could say the session was over was a `session.revoke`
+  // over the session socket — nothing at all if that socket is already down.
+  const { pollInterval } = useDeviceStream();
+  const { data: device } = useQuery({
+    ...trpc.device.get.queryOptions({ id: deviceId }),
+    refetchInterval: pollInterval,
+  });
   const { data: me } = useQuery(trpc.user.me.queryOptions());
 
   useEffect(() => {
@@ -45,6 +53,15 @@ function PopoutPage() {
 
   const [ended, setEnded] = useState<{ reason?: string } | null>(null);
   const onRevoked = useCallback((reason?: string) => setEnded({ reason }), []);
+
+  // A session that is gone from the inventory ended, whatever the socket did or
+  // did not say. `SessionEndedDialog` reads the reason off the reservation, so
+  // this still explains itself.
+  const hadSession = useRef(false);
+  useEffect(() => {
+    if (inSession) hadSession.current = true;
+    else if (hadSession.current) setEnded((previous) => previous ?? {});
+  }, [inSession]);
 
   // Tells the parent tab to stand down, and closes this window when it asks
   // for the stream back.
