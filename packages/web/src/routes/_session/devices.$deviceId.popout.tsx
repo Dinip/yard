@@ -1,10 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { DeviceConsole } from "@/components/device-console";
-import { ReservationKeeper } from "@/components/reservation-keeper";
+import { ReservationKeeper, useReservationKeeper } from "@/components/reservation-keeper";
 import { SessionEndedDialog } from "@/components/session-ended-dialog";
+import { useDeviceStream } from "@/hooks/use-device-stream";
 import { usePopoutHeartbeat } from "@/hooks/use-popout-presence";
+import { useSessionEnded } from "@/hooks/use-session-ended";
 import { trpc } from "@/lib/trpc";
 
 /**
@@ -24,7 +26,14 @@ export const Route = createFileRoute("/_session/devices/$deviceId/popout")({
 
 function PopoutPage() {
   const { deviceId } = Route.useParams();
-  const { data: device } = useQuery(trpc.device.get.queryOptions({ id: deviceId }));
+  // Its own subscription: the opener's does not reach this window, and without
+  // one the only thing that could say the session was over was a `session.revoke`
+  // over the session socket — nothing at all if that socket is already down.
+  const { pollInterval } = useDeviceStream();
+  const { data: device } = useQuery({
+    ...trpc.device.get.queryOptions({ id: deviceId }),
+    refetchInterval: pollInterval,
+  });
   const { data: me } = useQuery(trpc.user.me.queryOptions());
 
   useEffect(() => {
@@ -43,12 +52,13 @@ function PopoutPage() {
   const heldReservation = useRef<string | undefined>(undefined);
   if (device?.reservation?.id) heldReservation.current = device.reservation.id;
 
-  const [ended, setEnded] = useState<{ reason?: string } | null>(null);
-  const onRevoked = useCallback((reason?: string) => setEnded({ reason }), []);
+  const { ended, reportEnded } = useSessionEnded(inSession);
 
   // Tells the parent tab to stand down, and closes this window when it asks
   // for the stream back.
   usePopoutHeartbeat(deviceId, inSession);
+
+  const renewal = useReservationKeeper(device?.reservation, mine);
 
   if (!device) return null;
 
@@ -68,13 +78,7 @@ function PopoutPage() {
           device nobody is watching — but that guard cost a user who closed the
           parent tab their device mid-session, and the idle timeout is the real
           backstop for the case it was written for. */}
-      {mine && (
-        <ReservationKeeper
-          reservationId={device.reservation?.id}
-          expiresAt={device.reservation?.expiresAt}
-          lastActivityAt={device.reservation?.lastActivityAt}
-        />
-      )}
+      {mine && <ReservationKeeper renewal={renewal} />}
       {inSession ? (
         <DeviceConsole
           deviceId={deviceId}
@@ -82,7 +86,7 @@ function PopoutPage() {
           active
           className="flex-1"
           controls="overlay"
-          onRevoked={onRevoked}
+          onRevoked={reportEnded}
         />
       ) : (
         <div className="flex flex-1 items-center justify-center text-center text-muted-foreground text-sm">

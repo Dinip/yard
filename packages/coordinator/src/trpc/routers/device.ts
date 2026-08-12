@@ -304,7 +304,10 @@ export const deviceRouter = router({
           expiresAt: await expiryFromNow(ctx.db),
           ...(interacted
             ? {
-                lastActivityAt: sql`greatest(${reservation.lastActivityAt}, ${interacted})`,
+                // ISO, not the Date: a raw `sql` parameter skips drizzle's
+                // column serializer, and the driver's rendering of a Date
+                // stores local wall clock in a UTC column.
+                lastActivityAt: sql`greatest(${reservation.lastActivityAt}, ${interacted.toISOString()}::timestamp)`,
               }
             : {}),
         })

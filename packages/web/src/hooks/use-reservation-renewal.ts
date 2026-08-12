@@ -20,6 +20,15 @@ const INTERACTION_RESOLUTION = 1_000;
 /** Warn once this little of the idle budget is left. */
 const WARN_FRACTION = 0.1;
 
+/**
+ * Start showing the deadline a little before warning about it.
+ *
+ * A per-second countdown on screen for a whole session is noise — it resets on
+ * every interaction, and the number is not actionable until the end. Above this
+ * the UI says the policy and nothing more.
+ */
+const COUNTDOWN_FRACTION = 0.15;
+
 /** What the browser counts as someone using the tab. */
 const INTERACTION_EVENTS = ["pointerdown", "keydown", "paste", "wheel"] as const;
 
@@ -27,11 +36,19 @@ export interface ReservationRenewal {
   /** Renewals are failing — the reservation may already be gone. */
   failed: boolean;
   /**
+   * When the idle timeout will release the device, as an epoch millisecond.
+   * Anything showing the user that deadline renders this, rather than deriving
+   * its own from `lastActivityAt` — that one lags by any unpushed interaction.
+   */
+  idleDeadline: number | null;
+  /**
    * Milliseconds until the idle timeout releases the device, or `null` when no
    * idle policy is configured.
    */
   idleRemainingMs: number | null;
-  /** Whether the idle deadline is close enough to ask the user about it. */
+  /** Whether the idle deadline is close enough to be worth putting on screen. */
+  nearing: boolean;
+  /** Whether it is close enough to ask the user about it. */
   warning: boolean;
   /** "Keep it" — pushes the deadline out without touching the device. */
   keepAlive: () => void;
@@ -128,8 +145,8 @@ export function useReservationRenewal(
     idle?.lastActivityAt ? new Date(idle.lastActivityAt).getTime() : 0,
     interactedAt ?? 0,
   );
-  const idleRemainingMs =
-    timeoutMs === null || lastActivity === 0 ? null : lastActivity + timeoutMs - now;
+  const idleDeadline = timeoutMs === null || lastActivity === 0 ? null : lastActivity + timeoutMs;
+  const idleRemainingMs = idleDeadline === null ? null : idleDeadline - now;
 
   // Interacting inside the warning band has to reach the *server*, not just
   // this hook's arithmetic: the reaper reads the database, and the scheduled
@@ -142,11 +159,15 @@ export function useReservationRenewal(
     renewNow();
   }, [interactedAt, timeoutMs, renewNow]);
 
+  const within = (fraction: number) =>
+    idleRemainingMs !== null && timeoutMs !== null && idleRemainingMs < timeoutMs * fraction;
+
   return {
     failed: renew.isError,
+    idleDeadline,
     idleRemainingMs,
-    warning:
-      idleRemainingMs !== null && timeoutMs !== null && idleRemainingMs < timeoutMs * WARN_FRACTION,
+    nearing: within(COUNTDOWN_FRACTION),
+    warning: within(WARN_FRACTION),
     keepAlive: () => {
       setInteractedAt(Date.now());
       lastPushRef.current = Date.now();

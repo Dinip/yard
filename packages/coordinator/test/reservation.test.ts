@@ -578,6 +578,24 @@ describe("the idle timeout", () => {
     expect(row?.lastActivityAt.getTime()).toBeLessThanOrEqual(Date.now());
   });
 
+  // Pinned away from UTC: a UTC test host cannot see this class of bug at all,
+  // and the column is written by two sources, so a disagreement is silent.
+  test("the activity clock is UTC whatever timezone the coordinator runs in", async () => {
+    await resetDevice();
+    const tz = process.env.TZ;
+    process.env.TZ = "Asia/Tokyo";
+    try {
+      const caller = callerFor(USERS[0]);
+      const held = await caller.device.reserve({ deviceId: DEVICE_ID });
+      await caller.device.renew({ reservationId: held.id, interactedAt: Date.now() });
+
+      const [row] = await db.select().from(reservation).where(eq(reservation.id, held.id)).limit(1);
+      expect(Math.abs(row!.lastActivityAt.getTime() - Date.now())).toBeLessThan(5_000);
+    } finally {
+      process.env.TZ = tz;
+    }
+  });
+
   test("the maximum session length releases a device however busy it is", async () => {
     await resetDevice();
     await setSetting(db, "reservation.maxDurationSeconds", 60, USERS[0]);
