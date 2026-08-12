@@ -1,14 +1,22 @@
 # Reference sources
 
-Three read-only repositories live **outside** this one, as siblings on disk:
+Four read-only repositories live **outside** this one, as siblings on disk:
 
 ```
 ~/dev/farm/
 ├── device-farm/         ← this repo
-├── stf/                 DeviceFarmer STF 3.7.1 — the system being replaced
+├── stf/                 our fork of STF, 3.7.1 — the deployment being replaced
+├── stf-device-farmer/   upstream DeviceFarmer STF, 3.7.9 — read this one first
 ├── stf-ios-provider/    Rust iOS provider — the device layer being kept
 └── idevice/             Rust CoreDevice/lockdown library used by the above
 ```
+
+The two STF checkouts are the same project eight patch releases apart. `stf/` is
+what is actually in production here, so it settles "what does our farm do
+today"; `stf-device-farmer/` is upstream and usually has the more developed
+version of any given mechanism, so it settles "how did they end up solving
+this". When they disagree, say which one you read — the [cleanup
+analysis](CLEANUP.md#what-stf-does) is written against both.
 
 They are **not vendored and not submodules**. They are reference material: read
 them, port from them, do not depend on them. Nothing in this repo may `import`
@@ -51,6 +59,7 @@ Worth reading anyway, for the parts that encode real operational knowledge:
 | `lib/units/device/plugins/connect.js`, `remotedebug.js` | The adb transport-proxy trick reimplemented in `backend-android` |
 | `lib/units/ios-device/plugins/group.js` | The ownership model being deliberately abandoned — read it to understand why device-owned arbitration needs idle timers |
 | `lib/units/poorxy` | The MJPEG proxy that made the app server the bottleneck. The thing this architecture exists to avoid |
+| `lib/units/device/plugins/cleanup.js` | Resetting a device between users. Ported in spirit, not in code — see [CLEANUP.md](CLEANUP.md) for what it does and the four bugs not to inherit |
 
 ## `idevice/`
 

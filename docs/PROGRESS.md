@@ -1304,6 +1304,27 @@ full in the dialog, and `/providers` redirects.
 
 ---
 
+## Phase 16 — cleaning a device between users 🚧
+
+*Done when: a device released by any path is reset by its provider before it
+becomes reservable, an admin chooses which steps run, and no failure anywhere
+can leave a device parked out of the pool.*
+
+Until now a released device went straight back to `ready` carrying whatever the
+last user left on it. STF had a mechanism for this; the design ports its intent
+and deliberately not its implementation — see [CLEANUP.md](./CLEANUP.md) for
+what `cleanup.js` does and the four bugs not to inherit.
+
+| Item | State | Where |
+|---|---|---|
+| STF analysis + design written up | ✅ | `docs/CLEANUP.md`, `docs/REFERENCES.md` |
+| `cleaning` device status, `device.cleanup`, `cleanup.finished` | ⬜ | `packages/protocol`, `packages/db` |
+| Backend primitives + cleanup orchestrator, under a deadline | ⬜ | `provider-core`, all three backends |
+| `releaseActive` holds the device; reaper unsticks a stale one | ⬜ | `.../lib/reservations.ts` |
+| Settings card + `cleaning` treatment in the UI | ⬜ | `packages/web` |
+
+---
+
 ## Open decisions
 
 - **Name.** The project is "Device Farm" as a placeholder. See
