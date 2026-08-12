@@ -79,10 +79,6 @@ export async function releaseActive(
   await expirePendingRequests(db, reservationIds);
 
   const ids = released.map((row) => row.deviceId);
-  await db
-    .update(device)
-    .set({ status: "ready" })
-    .where(and(inArray(device.id, ids), eq(device.status, "busy")));
 
   if (options.revoke !== false) {
     // Revocation is a push, not a token-expiry side effect: live viewers must
@@ -92,13 +88,44 @@ export async function releaseActive(
       .from(device)
       .where(inArray(device.id, ids));
 
+    const settings = await getSettings(db);
+    const cleaned: string[] = [];
+
     for (const row of rows) {
-      providers.get(row.providerId)?.commandNoWait({
+      const conn = providers.get(row.providerId);
+      if (!conn) continue;
+
+      conn.commandNoWait({
         kind: "session.revoke",
         deviceId: row.id,
         reason: options.reason,
       });
+
+      // Hold the device out of the pool until its provider says it is clean.
+      // The provider answers with a `device.status`, so nothing here waits: a
+      // multi-package uninstall runs far past any request this could sit in.
+      if (settings["cleanup.enabled"]) {
+        cleaned.push(row.id);
+        conn.commandNoWait({
+          kind: "device.cleanup",
+          deviceId: row.id,
+          steps: {
+            uninstallApps: settings["cleanup.uninstallApps"],
+            resetScreen: settings["cleanup.resetScreen"],
+            clearAppData: settings["cleanup.clearAppData"],
+            wipeFolders: settings["cleanup.wipeFolders"],
+          },
+          timeoutSeconds: settings["cleanup.timeoutSeconds"],
+        });
+      }
     }
+
+    await markFreed(db, ids, cleaned);
+  } else {
+    // The provider is gone, so there is nothing to send a cleanup to and the
+    // device is about to be reconciled to `absent` anyway. Marking it
+    // `cleaning` here would park it until the reaper noticed.
+    await markFreed(db, ids, []);
   }
 
   if (options.auditAction) {
@@ -152,6 +179,36 @@ async function expirePendingRequests(db: Database, reservationIds: string[]) {
     );
 }
 
+/**
+ * Move each freed device out of `busy` — to `cleaning` if its provider was sent
+ * one, otherwise straight back into the pool.
+ *
+ * Guarded on `busy` in both cases so a device whose status has already moved on
+ * — unplugged, unhealthy, reconciled away by a `hello` — is not dragged back.
+ *
+ * `updatedAt` is stamped rather than left alone because it is what
+ * [`sweepStuckCleaning`] measures: without it, "cleaning since" would be
+ * whenever the row last happened to be touched.
+ */
+async function markFreed(db: Database, ids: string[], cleaning: string[]) {
+  const cleaningSet = new Set(cleaning);
+  const ready = ids.filter((id) => !cleaningSet.has(id));
+  const now = new Date();
+
+  if (ready.length) {
+    await db
+      .update(device)
+      .set({ status: "ready", updatedAt: now })
+      .where(and(inArray(device.id, ready), eq(device.status, "busy")));
+  }
+  if (cleaning.length) {
+    await db
+      .update(device)
+      .set({ status: "cleaning", updatedAt: now })
+      .where(and(inArray(device.id, cleaning), eq(device.status, "busy")));
+  }
+}
+
 /** How often the reaper looks. */
 const SWEEP_INTERVAL = 30_000;
 
@@ -192,6 +249,37 @@ async function sweepCondition(
 
   if (released.length) {
     console.log(`[reaper] ${options.reason}: released ${released.length} reservation(s)`);
+  }
+}
+
+/**
+ * Return devices that have sat in `cleaning` too long.
+ *
+ * The provider guarantees it leaves `cleaning` under its own deadline, so this
+ * only fires when the provider itself died mid-clean — and a device nobody can
+ * reserve is worse than a device that did not finish being wiped. The grace
+ * period on top of the timeout is for the round trip and a slow `hello`.
+ *
+ * `ready` rather than `unhealthy`: a provider that is still connected has been
+ * reporting this device's health all along, and if it is gone the next `hello`
+ * reconcile settles the question properly.
+ */
+async function sweepStuckCleaning(db: Database, timeoutSeconds: number, now: Date) {
+  const deadline = new Date(now.getTime() - (timeoutSeconds + 60) * 1000);
+
+  const stuck = await db
+    .update(device)
+    .set({ status: "ready" })
+    .where(and(eq(device.status, "cleaning"), lt(device.updatedAt, deadline)))
+    .returning({ id: device.id });
+
+  if (stuck.length) {
+    console.warn(
+      `[reaper] returned ${stuck.length} device(s) stuck in cleaning: ${stuck
+        .map((row) => row.id)
+        .join(", ")}`,
+    );
+    deviceEvents.publish();
   }
 }
 
@@ -247,6 +335,8 @@ export function startReservationReaper(db: Database) {
           auditAction: "device.reservation_max_duration",
         });
       }
+
+      await sweepStuckCleaning(db, settings["cleanup.timeoutSeconds"], now);
 
       // Unanswered requests to join. A plain UPDATE rather than a
       // `sweepCondition`: nothing is being released, so there is no session to

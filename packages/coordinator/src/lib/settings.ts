@@ -44,6 +44,33 @@ export const SETTINGS = {
     schema: OPTIONAL_SECONDS,
     default: () => null,
   },
+
+  /**
+   * Resetting a device between users. Off until an admin turns it on, because
+   * what counts as "clean" depends on what the devices are for — see
+   * docs/CLEANUP.md.
+   */
+  "cleanup.enabled": { schema: z.boolean(), default: () => false },
+  /** Uninstall apps that appeared during the session. */
+  "cleanup.uninstallApps": { schema: z.boolean(), default: () => true },
+  /** Home, rotation back to 0, clipboard cleared. */
+  "cleanup.resetScreen": { schema: z.boolean(), default: () => true },
+  /**
+   * `pm clear` on surviving third-party apps. Off by default: the third-party
+   * list includes anything the organisation preinstalled — a test harness, an
+   * MDM agent — and wiping its data is a decision, not a default.
+   */
+  "cleanup.clearAppData": { schema: z.boolean(), default: () => false },
+  /** Empty the folders each provider was configured with. */
+  "cleanup.wipeFolders": { schema: z.boolean(), default: () => false },
+  /**
+   * Whole-run deadline. The provider returns the device whatever happens; this
+   * decides how long it may hold it first.
+   */
+  "cleanup.timeoutSeconds": {
+    schema: z.number().int().min(10).max(600),
+    default: () => 120,
+  },
 } as const satisfies Record<string, { schema: z.ZodTypeAny; default: () => unknown }>;
 
 export type SettingKey = keyof typeof SETTINGS;
