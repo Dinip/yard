@@ -389,6 +389,9 @@ pub trait DeviceBackend: Send + Sync + 'static {
     async fn remote_debug(&self) -> Result<RemoteDebug>;      // android only
     async fn restart(&self) -> Result<()>;
     async fn is_healthy(&self) -> bool;
+    async fn clear_app_data(&self, app_id: &str) -> Result<()>;   // cleanup
+    async fn reset_screen(&self) -> Result<()>;                   // cleanup
+    async fn wipe_paths(&self, paths: &[String]) -> Result<()>;   // cleanup
     async fn metrics(&self, apps: &AppFilter) -> Result<DeviceMetrics>;
 }
 ```
@@ -398,6 +401,14 @@ streamed to disk. `pull_file` takes one for the mirror-image reason: it writes
 into the scratch directory rather than answering `Vec<u8>`, so a video coming
 off a phone never sits in the provider's memory. The handler serves that file
 and deletes it with the response body.
+
+The three cleanup members are narrow on purpose: the ordering, the deadline, the
+status transitions and the report all live once in `cleanup.rs`, and a backend
+only declares what it can physically do. Each defaults to `Unsupported`, which
+the orchestrator treats as "not applicable here" rather than a failure — iOS has
+no `pm clear`. The paths `wipe_paths` acts on come from the device's own
+`cleanup_paths` in `provider.yaml`, guarded against `/system` and friends at
+config load. See [CLEANUP.md](CLEANUP.md).
 
 `files_root` is what a backend says about its own reach, rather than the web app
 branching on a platform, and a backend that answers `None` makes `/files` a 501.

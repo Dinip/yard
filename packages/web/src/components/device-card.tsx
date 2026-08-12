@@ -8,6 +8,9 @@ import { cn, platformLabel } from "@/lib/utils";
 const STATUS_STYLES: Record<string, string> = {
   ready: "bg-success/15 text-success border-success/30",
   busy: "bg-warning/15 text-warning border-warning/30",
+  // Transient and about to be ready, not broken — so it reads as work in
+  // progress rather than borrowing the destructive palette.
+  cleaning: "bg-info/15 text-info border-info/30",
   preparing: "bg-muted text-muted-foreground",
   present: "bg-muted text-muted-foreground",
   unhealthy: "bg-destructive/15 text-destructive border-destructive/30",

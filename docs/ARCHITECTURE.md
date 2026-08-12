@@ -112,6 +112,7 @@ merely hands to the browser.
 | Provider socket drops | Its devices flip to `absent`; its reservations release. |
 | Device unplugged mid-session | Backend reports unhealthy; the UI shows it rather than a frozen frame. |
 | Two users reserve at once | Postgres partial unique index picks one winner; the loser gets `CONFLICT`. |
+| Cleanup fails, hangs, or its provider dies | The device lands on `ready` regardless — under the provider's own deadline, or the coordinator's sweep if the provider is gone. Cleanup can never strand a device. |
 
 ## Reservations replace STF's group model
 
@@ -131,4 +132,5 @@ the JWT in each session connect against it. No arbitration, no timers on-device.
 - [WEB.md](./WEB.md) — the SPA
 - [PROVIDER.md](./PROVIDER.md) — the Rust provider (phases 3–4)
 - [PROTOCOL.md](./PROTOCOL.md) — wire contract (phase 2)
+- [CLEANUP.md](./CLEANUP.md) — resetting a device between users
 - [REFERENCES.md](./REFERENCES.md) — what to read in the STF / stf-ios-provider sources

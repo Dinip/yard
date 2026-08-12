@@ -93,6 +93,7 @@ command dispatch.
 | `device.status` / `.display` / `.battery` | Targeted field updates |
 | `command.result` | Settles the correlated pending command |
 | `install.finished` | Written to `auditLog` — the file is already deleted |
+| `cleanup.finished` | Written to `auditLog` — what a between-users reset removed, cleared, wiped and failed at |
 | `file.pulled` | Written to `auditLog` — bytes left the device and the coordinator was not on the path |
 
 ### coordinator → provider (`CoordinatorMessage`)
@@ -103,11 +104,17 @@ and `webOrigins` — the browser origins the provider may serve; see below),
 `ping`, and `command` — whose `payload` is one of:
 
 `session.authorize` · `session.revoke` · `device.reboot` · `device.rotate` ·
-`device.apps` · `device.launch` · `device.uninstall` · `device.adb.expose` ·
-`device.adb.unexpose` · `device.restart`
+`device.apps` · `device.launch` · `device.uninstall` · `device.cleanup` ·
+`device.adb.expose` · `device.adb.unexpose` · `device.restart`
 
 Every command is correlated by id and bounded by a 15s timeout — a provider that
 accepts a command and never answers must not wedge the caller.
+
+`device.cleanup` is the one deliberately sent fire-and-forget, because a
+multi-package uninstall runs far past that timeout. It carries the farm's
+`CleanupSteps` and a deadline; the device's return to `ready` arrives as an
+ordinary `device.status`, and the report as `cleanup.finished`. See
+[CLEANUP.md](CLEANUP.md).
 
 ### Reconcile, don't patch
 

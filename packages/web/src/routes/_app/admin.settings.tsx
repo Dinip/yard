@@ -6,9 +6,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { trpc } from "@/lib/trpc";
 import type { RouterInputs } from "@/lib/types";
-import { relativeTime } from "@/lib/utils";
+import { cn, relativeTime } from "@/lib/utils";
 
 type SettingKey = RouterInputs["settings"]["set"]["key"];
 
@@ -99,7 +100,185 @@ function SettingsPage() {
           />
         </CardContent>
       </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Cleanup between users</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-6">
+          <ToggleSetting
+            id="cleanup-enabled"
+            label="Reset devices when a reservation ends"
+            help="The device is held out of the pool while its provider resets it, and comes back when that finishes. A provider that dies mid-clean cannot strand a device — it is returned automatically."
+            checked={data.values["cleanup.enabled"]}
+            pending={save.isPending}
+            onChange={(value) => save.mutate({ key: "cleanup.enabled", value })}
+            changed={changedAt("cleanup.enabled")}
+          />
+
+          {/* The steps stay visible when cleanup is off, greyed rather than
+              hidden: an admin turning this on needs to see what they are about
+              to switch on before they switch it on. */}
+          <div
+            className={cn(
+              "grid gap-6 border-l pl-4",
+              !data.values["cleanup.enabled"] && "pointer-events-none opacity-50",
+            )}
+          >
+            <ToggleSetting
+              id="cleanup-uninstall"
+              label="Uninstall apps installed during the session"
+              help="Anything that appeared since the session started. Apps the device already had are left alone, and if the provider restarted mid-session it declines to guess."
+              checked={data.values["cleanup.uninstallApps"]}
+              pending={save.isPending}
+              onChange={(value) => save.mutate({ key: "cleanup.uninstallApps", value })}
+              changed={changedAt("cleanup.uninstallApps")}
+            />
+            <ToggleSetting
+              id="cleanup-screen"
+              label="Reset the screen"
+              help="Back to the home screen, rotation upright, clipboard cleared."
+              checked={data.values["cleanup.resetScreen"]}
+              pending={save.isPending}
+              onChange={(value) => save.mutate({ key: "cleanup.resetScreen", value })}
+              changed={changedAt("cleanup.resetScreen")}
+            />
+            <ToggleSetting
+              id="cleanup-data"
+              label="Clear app data"
+              help="Wipes the data of every third-party app left on the device — accounts, caches, settings. Android only. Off by default because that list includes anything preinstalled across your fleet, such as a test harness."
+              checked={data.values["cleanup.clearAppData"]}
+              pending={save.isPending}
+              onChange={(value) => save.mutate({ key: "cleanup.clearAppData", value })}
+              changed={changedAt("cleanup.clearAppData")}
+            />
+            <ToggleSetting
+              id="cleanup-folders"
+              label="Empty scratch folders"
+              help="Which folders is set per device in each provider's config, not here — these end in a recursive delete on a phone. A device with none configured skips this."
+              checked={data.values["cleanup.wipeFolders"]}
+              pending={save.isPending}
+              onChange={(value) => save.mutate({ key: "cleanup.wipeFolders", value })}
+              changed={changedAt("cleanup.wipeFolders")}
+            />
+
+            <SecondsSetting
+              id="cleanup-timeout"
+              label="Cleanup deadline"
+              help="How long a provider may hold a device before giving up and returning it anyway. A partial reset is reported in the audit log."
+              seconds={data.values["cleanup.timeoutSeconds"]}
+              pending={save.isPending}
+              onSave={(seconds) => save.mutate({ key: "cleanup.timeoutSeconds", value: seconds })}
+              changed={changedAt("cleanup.timeoutSeconds")}
+            />
+          </div>
+        </CardContent>
+      </Card>
     </div>
+  );
+}
+
+function ToggleSetting({
+  id,
+  label,
+  help,
+  checked,
+  pending,
+  onChange,
+  changed,
+}: {
+  id: string;
+  label: string;
+  help: string;
+  checked: boolean;
+  pending: boolean;
+  onChange: (value: boolean) => void;
+  changed?: { updatedAt: string | Date; updatedByName: string | null };
+}) {
+  return (
+    <div className="grid gap-1.5">
+      <div className="flex items-center gap-3">
+        <Switch id={id} checked={checked} disabled={pending} onCheckedChange={onChange} />
+        <Label htmlFor={id}>{label}</Label>
+      </div>
+      <p className="max-w-2xl text-muted-foreground text-xs">{help}</p>
+      <ChangedNote changed={changed} />
+    </div>
+  );
+}
+
+/**
+ * A duration in seconds rather than minutes.
+ *
+ * The reservation policies above are all human-scale — "half an hour" — but a
+ * cleanup deadline is a machine one, and rounding it to minutes would make the
+ * difference between 90 and 120 seconds unexpressible.
+ */
+function SecondsSetting({
+  id,
+  label,
+  help,
+  seconds,
+  pending,
+  onSave,
+  changed,
+}: {
+  id: string;
+  label: string;
+  help: string;
+  seconds: number;
+  pending: boolean;
+  onSave: (seconds: number) => void;
+  changed?: { updatedAt: string | Date; updatedByName: string | null };
+}) {
+  const [draft, setDraft] = useState(String(seconds));
+
+  useEffect(() => {
+    setDraft(String(seconds));
+  }, [seconds]);
+
+  const parsed = Number(draft);
+  const invalid = !Number.isInteger(parsed) || parsed < 10 || parsed > 600;
+  const dirty = parsed !== seconds;
+
+  return (
+    <div className="grid gap-1.5">
+      <Label htmlFor={id}>{label}</Label>
+      <div className="flex items-center gap-2">
+        <Input
+          id={id}
+          inputMode="numeric"
+          className="w-32"
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+        />
+        <span className="text-muted-foreground text-sm">seconds</span>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={pending || invalid || !dirty}
+          onClick={() => onSave(parsed)}
+        >
+          Save
+        </Button>
+      </div>
+      <p className="max-w-2xl text-muted-foreground text-xs">{help}</p>
+      <ChangedNote changed={changed} />
+    </div>
+  );
+}
+
+function ChangedNote({
+  changed,
+}: {
+  changed?: { updatedAt: string | Date; updatedByName: string | null };
+}) {
+  if (!changed) return null;
+  return (
+    <p className="text-muted-foreground text-xs">
+      Changed {relativeTime(changed.updatedAt)}
+      {changed.updatedByName ? ` by ${changed.updatedByName}` : ""}
+    </p>
   );
 }
 
@@ -168,12 +347,7 @@ function DurationSetting({
         </Button>
       </div>
       <p className="max-w-2xl text-muted-foreground text-xs">{help}</p>
-      {changed && (
-        <p className="text-muted-foreground text-xs">
-          Changed {relativeTime(changed.updatedAt)}
-          {changed.updatedByName ? ` by ${changed.updatedByName}` : ""}
-        </p>
-      )}
+      <ChangedNote changed={changed} />
     </div>
   );
 }

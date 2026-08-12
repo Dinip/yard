@@ -30,6 +30,7 @@
   --ring: oklch(0.708 0 0);
   --success: oklch(0.63 0.17 149);
   --warning: oklch(0.75 0.16 70);
+  --info: oklch(0.6 0.15 250);
 }
 
 .dark {
@@ -54,6 +55,7 @@
   --ring: oklch(0.556 0 0);
   --success: oklch(0.7 0.16 150);
   --warning: oklch(0.8 0.15 75);
+  --info: oklch(0.68 0.14 250);
 }
 
 @theme inline {
@@ -78,6 +80,7 @@
   --color-ring: var(--ring);
   --color-success: var(--success);
   --color-warning: var(--warning);
+  --color-info: var(--info);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
