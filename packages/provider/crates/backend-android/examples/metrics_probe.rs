@@ -69,8 +69,14 @@ async fn main() -> anyhow::Result<()> {
         println!(
             "--- thermal ---\nno readable zones ({} type lines, {} temp lines) — \
              normal on an unrooted retail device\n",
-            section("ztype").lines().filter(|l| !l.trim().is_empty()).count(),
-            section("ztemp").lines().filter(|l| !l.trim().is_empty()).count(),
+            section("ztype")
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .count(),
+            section("ztemp")
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .count(),
         );
     } else {
         println!("--- thermal ---");
@@ -82,13 +88,19 @@ async fn main() -> anyhow::Result<()> {
 
     let dump = adb.shell(&device.serial, "dumpsys meminfo").await?;
     let processes = metrics::parse_meminfo_pss(&dump);
-    println!("--- processes ---\n{} parsed out of the PSS section", processes.len());
+    println!(
+        "--- processes ---\n{} parsed out of the PSS section",
+        processes.len()
+    );
 
     let filter = AppFilter::new(&patterns);
     if patterns.is_empty() {
         println!("(no patterns given; showing the five largest)");
         for (pid, process, pss) in processes.iter().take(5) {
-            println!("  {process} (pid {pid}): {:.1} MiB", *pss as f64 / 1024.0 / 1024.0);
+            println!(
+                "  {process} (pid {pid}): {:.1} MiB",
+                *pss as f64 / 1024.0 / 1024.0
+            );
         }
         return Ok(());
     }

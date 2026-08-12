@@ -78,7 +78,10 @@ mod tests {
         let second = pool.claim().unwrap();
         assert_ne!(first.port(), second.port());
         assert_eq!(pool.available(), 0);
-        assert!(pool.claim().is_none(), "an exhausted pool hands out nothing");
+        assert!(
+            pool.claim().is_none(),
+            "an exhausted pool hands out nothing"
+        );
 
         let reclaimed = first.port();
         drop(first);

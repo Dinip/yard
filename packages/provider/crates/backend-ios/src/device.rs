@@ -381,7 +381,11 @@ async fn supervise(supervisor: Supervisor) {
             // `?err` and not `%err`: anyhow's Display prints only the outermost
             // context, so a session that died three layers down reported the
             // same sentence whatever had actually gone wrong.
-            warn!(?err, "device session ended; retrying in {}s", RECONNECT_DELAY.as_secs());
+            warn!(
+                ?err,
+                "device session ended; retrying in {}s",
+                RECONNECT_DELAY.as_secs()
+            );
         }
 
         // Publish the teardown before sleeping, so the provider marks the

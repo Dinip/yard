@@ -81,7 +81,11 @@ async fn main() -> Result<()> {
     for device in &config.devices {
         let backend = build_backend(device, &debug_ports)?;
         info!(udid = %device.udid, backend = ?device.backend, "device configured");
-        supervisor.add(device.udid.clone(), backend);
+        supervisor.add_with_cleanup_paths(
+            device.udid.clone(),
+            backend,
+            device.cleanup_paths.clone(),
+        );
     }
 
     if config.devices.is_empty() {

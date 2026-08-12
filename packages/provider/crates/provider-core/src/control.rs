@@ -52,6 +52,19 @@ pub struct ControlSender {
 }
 
 impl ControlSender {
+    /// A sender with no socket behind it, for tests that need to read what the
+    /// supervisor pushed upstream without standing up a coordinator.
+    pub fn detached() -> (Self, mpsc::UnboundedReceiver<ProviderMessage>) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        (
+            Self {
+                tx,
+                registered: Arc::new(AtomicBool::new(true)),
+            },
+            rx,
+        )
+    }
+
     pub fn send(&self, msg: ProviderMessage) {
         let _ = self.tx.send(msg);
     }

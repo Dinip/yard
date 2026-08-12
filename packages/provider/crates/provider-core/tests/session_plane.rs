@@ -718,9 +718,7 @@ async fn a_mid_session_codec_change_re_announces_and_resets_the_decoder() {
             }
             // Only meaningful after the re-announcement: the reset belongs to
             // the new parameter sets, not to the connection's first keyframe.
-            Message::Binary(bytes)
-                if re_announced && bytes[0] == farm_protocol::AU_KEY_RESET =>
-            {
+            Message::Binary(bytes) if re_announced && bytes[0] == farm_protocol::AU_KEY_RESET => {
                 reset_frame = true;
             }
             _ => {}

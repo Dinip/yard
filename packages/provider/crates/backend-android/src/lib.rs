@@ -549,6 +549,50 @@ impl DeviceBackend for AndroidBackend {
         Ok(())
     }
 
+    async fn clear_app_data(&self, app_id: &str) -> BackendResult<()> {
+        let output = self.shell(&format!("pm clear {app_id}")).await?;
+        if !output.contains("Success") {
+            return Err(BackendError::Failed(format!(
+                "clearing {app_id} failed: {}",
+                output.trim()
+            )));
+        }
+        Ok(())
+    }
+
+    async fn reset_screen(&self) -> BackendResult<()> {
+        // The hardware Home key, not the keyboard's — `KEYCODE_HOME` is 3, and
+        // the two were deliberately split apart in phase 15.
+        self.send_control(scrcpy::keycode(0, 3)).await?;
+        self.send_control(scrcpy::keycode(1, 3)).await?;
+        self.rotate(0).await?;
+        // Whatever the last user copied off the device is theirs, not the next
+        // user's. Best-effort: a device with no clipboard service is not a
+        // reason to fail the run.
+        let _ = self.clipboard_set("").await;
+        Ok(())
+    }
+
+    async fn wipe_paths(&self, paths: &[String]) -> BackendResult<()> {
+        for path in paths {
+            // The contents, not the directory: removing `/sdcard/Download`
+            // itself leaves apps that expect it writing into nothing. The
+            // quoting is what keeps a path with a space from becoming two
+            // arguments to `rm -rf`.
+            let output = self
+                .shell(&format!("rm -rf '{}'/* '{}'/.[!.]*", path, path))
+                .await?;
+            // `.[!.]*` matches nothing when there are no dotfiles and the shell
+            // passes the pattern through literally, so "No such file" here is
+            // the expected case, not a failure.
+            let trimmed = output.trim();
+            if !trimmed.is_empty() && !trimmed.contains("No such file") {
+                return Err(BackendError::Failed(format!("wiping {path}: {trimmed}")));
+            }
+        }
+        Ok(())
+    }
+
     async fn launch(&self, app_id: &str, args: &[String]) -> BackendResult<()> {
         let extra = args.join(" ");
         let output = self
@@ -1280,8 +1324,8 @@ mod tests {
                         if socket.read_exact(&mut length).await.is_err() {
                             return;
                         }
-                        let n =
-                            usize::from_str_radix(std::str::from_utf8(&length).unwrap(), 16).unwrap();
+                        let n = usize::from_str_radix(std::str::from_utf8(&length).unwrap(), 16)
+                            .unwrap();
                         let mut service = vec![0u8; n];
                         socket.read_exact(&mut service).await.unwrap();
                         socket.write_all(b"OKAY").await.unwrap();
@@ -1345,7 +1389,11 @@ mod tests {
 
         let mut doomed = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
         let mut buffer = [0u8; 1];
-        assert_eq!(doomed.read(&mut buffer).await.unwrap(), 0, "closed, not hung");
+        assert_eq!(
+            doomed.read(&mut buffer).await.unwrap(),
+            0,
+            "closed, not hung"
+        );
 
         let mut second = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
         assert!(second.write_all(b"CNXN").await.is_ok());

@@ -370,7 +370,12 @@ impl Adb {
     /// Written straight to the file as it arrives: this is the path a 400 MB
     /// screen recording takes off a phone, and buffering it would put it in the
     /// provider's memory for no reason.
-    pub async fn pull(&self, serial: &str, remote_path: &str, dest: &std::path::Path) -> Result<u64> {
+    pub async fn pull(
+        &self,
+        serial: &str,
+        remote_path: &str,
+        dest: &std::path::Path,
+    ) -> Result<u64> {
         let mut stream = self.transport(serial).await?;
         stream.request("sync:").await?;
         let socket = stream.inner_mut();

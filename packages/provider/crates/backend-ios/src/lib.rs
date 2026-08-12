@@ -37,6 +37,7 @@ use idevice::core_device::{
 };
 use idevice::diagnostics_relay::DiagnosticsRelayClient;
 use idevice::installation_proxy::InstallationProxyClient;
+use idevice::provider::IdeviceProvider;
 use idevice::services::afc::{opcode::AfcFopenMode, AfcClient};
 use idevice::services::house_arrest::HouseArrestClient;
 use idevice::{IdeviceService as _, ReadWrite};
@@ -119,6 +120,22 @@ impl IosPath {
             }
         }
     }
+}
+
+/// Deletes an upload from the staging directory, on its own AFC connection.
+///
+/// A fresh connection because the install's was closed with the file: this runs
+/// after `install_with_callback` either way, including the failure path, and
+/// reusing a client that may have died with the install would turn a leak into
+/// a second error.
+async fn remove_staged(provider: &dyn IdeviceProvider, path: &str) -> Result<()> {
+    let mut afc = AfcClient::connect(provider)
+        .await
+        .map_err(|err| anyhow!("afc connect: {err:?}"))?;
+    afc.remove(path)
+        .await
+        .map_err(|err| anyhow!("remove {path}: {err:?}"))?;
+    Ok(())
 }
 
 fn normalize(path: &str) -> String {
@@ -1003,9 +1020,9 @@ impl DeviceBackend for IosBackend {
             .await
             .map_err(|err| anyhow!("installation_proxy connect: {err:?}"))?;
 
-        proxy
+        let outcome = proxy
             .install_with_callback(
-                remote_path,
+                remote_path.clone(),
                 None,
                 |(percent, _)| async move {
                     debug!(percent, "install progress");
@@ -1013,9 +1030,57 @@ impl DeviceBackend for IosBackend {
                 (),
             )
             .await
-            .map_err(|err| anyhow!("install: {err:?}"))?;
+            .map_err(|err| anyhow!("install: {err:?}"));
 
+        // The staged copy must go whatever happened, exactly as the Android
+        // backend deletes its pushed APK: the path is per-device, so it was
+        // only ever overwritten by the *next* install on the same phone, and a
+        // device that never gets another one holds an IPA forever.
+        let _ = remove_staged(&*provider, &remote_path).await;
+
+        outcome?;
         progress.report("done", Some(1.0));
+        Ok(())
+    }
+
+    /// Home, and rotation back to upright.
+    ///
+    /// No clipboard step: `clipboard_set` here goes through the pasteboard
+    /// service, which is a *sync* with the host rather than a write, and an
+    /// empty sync is not the same as clearing what the device holds. Leaving
+    /// the step out is better than reporting a clear that did not happen.
+    async fn reset_screen(&self) -> BackendResult<()> {
+        self.input(InputEvent::Key {
+            key: "Home".into(),
+            down: true,
+        })
+        .await?;
+        self.input(InputEvent::Key {
+            key: "Home".into(),
+            down: false,
+        })
+        .await?;
+        self.rotate(0).await
+    }
+
+    /// Empties the staging directory installs upload through.
+    ///
+    /// This is the whole of iOS's filesystem reach: AFC sees the media
+    /// partition, not an app's container, so there is nothing else a wipe could
+    /// touch. Configured `cleanup_paths` are interpreted relative to that same
+    /// AFC root.
+    async fn wipe_paths(&self, paths: &[String]) -> BackendResult<()> {
+        let provider = device::usbmux_provider(&self.options.udid).await?;
+        let mut afc = AfcClient::connect(&*provider)
+            .await
+            .map_err(|err| anyhow!("afc connect: {err:?}"))?;
+
+        for path in paths {
+            let path = path.trim_start_matches('/');
+            afc.remove_all(path)
+                .await
+                .map_err(|err| anyhow!("wiping {path}: {err:?}"))?;
+        }
         Ok(())
     }
 

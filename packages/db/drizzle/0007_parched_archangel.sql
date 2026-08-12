@@ -1,0 +1,1 @@
+ALTER TYPE "public"."device_status" ADD VALUE 'cleaning' BEFORE 'unhealthy';

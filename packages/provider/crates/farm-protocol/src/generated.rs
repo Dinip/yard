@@ -41,6 +41,8 @@ pub enum DeviceStatus {
     Ready,
     #[serde(rename = "busy")]
     Busy,
+    #[serde(rename = "cleaning")]
+    Cleaning,
     #[serde(rename = "unhealthy")]
     Unhealthy,
 }
@@ -119,6 +121,15 @@ pub struct AppInfo {
     pub system: Option<bool>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CleanupSteps {
+    pub uninstall_apps: bool,
+    pub reset_screen: bool,
+    pub clear_app_data: bool,
+    pub wipe_folders: bool,
+}
+
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -150,6 +161,12 @@ pub enum CommandPayload {
     },
     #[serde(rename = "device.uninstall", rename_all = "camelCase")]
     DeviceUninstall { device_id: String, app_id: String },
+    #[serde(rename = "device.cleanup", rename_all = "camelCase")]
+    DeviceCleanup {
+        device_id: String,
+        steps: CleanupSteps,
+        timeout_seconds: i64,
+    },
     #[serde(rename = "device.adb.expose", rename_all = "camelCase")]
     DeviceAdbExpose { device_id: String },
     #[serde(rename = "device.adb.unexpose", rename_all = "camelCase")]
@@ -220,6 +237,15 @@ pub enum ProviderMessage {
         ok: bool,
         #[serde(skip_serializing_if = "Option::is_none", default)]
         error: Option<String>,
+    },
+    #[serde(rename = "cleanup.finished", rename_all = "camelCase")]
+    CleanupFinished {
+        device_id: String,
+        removed: Vec<String>,
+        cleared: Vec<String>,
+        wiped: Vec<String>,
+        errors: Vec<String>,
+        duration_ms: i64,
     },
     #[serde(rename = "file.pulled", rename_all = "camelCase")]
     FilePulled {

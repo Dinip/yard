@@ -50,6 +50,13 @@
       "when": 1786122393010,
       "tag": "0006_next_lila_cheney",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1786575966719,
+      "tag": "0007_parched_archangel",
+      "breakpoints": true
     }
   ]
 }

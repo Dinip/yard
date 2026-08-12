@@ -317,6 +317,33 @@ pub trait DeviceBackend: Send + Sync + 'static {
     /// Tears the device session down and brings it back up.
     async fn restart(&self) -> Result<()>;
 
+    // ── resetting a device between users ───────────────────────────────────
+    //
+    // Narrow primitives rather than one `cleanup()` per backend: the ordering,
+    // the deadline, the status transitions and the report are the same
+    // everywhere and live once in `cleanup.rs`. A backend only declares what it
+    // can physically do, and a step it cannot do is skipped rather than failing
+    // the run. See docs/CLEANUP.md.
+
+    /// Wipes an installed app's data without removing the app.
+    async fn clear_app_data(&self, _app_id: &str) -> Result<()> {
+        Err(BackendError::Unsupported("clearing app data"))
+    }
+
+    /// Back to a neutral screen: home, unrotated, nothing in the clipboard.
+    async fn reset_screen(&self) -> Result<()> {
+        Err(BackendError::Unsupported("resetting the screen"))
+    }
+
+    /// Empties each path, leaving the directory itself in place.
+    ///
+    /// The paths come from the device's config, not from the backend: they end
+    /// in `rm -rf` on somebody's phone, so they are set by whoever runs the
+    /// host and guarded at startup, never typed into a web form.
+    async fn wipe_paths(&self, _paths: &[String]) -> Result<()> {
+        Err(BackendError::Unsupported("wiping paths"))
+    }
+
     /// False when the backend has lost the device. The supervisor polls this to
     /// decide when to report `unhealthy` upstream.
     async fn is_healthy(&self) -> bool {

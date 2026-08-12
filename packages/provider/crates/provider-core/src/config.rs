@@ -33,6 +33,10 @@ fn default_debug_ports() -> String {
     "7200-7249".into()
 }
 
+/// Paths cleanup will not empty, whatever the config says. Ported from STF's
+/// equivalent guard in `lib/units/device/plugins/cleanup.js`.
+const PROTECTED_PREFIXES: &[&str] = &["/system", "/boot", "/proc", "/vendor", "/dev", "/sys"];
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -180,6 +184,17 @@ pub struct DeviceConfig {
     /// Backend-specific settings, validated by the backend itself.
     #[serde(default)]
     pub options: serde_json::Map<String, serde_json::Value>,
+
+    /// Directories emptied when a reservation ends, if the farm's cleanup
+    /// policy has `wipeFolders` on. Empty means the step does nothing here.
+    ///
+    /// A device-config field rather than farm policy, and not part of
+    /// `options`: these end in `rm -rf` on somebody's phone, so they are set by
+    /// whoever runs the host — never typed into a web form — and guarded once
+    /// in [`Config::validate_cleanup_paths`] for every backend rather than
+    /// per backend. See docs/CLEANUP.md.
+    #[serde(default)]
+    pub cleanup_paths: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -265,9 +280,50 @@ impl Config {
         }
 
         self.validate_metrics()?;
+        self.validate_cleanup_paths()?;
         // At load, so a malformed range is a startup error rather than one that
         // surfaces the first time somebody clicks Expose.
         self.remote_debug.range()?;
+        Ok(())
+    }
+
+    /// Refuses to start rather than let a typo `rm -rf` a phone's system
+    /// partition the first time somebody releases a device.
+    ///
+    /// Ported from STF, which learned the same lesson: its cleanup plugin
+    /// throws at worker startup on the same prefixes. Checked here, once, so a
+    /// backend added later inherits the guard instead of reimplementing it.
+    fn validate_cleanup_paths(&self) -> Result<()> {
+        for device in &self.devices {
+            for path in &device.cleanup_paths {
+                let path = path.trim_end_matches('/');
+                if path.is_empty() {
+                    bail!(
+                        "device {}: cleanup_paths cannot contain the device root",
+                        device.udid
+                    );
+                }
+                if !path.starts_with('/') {
+                    bail!(
+                        "device {}: cleanup_paths must be absolute, got {path:?}",
+                        device.udid
+                    );
+                }
+                // A plain prefix, as STF does it: `/sys` has to reject
+                // `/system` and `/system_ext` too, and over-refusing a path
+                // nobody wipes is free while under-refusing one is not.
+                if let Some(reserved) = PROTECTED_PREFIXES
+                    .iter()
+                    .find(|reserved| path.starts_with(*reserved))
+                {
+                    bail!(
+                        "device {}: cleanup_paths entry {path:?} is under {reserved:?}, \
+                         which is not wipeable",
+                        device.udid
+                    );
+                }
+            }
+        }
         Ok(())
     }
 
@@ -383,6 +439,51 @@ devices:
   - udid: R5CT10ABC
     backend: android
 "#;
+
+    /// `MINIMAL` with `cleanup_paths` on the Android device.
+    fn with_cleanup_paths(paths: &[&str]) -> String {
+        let entries: String = paths
+            .iter()
+            .map(|path| format!("\n      - {path}"))
+            .collect();
+        format!("{MINIMAL}    cleanup_paths:{entries}\n")
+    }
+
+    /// `cleanup_paths` end in `rm -rf` on a phone, so a typo has to be a
+    /// startup error — never something discovered on a device.
+    #[test]
+    fn refuses_to_start_with_a_dangerous_cleanup_path() {
+        for path in [
+            "/system",
+            "/system_ext/app",
+            "/",
+            "/proc",
+            "sdcard/Download",
+        ] {
+            let (_dir, config_path) = write(&with_cleanup_paths(&[path]));
+            let err = match Config::load_with_env(&config_path, None) {
+                Err(err) => err.to_string(),
+                Ok(_) => panic!("{path} was accepted as a cleanup path"),
+            };
+            assert!(
+                err.contains("cleanup_paths"),
+                "wrong error for {path}: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn accepts_an_ordinary_cleanup_path() {
+        let (_dir, path) = write(&with_cleanup_paths(&[
+            "/sdcard/Download",
+            "/data/local/tmp",
+        ]));
+        let config = Config::load_with_env(&path, None).unwrap();
+        assert_eq!(
+            config.devices[1].cleanup_paths,
+            vec!["/sdcard/Download", "/data/local/tmp"]
+        );
+    }
 
     #[test]
     fn parses_a_minimal_config() {
