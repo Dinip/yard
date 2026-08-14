@@ -158,6 +158,11 @@ const CONTACT_MAX: Duration = Duration::from_secs(10);
 /// How long to wait for a session when a request needs one.
 const SESSION_WAIT: Duration = Duration::from_secs(20);
 
+/// How long an app listing may take end to end, stream included. Under the
+/// coordinator's 15s command timeout so a slow device surfaces as itself rather
+/// than as an unresponsive provider.
+const APPS_TIMEOUT: Duration = Duration::from_secs(12);
+
 /// How stale a battery reading `info()` will accept before paying for a fresh
 /// diagnostics round trip.
 ///
@@ -958,14 +963,31 @@ impl DeviceBackend for IosBackend {
     }
 
     async fn apps(&self) -> BackendResult<Vec<AppInfo>> {
-        let session = self.session().await?;
-        let mut adapter = session.adapter;
-        let mut client = connect_service!(AppList, &mut adapter, &session.handshake)?;
+        // The bound covers opening the stream as well as the request, because
+        // *opening* it is what hangs on a device whose app service is unwell —
+        // a timeout around the request alone never fires, and the caller waits
+        // forever on a future that is stuck a step earlier.
+        let listed = tokio::time::timeout(APPS_TIMEOUT, async {
+            let session = self.session().await?;
+            let mut adapter = session.adapter;
+            let mut client = connect_service!(AppList, &mut adapter, &session.handshake)?;
+            client
+                .list_apps()
+                .await
+                .map_err(|err| BackendError::Failed(format!("list apps: {err:?}")))
+        })
+        .await;
 
-        let apps = client
-            .list_apps()
-            .await
-            .map_err(|err| BackendError::Failed(format!("list apps: {err:?}")))?;
+        let apps = match listed {
+            Ok(result) => result?,
+            Err(_) => {
+                return Err(BackendError::Failed(format!(
+                    "the device did not answer a list-apps request within {}s; \
+                     its app service may need the device rebooted",
+                    APPS_TIMEOUT.as_secs()
+                )))
+            }
+        };
 
         Ok(apps
             .into_iter()

@@ -19,15 +19,10 @@
 //! first place.
 
 use std::borrow::Cow;
-use std::time::Duration;
 
 use idevice::core_device::{AppListEntry, CoreDeviceServiceClient};
 use idevice::{IdeviceError, ReadWrite, RsdService};
-
-/// How long to wait for the device to answer. Comfortably under the
-/// coordinator's 15s command timeout, so a wedged device surfaces as itself
-/// rather than as "the provider stopped answering".
-const LIST_TIMEOUT: Duration = Duration::from_secs(10);
+use tracing::debug;
 
 /// What `AppServiceClient` would be if its transport were reachable.
 pub struct AppList(CoreDeviceServiceClient<Box<dyn ReadWrite>>);
@@ -49,6 +44,7 @@ impl AppList {
     /// uninstalls what a session installed and clears what it is told to, and
     /// neither can touch a system app.
     pub async fn list_apps(&mut self) -> Result<Vec<AppListEntry>, IdeviceError> {
+        let started = std::time::Instant::now();
         let mut options = plist::Dictionary::new();
         options.insert("includeAppClips".into(), false.into());
         options.insert("includeRemovableApps".into(), true.into());
@@ -63,23 +59,15 @@ impl AppList {
         options.insert("includeAppGroupIdentifiers".into(), false.into());
         options.insert("includeContainerPaths".into(), false.into());
 
-        // A device whose app service has wedged never answers this at all —
-        // Apple's own `devicectl device info apps` hangs on it too. Without a
-        // bound, that becomes the caller's problem: the coordinator's 15s
-        // command timeout for a UI request, and a large slice of the cleanup
-        // deadline for a reset. Fail with something readable instead.
-        let response = tokio::time::timeout(
-            LIST_TIMEOUT,
-            self.0
-                .invoke_with_plist("com.apple.coredevice.feature.listapps", options),
-        )
-        .await
-        .map_err(|_| {
-            IdeviceError::UnexpectedResponse(
-                "the device did not answer a list-apps request; its app service may need a reboot"
-                    .into(),
-            )
-        })??;
+        // Deliberately unbounded here: the deadline lives in `IosBackend::apps`
+        // so that it also covers opening the stream, which is the step that
+        // actually hangs on an unwell device.
+        let response = self
+            .0
+            .invoke_with_plist("com.apple.coredevice.feature.listapps", options)
+            .await?;
+
+        debug!(elapsed_ms = started.elapsed().as_millis(), "listed apps");
 
         let Some(entries) = response.as_array() else {
             return Err(IdeviceError::UnexpectedResponse(

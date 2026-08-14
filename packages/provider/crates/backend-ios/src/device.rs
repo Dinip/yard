@@ -331,7 +331,20 @@ pub async fn connect_service_stream<T: RsdService>(
     let port = handshake
         .services
         .get(&name)
-        .ok_or_else(|| anyhow!("the device does not offer {name}"))?
+        .ok_or_else(|| {
+            // Which services a device publishes depends on its state, not only
+            // its iOS version: the HID service is absent until the phone has
+            // been unlocked since boot and Developer Mode is on. Naming the
+            // missing service alone sends you looking for a bug in the tunnel,
+            // so say what the device *is* offering — that is what tells the two
+            // apart at a glance.
+            let mut offered: Vec<&str> = handshake.services.keys().map(String::as_str).collect();
+            offered.sort_unstable();
+            anyhow!(
+                "the device does not offer {name}; it offers {}",
+                offered.join(", ")
+            )
+        })?
         .port;
 
     adapter
