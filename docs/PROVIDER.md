@@ -238,12 +238,43 @@ task is spawned, aborted on shutdown, and fatal if it returns.
 
 ```
 crates/backend-ios/src/
-├── device.rs   tunnel + session supervision (one rebuild loop)
-├── media.rs    RTP in, RTCP out, access units — carried over verbatim
-├── hevc.rs     RFC 7798 depacketisation, hvcC, codec string, frame size
-├── hid.rs      touch, keyboard, hardware buttons, rotation
-└── lib.rs      the pointer state machine and the DeviceBackend impl
+├── device.rs    tunnel + session supervision (one rebuild loop)
+├── media.rs     RTP in, RTCP out, access units — carried over verbatim
+├── hevc.rs      RFC 7798 depacketisation, hvcC, codec string, frame size
+├── hid.rs       touch, keyboard, hardware buttons, rotation
+├── app_list.rs  listing apps on iOS 26+, where idevice cannot
+└── lib.rs       the pointer state machine and the DeviceBackend impl
 ```
+
+### Listing apps needs three keys idevice does not send
+
+`AppServiceClient::list_apps` cannot talk to iOS 26 or later. The device decodes
+the request's options dictionary into a struct that gained three required keys,
+and refuses the request outright without them — one at a time, so finding them
+is an iteration:
+
+```text
+NSCocoaErrorDomain 4865 — "Expected to find key requireContainerAccess."
+                          "Expected to find key includeAppGroupIdentifiers."
+                          "Expected to find key includeContainerPaths."
+```
+
+idevice 0.1.65 sends the five older keys only, and keeps `AppServiceClient`'s
+transport private, so `app_list.rs` is a second, minimal client onto the same
+service that sends all eight. All three additions are sent as `false`: the farm
+wants bundle ids, and it is the *keys* the device requires, not what they ask
+for. Delete the module when the crate sends them itself.
+
+`examples/app_list_probe.rs` is how the three were found, and is the shortest
+path back if a later iOS adds a fourth. It needs the provider stopped, since it
+builds its own tunnel.
+
+**A wedged app service never answers at all.** Seen on an iPhone on iOS 27: the
+request is accepted, and no reply ever comes — Apple's own `devicectl device
+info apps` hangs on the same device, so it is not something a client can fix.
+`list_apps` is bounded at 10s for that reason, comfortably under the
+coordinator's 15s command timeout, so it surfaces as a device problem rather
+than as an unresponsive provider. Rebooting the device clears it.
 
 **Battery level and charging state, and nothing else.** Not CPU, not memory, and
 — on the hardware checked — not temperature either. `examples/diagnostics_probe.rs`

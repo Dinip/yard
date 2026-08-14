@@ -1324,6 +1324,7 @@ what `cleanup.js` does and the four bugs not to inherit.
 | `releaseActive` holds the device; reaper unsticks a stale one | ✅ | `.../lib/reservations.ts` |
 | Eight settings, all defaulting to today's behaviour | ✅ | `.../lib/settings.ts` |
 | Allow/deny app id globs scoping `clearAppData` | ✅ | `.../cleanup.rs`, `.../lib/settings.ts` |
+| iOS 26+ app listing, which idevice cannot do | ✅ | `backend-ios/src/app_list.rs` |
 | `cleanup_paths` per device, guarded against `/system` at load | ✅ | `.../config.rs` |
 | Settings card + `cleaning` treatment in the UI | ✅ | `packages/web` |
 

@@ -18,6 +18,7 @@
 //! exist, and the backend fails loudly at session bring-up rather than
 //! half-working.
 
+pub mod app_list;
 pub mod device;
 pub mod hevc;
 pub mod hid;
@@ -49,6 +50,7 @@ use provider_core::video::{channel, VideoGeometry, VideoHandle, VideoPublisher};
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
+use crate::app_list::AppList;
 use crate::device::{connect_service, DeviceHost};
 use crate::hid::Input;
 
@@ -958,14 +960,10 @@ impl DeviceBackend for IosBackend {
     async fn apps(&self) -> BackendResult<Vec<AppInfo>> {
         let session = self.session().await?;
         let mut adapter = session.adapter;
-        let mut client = connect_service!(
-            AppServiceClient<Box<dyn ReadWrite>>,
-            &mut adapter,
-            &session.handshake
-        )?;
+        let mut client = connect_service!(AppList, &mut adapter, &session.handshake)?;
 
         let apps = client
-            .list_apps(false, true, false, false, false)
+            .list_apps()
             .await
             .map_err(|err| BackendError::Failed(format!("list apps: {err:?}")))?;
 
