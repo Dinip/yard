@@ -23,6 +23,7 @@ export const providerStatusEnum = pgEnum("provider_status", ["online", "offline"
  *   preparing — tunnel/stream coming up
  *   ready     — reservable
  *   busy      — an active reservation exists
+ *   cleaning  — released, being reset by its provider; see CLEANUP.md
  *   unhealthy — present but the backend reported a fault
  */
 export const deviceStatusEnum = pgEnum("device_status", [
@@ -31,6 +32,7 @@ export const deviceStatusEnum = pgEnum("device_status", [
   "preparing",
   "ready",
   "busy",
+  "cleaning",
   "unhealthy",
 ]);
 

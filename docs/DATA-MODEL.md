@@ -50,12 +50,15 @@ at creation and never again.
 Keyed by udid (iOS) or serial (Android) — stable across reconnects, so a device
 that unplugs and returns keeps its history.
 
-Lifecycle: `absent` → `present` → `preparing` → `ready` → `busy`, with
-`unhealthy` as a side state.
+Lifecycle: `absent` → `present` → `preparing` → `ready` → `busy` → `cleaning` →
+`ready`, with `unhealthy` as a side state.
 
 - `absent` — the owning provider is gone, or the device unplugged
 - `ready` — reservable
 - `busy` — an active reservation exists
+- `cleaning` — released, being reset by its provider before it is offered again.
+  Only reached when cleanup policy is on; `updatedAt` is when it started, which
+  is what the reaper measures against. See [CLEANUP.md](CLEANUP.md)
 
 `streamCodec` holds the string handed straight to the browser's `VideoDecoder`
 (`hev1.1.6.L93.B0` for iOS, `avc1.640028` for Android). `adbPort` is populated

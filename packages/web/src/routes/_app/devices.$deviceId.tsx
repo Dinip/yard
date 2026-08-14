@@ -354,8 +354,11 @@ function DevicePage() {
             </div>
           )
         ) : (
-          <Button disabled={reserve.isPending} onClick={() => reserve.mutate({ deviceId })}>
-            Reserve
+          <Button
+            disabled={reserve.isPending || device.status === "cleaning"}
+            onClick={() => reserve.mutate({ deviceId })}
+          >
+            {device.status === "cleaning" ? "Being cleaned" : "Reserve"}
           </Button>
         )}
       </div>
@@ -371,6 +374,10 @@ function DevicePage() {
                 {awaitingAnswer
                   ? "Your request to join is waiting for an answer."
                   : "Ask to join, or wait for it to come free."}
+              </p>
+            ) : device.status === "cleaning" ? (
+              <p>
+                This device is being reset after its last session. It will be available in a moment.
               </p>
             ) : (
               <p>Reserve this device to open a session.</p>

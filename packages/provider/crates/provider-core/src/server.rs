@@ -829,10 +829,7 @@ async fn pull_file(
     (
         StatusCode::OK,
         [
-            (
-                header::CONTENT_TYPE,
-                "application/octet-stream".to_owned(),
-            ),
+            (header::CONTENT_TYPE, "application/octet-stream".to_owned()),
             (
                 header::CONTENT_DISPOSITION,
                 format!("attachment; filename=\"{filename}\""),

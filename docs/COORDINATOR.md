@@ -111,6 +111,11 @@ observer row and nobody else's. It lived on the admin router back when only
 admins could be in a session, which made the Leave button 403 for the first
 non-admin who was ever let into one.
 
+Releasing is also where a device is held back for cleaning: when the policy is
+on and the provider is connected, `releaseActive` sets `cleaning` instead of
+`ready` and sends `device.cleanup` after `session.revoke`. The provider returns
+the device with a `device.status`. Nothing waits — see [CLEANUP.md](CLEANUP.md).
+
 ## The reservation reaper
 
 `startReservationReaper` sweeps every 30s and releases on three conditions —
@@ -120,7 +125,11 @@ through `releaseActive`, which is the one place that pushes `session.revoke` and
 writes the audit row.
 
 It also retires unanswered join requests, which release nothing and so sit
-outside those three conditions.
+outside those three conditions, and returns any device stuck in `cleaning` past
+its deadline plus a minute. That last sweep only ever fires when a provider died
+mid-clean — the provider guarantees it leaves that state under its own deadline
+— and exists because a device nobody can reserve is worse than one that did not
+finish being wiped.
 
 ## The provider gateway
 

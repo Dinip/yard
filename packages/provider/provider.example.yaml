@@ -73,6 +73,16 @@ devices:
     name: Mock Pixel
     options:
       platform: android
+    # Emptied when a reservation ends, if the farm's cleanup policy has
+    # "Empty scratch folders" on — see /admin/settings and docs/CLEANUP.md.
+    #
+    # Set here rather than in the coordinator on purpose: these end in a
+    # recursive delete on a phone, and no web form should. Anything under
+    # /system, /boot, /proc, /vendor, /dev or /sys is refused at startup, so a
+    # typo fails here rather than on a device. Absent means the step does
+    # nothing for this device.
+    cleanup_paths:
+      - /sdcard/Download
 
   # Real devices:
   #

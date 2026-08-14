@@ -41,6 +41,7 @@ export const AUDIT_ACTIONS = [
   { value: "device.uninstall", label: "Uninstalls", group: "Devices" },
   { value: "device.launch", label: "App launches", group: "Devices" },
   { value: "device.reboot", label: "Reboots", group: "Devices" },
+  { value: "device.cleanup", label: "Cleaned between users", group: "Devices" },
   { value: "device.restart", label: "Session restarts", group: "Devices" },
   { value: "device.adb.expose", label: "Remote debugging enabled", group: "Devices" },
   { value: "device.file_pull", label: "Pulled a file", group: "Devices" },

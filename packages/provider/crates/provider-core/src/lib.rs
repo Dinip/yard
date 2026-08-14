@@ -12,6 +12,7 @@
 
 pub mod auth;
 pub mod backend;
+pub mod cleanup;
 pub mod config;
 pub mod control;
 pub mod metrics;
@@ -26,6 +27,7 @@ pub use backend::{
     AppFilter, AppMetrics, BackendError, CpuTimes, DeviceBackend, DeviceInfo, DeviceMetrics,
     InputEvent, MemoryBytes, NullProgress, ProgressSink, RemoteDebug, ThermalZone,
 };
+pub use cleanup::CleanupReport;
 pub use config::{BackendKind, Config, DeviceConfig, MetricsConfig};
 pub use metrics::{MetricsCache, MetricsState};
 pub use origins::WebOrigins;

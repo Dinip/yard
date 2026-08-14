@@ -190,6 +190,21 @@ export class GatewaySession {
         });
         break;
 
+      case "cleanup.finished":
+        // Nobody's action: the reservation ending is what caused it, and the
+        // person who released the device did not choose any of this. The row
+        // is the only record a device was ever reset — there is no artifact
+        // store, exactly as with installs.
+        await audit(db, null, "device.cleanup", "device", msg.deviceId, {
+          removed: msg.removed,
+          cleared: msg.cleared,
+          wiped: msg.wiped,
+          errors: msg.errors,
+          durationMs: msg.durationMs,
+          providerId: this.auth.providerId,
+        });
+        break;
+
       case "file.pulled":
         // The one operation that carries data *out* of a device, and the
         // coordinator was not on the path — so this row and its digest are the

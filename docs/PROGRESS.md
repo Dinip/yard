@@ -1304,6 +1304,48 @@ full in the dialog, and `/providers` redirects.
 
 ---
 
+## Phase 16 — cleaning a device between users ✅
+
+*Done when: a device released by any path is reset by its provider before it
+becomes reservable, an admin chooses which steps run, and no failure anywhere
+can leave a device parked out of the pool.*
+
+Until now a released device went straight back to `ready` carrying whatever the
+last user left on it. STF had a mechanism for this; the design ports its intent
+and deliberately not its implementation — see [CLEANUP.md](./CLEANUP.md) for
+what `cleanup.js` does and the four bugs not to inherit.
+
+| Item | State | Where |
+|---|---|---|
+| STF analysis + design written up | ✅ | `docs/CLEANUP.md`, `docs/REFERENCES.md` |
+| `cleaning` device status, `device.cleanup`, `cleanup.finished` | ✅ | `packages/protocol`, `packages/db` |
+| Backend primitives + cleanup orchestrator, under a deadline | ✅ | `provider-core/src/cleanup.rs`, all three backends |
+| Per-reservation app baseline, taken on `session.authorize` | ✅ | `.../supervisor.rs` |
+| `releaseActive` holds the device; reaper unsticks a stale one | ✅ | `.../lib/reservations.ts` |
+| Eight settings, all defaulting to today's behaviour | ✅ | `.../lib/settings.ts` |
+| Allow/deny app id globs scoping `clearAppData` | ✅ | `.../cleanup.rs`, `.../lib/settings.ts` |
+| iOS 26+ app listing, which idevice cannot do | ✅ | `backend-ios/src/app_list.rs` |
+| `cleanup_paths` per device, guarded against `/system` at load | ✅ | `.../config.rs` |
+| Settings card + `cleaning` treatment in the UI | ✅ | `packages/web` |
+
+### The device always comes back
+
+The one property STF never had, and the reason most of the tests exist. A
+failing step, an `Unsupported` one, a backend that hangs forever, a run past its
+deadline, a provider that dies mid-clean — each has a test, and each ends with
+the device reservable again. A device stuck in `cleaning` is invisible
+inventory, which is worse than the dirty device the feature exists to prevent.
+
+### What is not built
+
+The app baseline lives in provider memory, so a provider restarted mid-session
+loses it and the uninstall step declines to act (logged, and reported in the
+audit row). Persisting it is STF's abandoned `fcd0d150` and the obvious
+follow-up if that turns out to matter. iOS has no `pm clear` equivalent, so
+`clearAppData` is Android-only.
+
+---
+
 ## Open decisions
 
 - **Name.** The project is "Device Farm" as a placeholder. See

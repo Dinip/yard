@@ -8,7 +8,7 @@ export const Platform = named("Platform", z.enum(["ios", "android"]));
 
 export const DeviceStatus = named(
   "DeviceStatus",
-  z.enum(["absent", "present", "preparing", "ready", "busy", "unhealthy"]),
+  z.enum(["absent", "present", "preparing", "ready", "busy", "cleaning", "unhealthy"]),
 );
 
 export const Display = named(

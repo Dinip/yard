@@ -114,7 +114,26 @@ pub struct MockState {
     pub rotation: AtomicI64,
     pub reboots: AtomicI64,
     pub healthy: AtomicBool,
+    /// App ids whose data was cleared, in order — the only trace `pm clear`
+    /// leaves on a real device, so the synthetic one records it explicitly.
+    pub cleared: Mutex<Vec<String>>,
+    pub wiped: Mutex<Vec<String>>,
+    /// How `reset_screen` should misbehave, so a test can exercise cleanup's
+    /// failure paths without a second backend implementation. Same idea as
+    /// [`MockState::healthy`]: the synthetic device is where faults are
+    /// injected, because that is the whole reason it exists.
+    pub screen_fault: Mutex<Option<ScreenFault>>,
+    /// Answer `clear_app_data` with `Unsupported`, the way iOS does.
+    pub no_clear_app_data: AtomicBool,
     adb_port: AtomicU16,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScreenFault {
+    /// Returns an error, which cleanup records and carries on past.
+    Fails,
+    /// Never returns at all — a wedged adb call, which only the deadline ends.
+    Hangs,
 }
 
 impl MockBackend {
@@ -454,6 +473,37 @@ impl DeviceBackend for MockBackend {
         if installed.len() == before {
             return Err(BackendError::Failed(format!("{app_id} is not installed")));
         }
+        Ok(())
+    }
+
+    async fn clear_app_data(&self, app_id: &str) -> Result<()> {
+        if self.state.no_clear_app_data.load(Ordering::Relaxed) {
+            return Err(BackendError::Unsupported("clearing app data"));
+        }
+        let installed = self.state.installed.lock().await;
+        if !installed.iter().any(|a| a.id == app_id) {
+            return Err(BackendError::Failed(format!("{app_id} is not installed")));
+        }
+        drop(installed);
+        self.state.cleared.lock().await.push(app_id.to_owned());
+        Ok(())
+    }
+
+    async fn reset_screen(&self) -> Result<()> {
+        match *self.state.screen_fault.lock().await {
+            Some(ScreenFault::Fails) => {
+                return Err(BackendError::Failed("screen is wedged".into()))
+            }
+            Some(ScreenFault::Hangs) => std::future::pending::<()>().await,
+            None => {}
+        }
+        self.rotate(0).await?;
+        *self.state.clipboard.lock().await = None;
+        Ok(())
+    }
+
+    async fn wipe_paths(&self, paths: &[String]) -> Result<()> {
+        self.state.wiped.lock().await.extend_from_slice(paths);
         Ok(())
     }
 

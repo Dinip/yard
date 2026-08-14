@@ -5,14 +5,15 @@
 //! kept — each device is an independently restartable task tree — while N
 //! containers, N ZMQ connections and N config files collapse into one.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
 use farm_protocol::{
-    Battery, CommandData, CommandPayload, DeviceSnapshot, DeviceStatus, ProviderMessage,
+    AppFilter, Battery, CleanupSteps, CommandData, CommandPayload, DeviceSnapshot, DeviceStatus,
+    ProviderMessage,
 };
 use tokio::sync::RwLock;
 use tracing::{info, warn};
@@ -54,13 +55,33 @@ impl ActivityThrottle {
     }
 }
 
+/// What was installed when a session started, so cleanup can tell the user's
+/// apps from the device's own.
+struct AppBaseline {
+    /// Which reservation this was taken for. A renew re-authorizes the same
+    /// reservation, and re-snapshotting then would quietly bless everything the
+    /// user had installed so far.
+    reservation_id: String,
+    apps: HashSet<String>,
+}
+
 pub struct Device {
     pub id: String,
     pub backend: Arc<dyn DeviceBackend>,
+    /// Directories cleanup empties, from this device's config. Empty is the
+    /// normal case; the step is then a no-op rather than an error.
+    cleanup_paths: Vec<String>,
     status: RwLock<DeviceStatus>,
     info: RwLock<Option<DeviceInfo>>,
     /// Rate limiter for activity reports, not a record of activity itself.
     activity: ActivityThrottle,
+    /// App ids present when the current session was authorized, and the
+    /// reservation that baseline belongs to.
+    ///
+    /// `None` means no session has been authorized since this provider started,
+    /// so cleanup has nothing to diff against and declines to uninstall — see
+    /// [`crate::cleanup::run`].
+    baseline: RwLock<Option<AppBaseline>>,
     /// Installs attempted on this device, for the metrics exporter. Counted
     /// where the result is already reported upstream, so the session server
     /// needs no knowledge of metrics at all.
@@ -174,14 +195,25 @@ impl Supervisor {
     }
 
     pub fn add(&mut self, id: String, backend: Arc<dyn DeviceBackend>) {
+        self.add_with_cleanup_paths(id, backend, Vec::new());
+    }
+
+    pub fn add_with_cleanup_paths(
+        &mut self,
+        id: String,
+        backend: Arc<dyn DeviceBackend>,
+        cleanup_paths: Vec<String>,
+    ) {
         self.devices.insert(
             id.clone(),
             Arc::new(Device {
                 id,
                 backend,
+                cleanup_paths,
                 status: RwLock::new(DeviceStatus::Preparing),
                 info: RwLock::new(None),
                 activity: ActivityThrottle::default(),
+                baseline: RwLock::new(None),
                 installs_ok: AtomicU64::new(0),
                 installs_failed: AtomicU64::new(0),
             }),
@@ -254,6 +286,12 @@ impl Supervisor {
             (true, DeviceStatus::Unhealthy | DeviceStatus::Preparing | DeviceStatus::Absent) => {
                 DeviceStatus::Ready
             }
+            // A cleanup in flight owns this device's status and will set it
+            // itself when it finishes. Spelled out rather than left to the
+            // catch-all below because a poll racing a cleanup back to `ready`
+            // would hand the next user a half-wiped phone — exactly the STF
+            // bug this feature exists to avoid.
+            (true, DeviceStatus::Cleaning) => DeviceStatus::Cleaning,
             // `busy` is the coordinator's word, not ours — a reserved device
             // stays reserved through a poll.
             (true, current) => current,
@@ -287,6 +325,42 @@ impl Supervisor {
             })
             .await;
         }
+    }
+
+    /// Records what was installed at the start of a session, for cleanup to
+    /// diff against.
+    ///
+    /// A no-op when the reservation is already the one we baselined: renewing
+    /// re-authorizes, and re-snapshotting then would fold everything the user
+    /// had installed so far into the "was already here" set.
+    async fn snapshot_baseline(&self, device: &Arc<Device>, reservation_id: &str) {
+        {
+            let held = device.baseline.read().await;
+            if held
+                .as_ref()
+                .is_some_and(|held| held.reservation_id == reservation_id)
+            {
+                return;
+            }
+        }
+
+        let apps = match device.backend.apps().await {
+            Ok(apps) => apps.into_iter().map(|app| app.id).collect::<HashSet<_>>(),
+            Err(err) => {
+                // Leave the baseline unset rather than storing a partial one:
+                // cleanup skips uninstalling without a baseline, and that is a
+                // far better failure than diffing against a short list and
+                // removing apps that were always there.
+                warn!(device = %device.id, error = %err, "no app baseline for this session");
+                *device.baseline.write().await = None;
+                return;
+            }
+        };
+
+        *device.baseline.write().await = Some(AppBaseline {
+            reservation_id: reservation_id.to_owned(),
+            apps,
+        });
     }
 
     /// Reports that someone drove a device, at most once per 30s per device.
@@ -401,7 +475,8 @@ impl CommandHandler for Supervisor {
                 reservation_id,
                 user_id,
             } => {
-                self.require(&device_id)?;
+                let device = self.require(&device_id)?;
+                self.snapshot_baseline(&device, &reservation_id).await;
                 self.sessions
                     .authorize(
                         &device_id,
@@ -418,6 +493,37 @@ impl CommandHandler for Supervisor {
                 self.sessions
                     .revoke(&device_id, reason.as_deref().unwrap_or("revoked"))
                     .await;
+                Ok(None)
+            }
+
+            CommandPayload::DeviceCleanup {
+                device_id,
+                steps,
+                clear_app_data_filter,
+                timeout_seconds,
+            } => {
+                let device = self.require(&device_id)?;
+                device.set_status(DeviceStatus::Cleaning).await;
+                self.push(ProviderMessage::DeviceStatus {
+                    device_id,
+                    status: DeviceStatus::Cleaning,
+                    note: Some("cleaning".into()),
+                })
+                .await;
+
+                // Answered now, run later. Two reasons, either sufficient: a
+                // multi-package uninstall runs far past the gateway's
+                // command-result timeout, and `handle` is awaited inline on the
+                // control socket's read loop, so blocking here would stall this
+                // provider's heartbeats for every device it owns.
+                let sender = self.control.read().await.clone();
+                tokio::spawn(run_cleanup(
+                    device,
+                    sender,
+                    steps,
+                    clear_app_data_filter,
+                    timeout_seconds,
+                ));
                 Ok(None)
             }
 
@@ -488,6 +594,96 @@ impl CommandHandler for Supervisor {
                 Ok(None)
             }
         }
+    }
+}
+
+/// Resets a device after its reservation ended, then puts it back in the pool.
+///
+/// A free function rather than a method because it outlives the command that
+/// started it and must not borrow the supervisor for two minutes.
+///
+/// **The device always ends up out of `cleaning`.** Every early return, every
+/// failed step and the deadline itself converge on the same landing at the
+/// bottom, because a device stuck in `cleaning` is invisible inventory — worse
+/// than the dirty device cleanup was meant to prevent.
+async fn run_cleanup(
+    device: Arc<Device>,
+    sender: Option<ControlSender>,
+    steps: CleanupSteps,
+    clear_filter: AppFilter,
+    timeout_seconds: i64,
+) {
+    let started = Instant::now();
+    let baseline = device.baseline.read().await;
+    let apps = baseline.as_ref().map(|held| &held.apps);
+
+    let budget = Duration::from_secs(timeout_seconds.clamp(1, 3600) as u64);
+    let mut report = match tokio::time::timeout(
+        budget,
+        crate::cleanup::run(
+            device.backend.as_ref(),
+            &steps,
+            &clear_filter,
+            apps,
+            &device.cleanup_paths,
+        ),
+    )
+    .await
+    {
+        Ok(report) => report,
+        // The steps ran sequentially, so whatever the deadline interrupted is
+        // simply lost: there is no partial report to recover. Say so plainly
+        // rather than reporting an empty run as a clean one.
+        Err(_) => {
+            warn!(device = %device.id, seconds = timeout_seconds, "cleanup timed out");
+            crate::cleanup::CleanupReport {
+                errors: vec![format!(
+                    "cleanup exceeded {timeout_seconds}s and was abandoned"
+                )],
+                ..Default::default()
+            }
+        }
+    };
+    drop(baseline);
+
+    // The session is over either way; a stale baseline would be diffed against
+    // the *next* user's session if the provider never sees its authorize.
+    *device.baseline.write().await = None;
+
+    if !report.errors.is_empty() {
+        warn!(device = %device.id, errors = ?report.errors, "cleanup finished with errors");
+    }
+    info!(
+        device = %device.id,
+        removed = report.removed.len(),
+        cleared = report.cleared.len(),
+        "cleaned"
+    );
+
+    // Health decides the landing: a phone that fell off the bus mid-wipe is
+    // unhealthy, not ready, and reporting `ready` would put it back in the pool
+    // for the next user to discover.
+    let status = if device.backend.is_healthy().await {
+        DeviceStatus::Ready
+    } else {
+        DeviceStatus::Unhealthy
+    };
+    device.set_status(status).await;
+
+    if let Some(sender) = sender {
+        sender.send(ProviderMessage::CleanupFinished {
+            device_id: device.id.clone(),
+            removed: std::mem::take(&mut report.removed),
+            cleared: std::mem::take(&mut report.cleared),
+            wiped: std::mem::take(&mut report.wiped),
+            errors: std::mem::take(&mut report.errors),
+            duration_ms: started.elapsed().as_millis().min(i64::MAX as u128) as i64,
+        });
+        sender.send(ProviderMessage::DeviceStatus {
+            device_id: device.id.clone(),
+            status,
+            note: None,
+        });
     }
 }
 

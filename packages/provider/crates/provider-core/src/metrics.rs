@@ -512,6 +512,7 @@ fn status_label(status: DeviceStatus) -> &'static str {
         DeviceStatus::Preparing => "preparing",
         DeviceStatus::Ready => "ready",
         DeviceStatus::Busy => "busy",
+        DeviceStatus::Cleaning => "cleaning",
         DeviceStatus::Unhealthy => "unhealthy",
     }
 }

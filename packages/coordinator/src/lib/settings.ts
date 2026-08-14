@@ -29,6 +29,19 @@ const SECONDS = z
 /** `null` is a real value here: it means the policy is off, not unset. */
 const OPTIONAL_SECONDS = SECONDS.nullable();
 
+/**
+ * App id globs, `*` being the only wildcard. Blanks are dropped rather than
+ * rejected because these are edited as a textarea, and a trailing newline
+ * should not be an error.
+ */
+const APP_PATTERNS = z.preprocess(
+  (value) =>
+    Array.isArray(value)
+      ? value.map((entry) => (typeof entry === "string" ? entry.trim() : entry)).filter(Boolean)
+      : value,
+  z.array(z.string()).max(200),
+);
+
 export const SETTINGS = {
   "reservation.ttlSeconds": {
     schema: SECONDS,
@@ -43,6 +56,45 @@ export const SETTINGS = {
   "reservation.maxDurationSeconds": {
     schema: OPTIONAL_SECONDS,
     default: () => null,
+  },
+
+  /**
+   * Resetting a device between users. Off until an admin turns it on, because
+   * what counts as "clean" depends on what the devices are for — see
+   * docs/CLEANUP.md.
+   */
+  "cleanup.enabled": { schema: z.boolean(), default: () => false },
+  /** Uninstall apps that appeared during the session. */
+  "cleanup.uninstallApps": { schema: z.boolean(), default: () => true },
+  /** Home, rotation back to 0, clipboard cleared. */
+  "cleanup.resetScreen": { schema: z.boolean(), default: () => true },
+  /**
+   * `pm clear` on surviving third-party apps. Off by default: the third-party
+   * list includes anything the organisation preinstalled — a test harness, an
+   * MDM agent — and wiping its data is a decision, not a default.
+   */
+  "cleanup.clearAppData": { schema: z.boolean(), default: () => false },
+  /**
+   * Which apps `clearAppData` may touch, as `*` globs over app ids matched
+   * case-insensitively. Empty allow list means every surviving app; a
+   * non-empty one means only what it names. Deny wins over allow.
+   *
+   * Two lists rather than one because the useful configuration is usually
+   * "clear these, whatever else is on the phone" — an allow list of
+   * `*.google.*` and the apps under test — and expressing that as exclusions
+   * means editing the setting every time someone preinstalls something new.
+   */
+  "cleanup.clearAppDataAllow": { schema: APP_PATTERNS, default: () => [] },
+  "cleanup.clearAppDataDeny": { schema: APP_PATTERNS, default: () => [] },
+  /** Empty the folders each provider was configured with. */
+  "cleanup.wipeFolders": { schema: z.boolean(), default: () => false },
+  /**
+   * Whole-run deadline. The provider returns the device whatever happens; this
+   * decides how long it may hold it first.
+   */
+  "cleanup.timeoutSeconds": {
+    schema: z.number().int().min(10).max(600),
+    default: () => 120,
   },
 } as const satisfies Record<string, { schema: z.ZodTypeAny; default: () => unknown }>;
 

@@ -15,6 +15,46 @@ export const PROTOCOL_VERSION = 1;
 
 // ── commands: coordinator → provider ───────────────────────────────────────
 
+/**
+ * Which parts of a between-users reset to run, straight from farm policy.
+ *
+ * Sent per command rather than configured on the provider because this is an
+ * admin's decision about the farm, not an operator's about a host — the one
+ * exception being the *paths* `wipeFolders` acts on, which stay in the
+ * provider's YAML so that no web form ends in `rm -rf` on a phone.
+ */
+export const CleanupSteps = named(
+  "CleanupSteps",
+  z.object({
+    /** Uninstall apps that appeared during the session, against a baseline. */
+    uninstallApps: z.boolean(),
+    /** Home, rotation back to 0, clipboard cleared. */
+    resetScreen: z.boolean(),
+    /** `pm clear` on surviving third-party apps. Android only. */
+    clearAppData: z.boolean(),
+    /** Empty the paths the provider was configured with. */
+    wipeFolders: z.boolean(),
+  }),
+);
+
+/**
+ * Which app ids a step may touch, as `*` globs matched case-insensitively —
+ * `com.google.*`, `*.google.*`, `com.acme.harness`.
+ *
+ * An empty `allow` means everything is in scope; a non-empty one narrows the
+ * step to exactly what it lists. `deny` always wins. Clearing app data is
+ * destructive to state an app may not survive losing — a signed-in MDM agent,
+ * a test harness holding its own credentials — so the safe configuration is to
+ * name what may be cleared rather than to guess at what may not.
+ */
+export const AppFilter = named(
+  "AppFilter",
+  z.object({
+    allow: z.array(z.string()),
+    deny: z.array(z.string()),
+  }),
+);
+
 export const CommandPayload = named(
   "CommandPayload",
   z.discriminatedUnion("kind", [
@@ -45,6 +85,25 @@ export const CommandPayload = named(
       args: z.array(z.string()).optional(),
     }),
     z.object({ kind: z.literal("device.uninstall"), deviceId: z.string(), appId: z.string() }),
+    /**
+     * Reset the device now that its reservation has ended. Sent after
+     * `session.revoke`, and only when the provider is still connected.
+     *
+     * Fire-and-forget on purpose: a multi-package uninstall runs well past the
+     * gateway's correlated-command timeout, so completion comes back as a
+     * `cleanup.finished` event and a `device.status` push. The provider decides
+     * which of these steps it can actually do — a step its backend does not
+     * support is a no-op, not a failure. See docs/CLEANUP.md.
+     */
+    z.object({
+      kind: z.literal("device.cleanup"),
+      deviceId: z.string(),
+      steps: CleanupSteps,
+      /** Scopes `clearAppData`. Ignored by the other steps. */
+      clearAppDataFilter: AppFilter,
+      /** Whole-run deadline. The provider lands the device on `ready` regardless. */
+      timeoutSeconds: z.number().int(),
+    }),
     /** Android only. Binds a provider-host TCP port proxying an adb transport. */
     z.object({ kind: z.literal("device.adb.expose"), deviceId: z.string() }),
     z.object({ kind: z.literal("device.adb.unexpose"), deviceId: z.string() }),
@@ -122,6 +181,28 @@ export const ProviderMessage = named(
       sha256: z.string(),
       ok: z.boolean(),
       error: z.string().optional(),
+    }),
+    /**
+     * A between-users reset finished, whatever the outcome.
+     *
+     * Audit-only, like `install.finished`: the device's own `ready` comes back
+     * as a separate `device.status`, so losing this message costs a log entry
+     * rather than stranding a device. `errors` is non-empty on a partial run —
+     * steps do not abort each other — and a whole-run timeout arrives as one
+     * error with the rest of the report filled in as far as it got.
+     */
+    z.object({
+      type: z.literal("cleanup.finished"),
+      deviceId: z.string(),
+      /** Apps uninstalled, by id. */
+      removed: z.array(z.string()),
+      /** Apps whose data was cleared, by id. */
+      cleared: z.array(z.string()),
+      /** Paths emptied. */
+      wiped: z.array(z.string()),
+      /** One per failed step, already prefixed with the step's name. */
+      errors: z.array(z.string()),
+      durationMs: z.number().int(),
     }),
     /**
      * Bytes left the device. The coordinator is not on that path — the download

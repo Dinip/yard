@@ -12,7 +12,8 @@ Then, depending on what you're touching:
 [ARCHITECTURE.md](docs/ARCHITECTURE.md) · [DATA-MODEL.md](docs/DATA-MODEL.md) ·
 [COORDINATOR.md](docs/COORDINATOR.md) · [WEB.md](docs/WEB.md) ·
 [PROVIDER.md](docs/PROVIDER.md) · [PROTOCOL.md](docs/PROTOCOL.md) ·
-[REFERENCES.md](docs/REFERENCES.md) · [DEVELOPMENT.md](docs/DEVELOPMENT.md)
+[CLEANUP.md](docs/CLEANUP.md) · [REFERENCES.md](docs/REFERENCES.md) ·
+[DEVELOPMENT.md](docs/DEVELOPMENT.md)
 
 ## What this is
 

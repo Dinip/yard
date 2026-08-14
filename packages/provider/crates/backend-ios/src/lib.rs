@@ -18,6 +18,7 @@
 //! exist, and the backend fails loudly at session bring-up rather than
 //! half-working.
 
+pub mod app_list;
 pub mod device;
 pub mod hevc;
 pub mod hid;
@@ -37,6 +38,7 @@ use idevice::core_device::{
 };
 use idevice::diagnostics_relay::DiagnosticsRelayClient;
 use idevice::installation_proxy::InstallationProxyClient;
+use idevice::provider::IdeviceProvider;
 use idevice::services::afc::{opcode::AfcFopenMode, AfcClient};
 use idevice::services::house_arrest::HouseArrestClient;
 use idevice::{IdeviceService as _, ReadWrite};
@@ -48,6 +50,7 @@ use provider_core::video::{channel, VideoGeometry, VideoHandle, VideoPublisher};
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
+use crate::app_list::AppList;
 use crate::device::{connect_service, DeviceHost};
 use crate::hid::Input;
 
@@ -121,6 +124,22 @@ impl IosPath {
     }
 }
 
+/// Deletes an upload from the staging directory, on its own AFC connection.
+///
+/// A fresh connection because the install's was closed with the file: this runs
+/// after `install_with_callback` either way, including the failure path, and
+/// reusing a client that may have died with the install would turn a leak into
+/// a second error.
+async fn remove_staged(provider: &dyn IdeviceProvider, path: &str) -> Result<()> {
+    let mut afc = AfcClient::connect(provider)
+        .await
+        .map_err(|err| anyhow!("afc connect: {err:?}"))?;
+    afc.remove(path)
+        .await
+        .map_err(|err| anyhow!("remove {path}: {err:?}"))?;
+    Ok(())
+}
+
 fn normalize(path: &str) -> String {
     let trimmed = path.trim_end_matches('/');
     if trimmed.is_empty() {
@@ -138,6 +157,11 @@ const CONTACT_MAX: Duration = Duration::from_secs(10);
 
 /// How long to wait for a session when a request needs one.
 const SESSION_WAIT: Duration = Duration::from_secs(20);
+
+/// How long an app listing may take end to end, stream included. Under the
+/// coordinator's 15s command timeout so a slow device surfaces as itself rather
+/// than as an unresponsive provider.
+const APPS_TIMEOUT: Duration = Duration::from_secs(12);
 
 /// How stale a battery reading `info()` will accept before paying for a fresh
 /// diagnostics round trip.
@@ -939,18 +963,31 @@ impl DeviceBackend for IosBackend {
     }
 
     async fn apps(&self) -> BackendResult<Vec<AppInfo>> {
-        let session = self.session().await?;
-        let mut adapter = session.adapter;
-        let mut client = connect_service!(
-            AppServiceClient<Box<dyn ReadWrite>>,
-            &mut adapter,
-            &session.handshake
-        )?;
+        // The bound covers opening the stream as well as the request, because
+        // *opening* it is what hangs on a device whose app service is unwell —
+        // a timeout around the request alone never fires, and the caller waits
+        // forever on a future that is stuck a step earlier.
+        let listed = tokio::time::timeout(APPS_TIMEOUT, async {
+            let session = self.session().await?;
+            let mut adapter = session.adapter;
+            let mut client = connect_service!(AppList, &mut adapter, &session.handshake)?;
+            client
+                .list_apps()
+                .await
+                .map_err(|err| BackendError::Failed(format!("list apps: {err:?}")))
+        })
+        .await;
 
-        let apps = client
-            .list_apps(false, true, false, false, false)
-            .await
-            .map_err(|err| BackendError::Failed(format!("list apps: {err:?}")))?;
+        let apps = match listed {
+            Ok(result) => result?,
+            Err(_) => {
+                return Err(BackendError::Failed(format!(
+                    "the device did not answer a list-apps request within {}s; \
+                     its app service may need the device rebooted",
+                    APPS_TIMEOUT.as_secs()
+                )))
+            }
+        };
 
         Ok(apps
             .into_iter()
@@ -1003,9 +1040,9 @@ impl DeviceBackend for IosBackend {
             .await
             .map_err(|err| anyhow!("installation_proxy connect: {err:?}"))?;
 
-        proxy
+        let outcome = proxy
             .install_with_callback(
-                remote_path,
+                remote_path.clone(),
                 None,
                 |(percent, _)| async move {
                     debug!(percent, "install progress");
@@ -1013,9 +1050,57 @@ impl DeviceBackend for IosBackend {
                 (),
             )
             .await
-            .map_err(|err| anyhow!("install: {err:?}"))?;
+            .map_err(|err| anyhow!("install: {err:?}"));
 
+        // The staged copy must go whatever happened, exactly as the Android
+        // backend deletes its pushed APK: the path is per-device, so it was
+        // only ever overwritten by the *next* install on the same phone, and a
+        // device that never gets another one holds an IPA forever.
+        let _ = remove_staged(&*provider, &remote_path).await;
+
+        outcome?;
         progress.report("done", Some(1.0));
+        Ok(())
+    }
+
+    /// Home, and rotation back to upright.
+    ///
+    /// No clipboard step: `clipboard_set` here goes through the pasteboard
+    /// service, which is a *sync* with the host rather than a write, and an
+    /// empty sync is not the same as clearing what the device holds. Leaving
+    /// the step out is better than reporting a clear that did not happen.
+    async fn reset_screen(&self) -> BackendResult<()> {
+        self.input(InputEvent::Key {
+            key: "Home".into(),
+            down: true,
+        })
+        .await?;
+        self.input(InputEvent::Key {
+            key: "Home".into(),
+            down: false,
+        })
+        .await?;
+        self.rotate(0).await
+    }
+
+    /// Empties the staging directory installs upload through.
+    ///
+    /// This is the whole of iOS's filesystem reach: AFC sees the media
+    /// partition, not an app's container, so there is nothing else a wipe could
+    /// touch. Configured `cleanup_paths` are interpreted relative to that same
+    /// AFC root.
+    async fn wipe_paths(&self, paths: &[String]) -> BackendResult<()> {
+        let provider = device::usbmux_provider(&self.options.udid).await?;
+        let mut afc = AfcClient::connect(&*provider)
+            .await
+            .map_err(|err| anyhow!("afc connect: {err:?}"))?;
+
+        for path in paths {
+            let path = path.trim_start_matches('/');
+            afc.remove_all(path)
+                .await
+                .map_err(|err| anyhow!("wiping {path}: {err:?}"))?;
+        }
         Ok(())
     }
 
