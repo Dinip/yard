@@ -25,8 +25,6 @@ export function DeviceCard({ device }: { device: DeviceListItem }) {
       className={cn("gap-3 py-4 transition-colors hover:border-ring", unavailable && "opacity-60")}
     >
       <CardHeader className="px-4">
-        {/* min-w-0 on the row too: without it an unbreakable name floors the
-            grid item's width and the badge is pushed out of the card. */}
         <div className="flex min-w-0 items-start justify-between gap-2">
           <div className="min-w-0">
             <Link
