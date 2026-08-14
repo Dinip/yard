@@ -134,11 +134,23 @@ a lesser window than the page.
   controls below the screen is a row of screen nobody gets. The rail is the tall
   thin space next to a tall thin device — it has height to spend and no width
   worth saving, so the actions are spelled out. It scrolls if a viewport is short.
-- `"overlay"` — the popout's floating column, behind a draggable corner handle,
-  icon-only because it sits *over* the picture. Also a column, for the same
-  reason: a popout is a window shaped like a phone, so ten controls across is
-  the one direction that cannot fit. It grows away from its own corner and caps
-  at `100svh - 4rem`.
+- `"overlay"` — the popout's floating bar, behind a draggable corner handle,
+  icon-only because it sits *over* the picture. It unfolds along whichever axis
+  the window has room in, which is the one the device is **not** long in: a
+  column beside a portrait picture, like the rail, and a row along the edge of a
+  landscape one. Ten controls across a portrait popout is the direction that
+  cannot fit, and ten down a landscape one is the same mistake turned sideways.
+  The handle sits on that line rather than beside it, so the two read as one
+  object; either way the bar grows away from its own corner and caps at
+  `100svh - 6rem` / `100svw - 6rem`, which leaves room for the handle and both
+  insets.
+
+  `controlsAxis` in `lib/controls-corner.ts` picks the axis from the shape of
+  the picture — the renderer's frame size, which is reported *after*
+  `renderRotation` is applied and so is right on both backends. `display` stands
+  in until the first frame, and needs the rotation applied by hand there because
+  iOS reports portrait dimensions however the device is held. Unlike the corner,
+  the axis is not remembered: it belongs to the device, not the user.
 
 Icon-only rendering is why every action's label is a phrase (`Copy from device`,
 not `Copy`): in the overlay it is the tooltip and the accessible name.
