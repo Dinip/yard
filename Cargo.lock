@@ -287,11 +287,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "axum",
  "farm-protocol",
  "futures",
  "idevice",
  "plist",
  "provider-core",
+ "reqwest",
  "serde_json",
  "tokio",
  "tracing",

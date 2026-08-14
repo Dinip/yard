@@ -288,10 +288,8 @@ the request is not quiet.
 
 **Not to be confused with a device in the wrong state.** If the RSD handshake
 offers no `com.apple.coredevice.*` services at all — only lockdown shims and
-`…coredevice.untrusted.tunnelservice` — the device has not had its Developer
-Disk Image mounted since its last reboot. Developer Mode being on in Settings is
-not sufficient; the mount is lost on every boot. Any `devicectl` command against
-the device re-mounts it, after which the provider picks it up within one retry.
+`…coredevice.untrusted.tunnelservice` — the device has no Developer Disk Image
+mounted — see [The Developer Disk Image](#the-developer-disk-image) below.
 `connect_service_stream` names the offered services in its error precisely so
 these two cases are distinguishable at a glance.
 
@@ -356,6 +354,50 @@ wedges under a PLI barrage. Every constant marks a field failure.
 Display geometry comes from the SPS. `mobilegestalt` — what `stf-ios-provider`
 read — answers `MobileGestaltDeprecated` on iOS 26/27, so it is a fallback for
 older devices only.
+
+### The Developer Disk Image
+
+**The mount is lost on every reboot**, and Developer Mode staying on in Settings
+does not preserve it. Without it a device has no screen, no input and no app
+list — only lockdown. So the provider mounts it itself, in `ddi.rs`, on every
+tunnel attempt and before `CoreDeviceProxy::connect`: the mounter is a lockdown
+service, reachable exactly when the CoreDevice services are not.
+
+`LookupImage` runs first and is one plist round trip, so the steady state costs
+nothing and a phone that reboots mid-shift is remounted by the next retry — no
+`devicectl`, no operator.
+
+Since iOS 17 there is **one** image for every device and version; what makes it
+device-specific is a personalization ticket that `idevice` fetches from Apple's
+TSS server during the mount, and that the device then caches. So the payload is
+downloaded once per host, into `ddi.cache_dir`, and shared by every device on it.
+
+```yaml
+ddi:
+  enabled: true                    # absent block = on, unlike `metrics:`
+  cache_dir: /var/lib/farm/ddi     # Image.dmg, BuildManifest.plist, Image.dmg.trustcache
+  base_url: https://raw.githubusercontent.com/doronz88/DeveloperDiskImage/main/PersonalizedImages/Xcode_iOS_DDI_Personalized
+```
+
+Pre-populating `cache_dir` — with a copy extracted from Xcode's
+`/Library/Developer/CoreDevice/CandidateDDIs/iOS_DDI.dmg`, or from your own
+mirror — means nothing is ever downloaded, which is how to keep a third party
+off the path. **TSS is a separate reach**: the first mount of a device it has
+never personalized needs `gs.apple.com`, whatever the cache holds.
+
+A mount failure is a warning, never fatal — a farm whose devices are mounted by
+hand keeps working — and is retried at most every five minutes rather than every
+five seconds, so a device that cannot mount at all does not hammer Apple.
+
+Two failures the provider cannot fix for you, both named in the log:
+
+- **Developer Mode is off.** Settings → Privacy & Security → Developer Mode,
+  then reboot and unlock. Nothing can mount before that.
+- **The image is older than the phone.** A just-updated iOS may need a newer DDI
+  than the mirror carries; the build the provider fetched is logged
+  (`build=27A5228h`) for exactly this comparison. Clear `cache_dir` to refetch.
+
+Set `auto_mount_ddi: false` in a device's `options:` to leave one device alone.
 
 ## `backend-android`
 

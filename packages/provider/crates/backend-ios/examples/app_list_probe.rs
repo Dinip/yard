@@ -30,6 +30,10 @@ async fn main() -> anyhow::Result<()> {
             udid: udid.clone(),
             display_id: 0,
             motion_idr: false,
+            // The probe runs against a device that is already streaming, so it
+            // has no business mounting anything.
+            auto_mount_ddi: false,
+            ddi: None,
         },
         None,
     );

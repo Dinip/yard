@@ -78,8 +78,16 @@ async fn main() -> Result<()> {
 
     let debug_ports = PortPool::new(config.remote_debug.range()?);
 
+    // One cache for every iOS device on the host: the personalized image is the
+    // same bytes for all of them, and only the signing ticket is per device.
+    // Built even when disabled is impossible — `None` is how "disabled" travels.
+    let ddi = config
+        .ddi
+        .enabled
+        .then(|| backend_ios::ddi::DdiCache::new(config.ddi.clone()));
+
     for device in &config.devices {
-        let backend = build_backend(device, &debug_ports)?;
+        let backend = build_backend(device, &debug_ports, ddi.as_ref())?;
         info!(udid = %device.udid, backend = ?device.backend, "device configured");
         supervisor.add_with_cleanup_paths(
             device.udid.clone(),
@@ -196,6 +204,7 @@ async fn main() -> Result<()> {
 fn build_backend(
     device: &provider_core::config::DeviceConfig,
     debug_ports: &Arc<PortPool>,
+    ddi: Option<&Arc<backend_ios::ddi::DdiCache>>,
 ) -> Result<Arc<dyn DeviceBackend>> {
     let name = device.name.clone().unwrap_or_else(|| device.udid.clone());
 
@@ -218,8 +227,9 @@ fn build_backend(
             ))
         }
         BackendKind::Ios => {
-            let options = backend_ios::IosOptions::parse(&device.udid, &device.options)
+            let mut options = backend_ios::IosOptions::parse(&device.udid, &device.options)
                 .with_context(|| format!("device {}", device.udid))?;
+            options.ddi = ddi.cloned();
             Ok(backend_ios::IosBackend::new(options, device.name.clone()))
         }
         BackendKind::Android => {

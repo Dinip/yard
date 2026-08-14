@@ -147,6 +147,15 @@ Android needs no bridge — the adb server already speaks TCP, and the device's
 `adb_server` option points at it. This is a development shape; a provider host
 in production is Linux with the bus passed in.
 
+An iPhone also needs a Developer Disk Image mounted, and loses it on every
+reboot. The provider now mounts it itself and downloads the image once into
+`ddi.cache_dir` — so give that path a volume, or it re-downloads on every
+container recreate. To keep the download off a third-party mirror entirely,
+pre-populate the directory with `Image.dmg`, `BuildManifest.plist` and
+`Image.dmg.trustcache` from a mounted copy of Xcode's
+`/Library/Developer/CoreDevice/CandidateDDIs/iOS_DDI.dmg`. See
+[PROVIDER.md](PROVIDER.md#the-developer-disk-image).
+
 ## Everyday commands
 
 ```bash

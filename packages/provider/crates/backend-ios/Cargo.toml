@@ -12,6 +12,8 @@ farm-protocol.workspace = true
 
 idevice.workspace = true
 plist.workspace = true
+# Fetching the developer disk image from a mirror, once per process.
+reqwest.workspace = true
 
 tokio.workspace = true
 futures.workspace = true
@@ -24,3 +26,5 @@ tracing.workspace = true
 
 [dev-dependencies]
 tracing-subscriber.workspace = true
+# A throwaway mirror for the DDI cache tests.
+axum.workspace = true

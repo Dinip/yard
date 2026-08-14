@@ -21,7 +21,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context as _, Result};
 use idevice::core_device_proxy::CoreDeviceProxy;
@@ -34,9 +34,9 @@ use idevice::{IdeviceService as _, ReadWrite, RsdService};
 use provider_core::video::VideoPublisher;
 use tokio::sync::{watch, Mutex};
 use tokio::time::timeout;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
-use crate::{hid, media, Geometry, IosOptions};
+use crate::{ddi, hid, media, Geometry, IosOptions};
 
 /// Delay before rebuilding a session that dropped, so an unplugged or rebooting
 /// device does not spin the loop.
@@ -104,6 +104,7 @@ impl DeviceHost {
             generation,
             publisher,
             input,
+            ddi_failed_at: None,
         }));
 
         host
@@ -386,11 +387,15 @@ struct Supervisor {
     generation: Arc<AtomicU64>,
     publisher: VideoPublisher,
     input: Arc<Mutex<Option<hid::InputHandle>>>,
+    /// When the last DDI mount failed, so a device that cannot mount at all is
+    /// not re-personalised against Apple's servers every `RECONNECT_DELAY`.
+    /// Owned by the supervisor loop, hence `&mut` rather than a lock.
+    ddi_failed_at: Option<Instant>,
 }
 
-async fn supervise(supervisor: Supervisor) {
+async fn supervise(mut supervisor: Supervisor) {
     loop {
-        if let Err(err) = run_once(&supervisor).await {
+        if let Err(err) = run_once(&mut supervisor).await {
             // `?err` and not `%err`: anyhow's Display prints only the outermost
             // context, so a session that died three layers down reported the
             // same sentence whatever had actually gone wrong.
@@ -412,12 +417,14 @@ async fn supervise(supervisor: Supervisor) {
     }
 }
 
-async fn run_once(supervisor: &Supervisor) -> Result<()> {
-    let options = &supervisor.options;
+async fn run_once(supervisor: &mut Supervisor) -> Result<()> {
+    let options = supervisor.options.clone();
     info!(udid = %options.udid, "establishing the CoreDevice tunnel");
 
     let provider = usbmux_provider(&options.udid).await?;
     assert_supported(&product_version(&*provider).await?)?;
+
+    mount_ddi(supervisor, &*provider).await;
 
     let proxy = CoreDeviceProxy::connect(&*provider)
         .await
@@ -472,6 +479,34 @@ async fn run_once(supervisor: &Supervisor) -> Result<()> {
     // builds a fresh one.
     let _ = adapter.close().await;
     outcome
+}
+
+/// Mount the DDI, if this device wants it mounted for it.
+///
+/// Deliberately infallible from the caller's point of view: a farm where the
+/// operator mounts images by hand — or a device already mounted by Xcode — must
+/// keep working exactly as it did, so a failure here is a warning and the tunnel
+/// bring-up carries on. `connect_service_stream`'s service list stays the
+/// diagnostic for a device that genuinely has nothing mounted.
+async fn mount_ddi(supervisor: &mut Supervisor, provider: &dyn IdeviceProvider) {
+    if !supervisor.options.auto_mount_ddi {
+        return;
+    }
+    let Some(cache) = supervisor.options.ddi.clone() else {
+        return;
+    };
+
+    match ddi::ensure_mounted(provider, &cache, supervisor.ddi_failed_at).await {
+        Ok(ddi::MountOutcome::Mounted) => supervisor.ddi_failed_at = None,
+        Ok(outcome) => debug!(?outcome, "developer disk image"),
+        Err(err) => {
+            supervisor.ddi_failed_at = Some(Instant::now());
+            warn!(
+                ?err,
+                "could not mount the developer disk image; continuing without it"
+            );
+        }
+    }
 }
 
 async fn product_version(provider: &dyn IdeviceProvider) -> Result<String> {

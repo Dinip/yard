@@ -1346,6 +1346,43 @@ follow-up if that turns out to matter. iOS has no `pm clear` equivalent, so
 
 ---
 
+## Phase 17 — mounting the Developer Disk Image ✅
+
+*Done when: an iPhone that has just rebooted comes back on its own, with nobody
+running `devicectl` at the host.*
+
+The last hands-on step in the iOS path. A device loses its DDI mount on every
+reboot and offers no `com.apple.coredevice.*` service without one — no screen,
+no input, no app list — so until now `docs/PROVIDER.md` told the operator to run
+a `devicectl` command and the device sat `unhealthy` in a 5s retry loop until
+they did.
+
+| Item | State | Where |
+|---|---|---|
+| `ddi:` config block: enabled, cache_dir, base_url | ✅ | `provider-core/src/config.rs` |
+| Mirror fetch + on-disk cache, one download per host | ✅ | `backend-ios/src/ddi.rs` |
+| `ensure_mounted` over lockdown, before the tunnel | ✅ | `.../ddi.rs`, `.../device.rs` |
+| `auto_mount_ddi` per-device opt-out | ✅ | `backend-ios/src/lib.rs` |
+| Cache + backoff tests against a throwaway mirror | ✅ | `.../ddi.rs` tests |
+
+### Three cheap guards, because this touches Apple's servers
+
+`LookupImage` runs first, so the steady state is one plist round trip and a
+device rebooted mid-shift is remounted by the next retry. The payload is fetched
+once per process and shared by every device on the host, since iOS 17's image is
+the same bytes for all of them. And a mount that genuinely fails is left alone
+for five minutes rather than retried every five seconds — the failure path ends
+in a personalization request to Apple's TSS server, and the 5s loop would
+otherwise turn a device that can never mount into a permanent load on it.
+
+### What it still cannot fix for you
+
+Developer Mode being off, and an iOS build newer than the mirror's image. Both
+are named in the log, and both are an operator's job. Mount failure is a warning
+and never fatal, so a farm whose devices are mounted by hand is unaffected.
+
+---
+
 ## Open decisions
 
 - **Name.** The project is "Device Farm" as a placeholder. See
