@@ -1,16 +1,18 @@
 /**
- * Where the popout's control handle lands when it is dragged, and whether that
- * survives a reload.
+ * Where the popout's control handle lands when it is dragged, whether that
+ * survives a reload, and which way its bar unfolds from there.
  *
  * The point of moving it at all is that every corner is in something's way on
  * some device — the home indicator, control centre, the notification pull — so
  * the one thing that must not happen is the handle quietly returning to a
- * corner the user already rejected.
+ * corner the user already rejected. The axis is the other half: a column is
+ * right beside a portrait picture and unreachable beside a landscape one.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   type Corner,
+  controlsAxis,
   cornerClasses,
   DEFAULT_CORNER,
   loadCorner,
@@ -42,21 +44,89 @@ describe("nearestCorner", () => {
 });
 
 describe("cornerClasses", () => {
-  test("left corners unfold the bar towards the middle", () => {
-    // On the left the handle must stay outermost, or the bar would open off
-    // the edge of the screen.
-    expect(cornerClasses("tl")).toContain("flex-row-reverse");
-    expect(cornerClasses("bl")).toContain("flex-row-reverse");
-    expect(cornerClasses("tr")).not.toContain("flex-row-reverse");
-    expect(cornerClasses("br")).not.toContain("flex-row-reverse");
+  test("a row unfolds away from its own left or right edge", () => {
+    // The handle must stay outermost, or the bar would open off the screen.
+    expect(cornerClasses("tl", "horizontal")).toContain("flex-row-reverse");
+    expect(cornerClasses("bl", "horizontal")).toContain("flex-row-reverse");
+    expect(cornerClasses("tr", "horizontal")).toContain("flex-row");
+    expect(cornerClasses("tr", "horizontal")).not.toContain("flex-row-reverse");
+    expect(cornerClasses("br", "horizontal")).not.toContain("flex-row-reverse");
+  });
+
+  test("a column unfolds away from its own top or bottom edge", () => {
+    // The bar comes first in the DOM, so the reversed direction is the one that
+    // puts the handle *first* — nearest a top edge, with the bar below it.
+    expect(cornerClasses("tl", "vertical")).toContain("flex-col-reverse");
+    expect(cornerClasses("tr", "vertical")).toContain("flex-col-reverse");
+    expect(cornerClasses("bl", "vertical")).not.toContain("flex-col-reverse");
+    expect(cornerClasses("br", "vertical")).not.toContain("flex-col-reverse");
+    expect(cornerClasses("br", "vertical")).toContain("flex-col");
+  });
+
+  test("the handle and the bar share one line", () => {
+    // Fixed across the line, so the wider bar appearing cannot move the handle.
+    for (const corner of ["tl", "tr", "bl", "br"] as Corner[]) {
+      expect(cornerClasses(corner, "vertical")).toContain("w-11");
+      expect(cornerClasses(corner, "horizontal")).toContain("h-11");
+      expect(cornerClasses(corner, "vertical")).toContain("items-center");
+      expect(cornerClasses(corner, "horizontal")).toContain("items-center");
+    }
   });
 
   test("every corner is inset from the edge", () => {
     for (const corner of ["tl", "tr", "bl", "br"] as Corner[]) {
-      const classes = cornerClasses(corner);
-      expect(classes).toMatch(/(top|bottom)-3/);
-      expect(classes).toMatch(/(left|right)-3/);
+      for (const axis of ["vertical", "horizontal"] as const) {
+        const classes = cornerClasses(corner, axis);
+        expect(classes).toMatch(/(top|bottom)-3/);
+        expect(classes).toMatch(/(left|right)-3/);
+      }
     }
+  });
+});
+
+describe("controlsAxis", () => {
+  test("the bar takes the axis the picture leaves room in", () => {
+    expect(controlsAxis({ frameSize: { width: 1080, height: 2400 }, display: null })).toBe(
+      "vertical",
+    );
+    expect(controlsAxis({ frameSize: { width: 2400, height: 1080 }, display: null })).toBe(
+      "horizontal",
+    );
+  });
+
+  test("the frame wins over the display, which lags a rotation", () => {
+    // `display` can still describe the old orientation for a frame or two, and
+    // the bar must not flip twice on one rotation.
+    expect(
+      controlsAxis({
+        frameSize: { width: 2400, height: 1080 },
+        display: { width: 1080, height: 2400, renderRotation: 0 },
+      }),
+    ).toBe("horizontal");
+  });
+
+  test("before the first frame, the display decides", () => {
+    // Android: the encoder followed the device, so the reported size is already
+    // the rotated one and there is nothing left for the viewer to turn.
+    expect(controlsAxis({ frameSize: null, display: { width: 2400, height: 1080 } })).toBe(
+      "horizontal",
+    );
+    // iOS: portrait dimensions whatever the orientation, and `renderRotation`
+    // is the only thing that says the picture is on its side.
+    expect(
+      controlsAxis({ frameSize: null, display: { width: 1170, height: 2532, renderRotation: 90 } }),
+    ).toBe("horizontal");
+    expect(
+      controlsAxis({
+        frameSize: null,
+        display: { width: 1170, height: 2532, renderRotation: 180 },
+      }),
+    ).toBe("vertical");
+  });
+
+  test("knowing nothing yet means portrait, not no bar at all", () => {
+    expect(controlsAxis({ frameSize: null, display: null })).toBe("vertical");
+    expect(controlsAxis({ frameSize: null, display: { renderRotation: 90 } })).toBe("vertical");
   });
 });
 

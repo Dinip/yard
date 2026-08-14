@@ -565,14 +565,28 @@ control centre and notifications from, and which of those matters depends on the
 device and the task. The handle drags to any of the four and the choice is
 remembered in `localStorage` — one key for the whole farm, since the reason to
 move it is the shape of your own screen, not the device's. A drag under four
-pixels is still a click, so pinning did not become fiddly. The row that holds it
-has a fixed height: the expanded pill is taller than the handle, and a centred
-row re-centred both the moment it appeared, so the handle jumped down as you
-reached it.
+pixels is still a click, so pinning did not become fiddly. The line that holds
+it is fixed across its own axis: the expanded pill is the larger of the two, and
+a centred line re-centred both the moment it appeared, so the handle jumped as
+you reached it.
+
+**The bar follows the device's orientation.** It was a column whatever the
+device was doing, which is right for a portrait popout — a window shaped like a
+phone has height to spend and no width — and exactly wrong once the screen
+turns: the column ran off the bottom of a short wide window and started
+scrolling, with the width beside it empty. `controlsAxis`
+(`web/src/lib/controls-corner.ts`) now picks the axis from the shape of the
+picture, so a landscape device gets a row along the edge from the same handle.
+The handle sits *on* that line rather than beside it — above the column, left of
+the row — so the two read as one object however the device is held. It reads the renderer's frame size, which is reported after `renderRotation` is
+applied and so is already correct on both backends; `display` stands in until
+the first frame. Unlike the corner it is not remembered — the axis belongs to
+the device, not the user.
 
 **Verification is manual and outstanding:** pop out and watch the parent's
 WebSocket close, close the popout and watch the parent resume within ~5s,
-reload the parent while the popout is open and confirm it comes back suspended.
+reload the parent while the popout is open and confirm it comes back suspended,
+and rotate the device with the bar open from each of the four corners.
 
 ---
 

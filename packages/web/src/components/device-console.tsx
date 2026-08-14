@@ -29,6 +29,7 @@ import { Button } from "@/components/ui/button";
 import { useDeviceSession } from "@/hooks/use-device-session";
 import {
   type Corner,
+  controlsAxis,
   cornerClasses,
   loadCorner,
   nearestCorner,
@@ -113,6 +114,9 @@ export function DeviceConsole({
 
   const screenRef = useRef<HTMLDivElement | null>(null);
   const [corner, setCorner] = useState<Corner>(loadCorner);
+  // Not remembered, unlike the corner: this one belongs to the device, and it
+  // changes under the user the moment the screen turns.
+  const axis = controlsAxis({ frameSize: session.frameSize, display: session.display });
   /** Set only while a drag is in flight; the handle follows the pointer. */
   const [dragOffset, setDragOffset] = useState<{ dx: number; dy: number } | null>(null);
   const dragFrom = useRef<{ x: number; y: number; moved: boolean } | null>(null);
@@ -428,16 +432,14 @@ export function DeviceConsole({
             <div
               role="toolbar"
               aria-label="Device controls"
-              // A fixed height, so expanding the bar cannot nudge the handle:
-              // the pill is taller than the button, and a centred row would
-              // re-centre both the moment it appeared. The pill also wraps to two
-              // rows in a narrow window, so it grows away from its own edge —
-              // downwards from a top corner, upwards from a bottom one — instead
-              // of centring itself off the top of the screen.
+              // Handle and bar are one line — the bar unfolds *from* the handle
+              // rather than beside it — and `cornerClasses` fixes the extent
+              // across that line so expanding the bar cannot nudge the handle:
+              // the pill is the larger of the two, and a centred line would
+              // re-centre both the moment it appeared.
               className={cn(
-                "absolute flex h-11 gap-1",
-                corner.startsWith("t") ? "items-start" : "items-end",
-                cornerClasses(corner),
+                "absolute flex gap-1",
+                cornerClasses(corner, axis),
                 dragOffset && "z-10",
               )}
               style={
@@ -455,17 +457,35 @@ export function DeviceConsole({
               }}
             >
               {controlsOpen && !dragOffset && (
-                // A column, matching the rail. A popout is a window shaped like
-                // a phone: it has vertical room and almost no horizontal room,
-                // so ten icons across — even wrapped onto two rows — is the one
-                // direction that cannot fit. Icon-only here, unlike the rail,
-                // because this floats *over* the picture.
-                <div className="flex max-h-[calc(100svh-4rem)] flex-col items-center gap-3 overflow-y-auto rounded-2xl border bg-background/85 px-1 py-2 shadow-sm backdrop-blur">
+                // The bar unfolds along the axis the window has room in, which
+                // is the one the device is not long in: a column beside a
+                // portrait picture, matching the rail, and a row along the edge
+                // of a landscape one. Ten icons across a portrait popout is the
+                // direction that cannot fit, and ten down a landscape one is
+                // the same mistake turned sideways. Icon-only either way,
+                // unlike the rail, because this floats *over* the picture.
+                <div
+                  className={cn(
+                    "flex items-center gap-3 rounded-2xl border bg-background/85 shadow-sm backdrop-blur",
+                    // One line, scrolled rather than wrapped: wrapping would
+                    // take the pill off the line it shares with the handle. The
+                    // cap leaves room for the handle and both insets.
+                    axis === "horizontal"
+                      ? "max-w-[calc(100svw-6rem)] flex-row overflow-x-auto px-2 py-1"
+                      : "max-h-[calc(100svh-6rem)] flex-col overflow-y-auto px-1 py-2",
+                  )}
+                >
                   {/* Proximity does the grouping — there is no room out here for
                       headings, and a divider drawn per group is more line than
                       a stack of ten buttons needs. */}
                   {sections.map((section) => (
-                    <div key={section.key} className="flex flex-col items-center gap-1">
+                    <div
+                      key={section.key}
+                      className={cn(
+                        "flex items-center gap-1",
+                        axis === "horizontal" ? "flex-row" : "flex-col",
+                      )}
+                    >
                       {section.actions.map((action) => (
                         <ActionButton key={action.key} action={action} disabled={!active} />
                       ))}
