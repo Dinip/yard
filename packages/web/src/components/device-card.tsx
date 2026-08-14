@@ -25,11 +25,16 @@ export function DeviceCard({ device }: { device: DeviceListItem }) {
       className={cn("gap-3 py-4 transition-colors hover:border-ring", unavailable && "opacity-60")}
     >
       <CardHeader className="px-4">
-        <div className="flex items-start justify-between gap-2">
+        {/* min-w-0 on the row itself, not just the name: the row is a grid item
+            of CardHeader, and its automatic minimum size would otherwise floor
+            at the min-content of an unbreakable name (a UDID), pushing the
+            badge out of the card before truncation ever engages. */}
+        <div className="flex min-w-0 items-start justify-between gap-2">
           <div className="min-w-0">
             <Link
               to="/devices/$deviceId"
               params={{ deviceId: device.id }}
+              title={device.name ?? device.model ?? device.id}
               className="block truncate font-medium hover:underline"
             >
               {device.name ?? device.model ?? device.id}
