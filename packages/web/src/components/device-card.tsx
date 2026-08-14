@@ -25,11 +25,12 @@ export function DeviceCard({ device }: { device: DeviceListItem }) {
       className={cn("gap-3 py-4 transition-colors hover:border-ring", unavailable && "opacity-60")}
     >
       <CardHeader className="px-4">
-        <div className="flex items-start justify-between gap-2">
+        <div className="flex min-w-0 items-start justify-between gap-2">
           <div className="min-w-0">
             <Link
               to="/devices/$deviceId"
               params={{ deviceId: device.id }}
+              title={device.name ?? device.model ?? device.id}
               className="block truncate font-medium hover:underline"
             >
               {device.name ?? device.model ?? device.id}
