@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
 use farm_protocol::{
-    Battery, CleanupSteps, CommandData, CommandPayload, DeviceSnapshot, DeviceStatus,
+    AppFilter, Battery, CleanupSteps, CommandData, CommandPayload, DeviceSnapshot, DeviceStatus,
     ProviderMessage,
 };
 use tokio::sync::RwLock;
@@ -499,6 +499,7 @@ impl CommandHandler for Supervisor {
             CommandPayload::DeviceCleanup {
                 device_id,
                 steps,
+                clear_app_data_filter,
                 timeout_seconds,
             } => {
                 let device = self.require(&device_id)?;
@@ -516,7 +517,13 @@ impl CommandHandler for Supervisor {
                 // control socket's read loop, so blocking here would stall this
                 // provider's heartbeats for every device it owns.
                 let sender = self.control.read().await.clone();
-                tokio::spawn(run_cleanup(device, sender, steps, timeout_seconds));
+                tokio::spawn(run_cleanup(
+                    device,
+                    sender,
+                    steps,
+                    clear_app_data_filter,
+                    timeout_seconds,
+                ));
                 Ok(None)
             }
 
@@ -603,6 +610,7 @@ async fn run_cleanup(
     device: Arc<Device>,
     sender: Option<ControlSender>,
     steps: CleanupSteps,
+    clear_filter: AppFilter,
     timeout_seconds: i64,
 ) {
     let started = Instant::now();
@@ -612,7 +620,13 @@ async fn run_cleanup(
     let budget = Duration::from_secs(timeout_seconds.clamp(1, 3600) as u64);
     let mut report = match tokio::time::timeout(
         budget,
-        crate::cleanup::run(device.backend.as_ref(), &steps, apps, &device.cleanup_paths),
+        crate::cleanup::run(
+            device.backend.as_ref(),
+            &steps,
+            &clear_filter,
+            apps,
+            &device.cleanup_paths,
+        ),
     )
     .await
     {

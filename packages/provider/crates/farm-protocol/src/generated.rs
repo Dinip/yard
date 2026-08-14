@@ -130,6 +130,13 @@ pub struct CleanupSteps {
     pub wipe_folders: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppFilter {
+    pub allow: Vec<String>,
+    pub deny: Vec<String>,
+}
+
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -165,6 +172,7 @@ pub enum CommandPayload {
     DeviceCleanup {
         device_id: String,
         steps: CleanupSteps,
+        clear_app_data_filter: AppFilter,
         timeout_seconds: i64,
     },
     #[serde(rename = "device.adb.expose", rename_all = "camelCase")]

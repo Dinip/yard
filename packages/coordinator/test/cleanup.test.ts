@@ -97,6 +97,8 @@ async function clearCleanupSettings() {
   await db.delete(setting).where(eq(setting.key, "cleanup.enabled"));
   await db.delete(setting).where(eq(setting.key, "cleanup.clearAppData"));
   await db.delete(setting).where(eq(setting.key, "cleanup.timeoutSeconds"));
+  await db.delete(setting).where(eq(setting.key, "cleanup.clearAppDataAllow"));
+  await db.delete(setting).where(eq(setting.key, "cleanup.clearAppDataDeny"));
   invalidateSettings();
 }
 
@@ -147,6 +149,29 @@ describe("cleanup on release", () => {
       wipeFolders: false,
     });
     expect(cmd.timeoutSeconds).toBe(120);
+    // Unset means unrestricted, which is only reachable by an admin who left
+    // both boxes empty — the UI says as much.
+    expect(cmd.clearAppDataFilter).toEqual({ allow: [], deny: [] });
+  });
+
+  test("carries the app id patterns clearing is scoped to", async () => {
+    await enableCleanup({
+      "cleanup.clearAppData": true,
+      "cleanup.clearAppDataAllow": ["*.google.*", " com.acme.harness ", ""],
+      "cleanup.clearAppDataDeny": ["com.acme.mdm"],
+    });
+    const caller = callerFor(USERS[0]);
+    await caller.device.reserve({ deviceId: DEVICE_ID });
+    await caller.device.release({ deviceId: DEVICE_ID });
+
+    const [cmd] = cleanupCommands();
+    if (cmd?.kind !== "device.cleanup") throw new Error("unreachable");
+    // Trimmed and de-blanked on the way in, so the provider never has to guess
+    // whether a stray space was meant to be part of a pattern.
+    expect(cmd.clearAppDataFilter).toEqual({
+      allow: ["*.google.*", "com.acme.harness"],
+      deny: ["com.acme.mdm"],
+    });
   });
 
   test("revokes before it cleans", async () => {

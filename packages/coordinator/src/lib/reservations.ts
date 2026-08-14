@@ -115,6 +115,10 @@ export async function releaseActive(
             clearAppData: settings["cleanup.clearAppData"],
             wipeFolders: settings["cleanup.wipeFolders"],
           },
+          clearAppDataFilter: {
+            allow: settings["cleanup.clearAppDataAllow"],
+            deny: settings["cleanup.clearAppDataDeny"],
+          },
           timeoutSeconds: settings["cleanup.timeoutSeconds"],
         });
       }

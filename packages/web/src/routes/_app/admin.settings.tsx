@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
 import type { RouterInputs } from "@/lib/types";
 import { cn, relativeTime } from "@/lib/utils";
@@ -146,12 +147,40 @@ function SettingsPage() {
             <ToggleSetting
               id="cleanup-data"
               label="Clear app data"
-              help="Wipes the data of every third-party app left on the device — accounts, caches, settings. Android only. Off by default because that list includes anything preinstalled across your fleet, such as a test harness."
+              help="Wipes the data of an app left on the device — accounts, caches, settings. Android only. Off by default because a device's third-party apps include anything preinstalled across your fleet, such as a test harness."
               checked={data.values["cleanup.clearAppData"]}
               pending={save.isPending}
               onChange={(value) => save.mutate({ key: "cleanup.clearAppData", value })}
               changed={changedAt("cleanup.clearAppData")}
             />
+
+            <div
+              className={cn(
+                "grid gap-6 border-l pl-4",
+                !data.values["cleanup.clearAppData"] && "pointer-events-none opacity-50",
+              )}
+            >
+              <PatternSetting
+                id="cleanup-data-allow"
+                label="Only clear these apps"
+                help="One app id per line. `*` matches anything, so `*.google.*` covers every Google app. Leave this empty to clear every app on the device — usually the wrong answer, because clearing a signed-in MDM agent or a test harness breaks it for everyone afterwards."
+                placeholder={"*.google.*\ncom.acme.appundertest"}
+                patterns={data.values["cleanup.clearAppDataAllow"]}
+                pending={save.isPending}
+                onSave={(value) => save.mutate({ key: "cleanup.clearAppDataAllow", value })}
+                changed={changedAt("cleanup.clearAppDataAllow")}
+              />
+              <PatternSetting
+                id="cleanup-data-deny"
+                label="Never clear these apps"
+                help="Checked after the list above and wins over it, so you can allow a whole prefix and carve one app out of it."
+                placeholder="com.acme.mdm"
+                patterns={data.values["cleanup.clearAppDataDeny"]}
+                pending={save.isPending}
+                onSave={(value) => save.mutate({ key: "cleanup.clearAppDataDeny", value })}
+                changed={changedAt("cleanup.clearAppDataDeny")}
+              />
+            </div>
             <ToggleSetting
               id="cleanup-folders"
               label="Empty scratch folders"
@@ -200,6 +229,75 @@ function ToggleSetting({
       <div className="flex items-center gap-3">
         <Switch id={id} checked={checked} disabled={pending} onCheckedChange={onChange} />
         <Label htmlFor={id}>{label}</Label>
+      </div>
+      <p className="max-w-2xl text-muted-foreground text-xs">{help}</p>
+      <ChangedNote changed={changed} />
+    </div>
+  );
+}
+
+/**
+ * A list of app id globs, edited as one pattern per line.
+ *
+ * A textarea rather than a tag input because these are pasted from somewhere
+ * else as often as they are typed, and because the list is read far more often
+ * than it is edited — an admin checking what the policy covers should be able
+ * to see all of it at once.
+ */
+function PatternSetting({
+  id,
+  label,
+  help,
+  placeholder,
+  patterns,
+  pending,
+  onSave,
+  changed,
+}: {
+  id: string;
+  label: string;
+  help: string;
+  placeholder: string;
+  patterns: string[];
+  pending: boolean;
+  onSave: (patterns: string[]) => void;
+  changed?: { updatedAt: string | Date; updatedByName: string | null };
+}) {
+  const [draft, setDraft] = useState(patterns.join("\n"));
+
+  useEffect(() => {
+    setDraft(patterns.join("\n"));
+  }, [patterns]);
+
+  // Blank lines are dropped rather than rejected: a trailing newline is how
+  // people type a list, not a mistake.
+  const parsed = draft
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const dirty = parsed.join("\n") !== patterns.join("\n");
+
+  return (
+    <div className="grid gap-1.5">
+      <Label htmlFor={id}>{label}</Label>
+      <Textarea
+        id={id}
+        rows={3}
+        spellCheck={false}
+        className="max-w-2xl font-mono text-sm"
+        placeholder={placeholder}
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+      />
+      <div>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={pending || !dirty}
+          onClick={() => onSave(parsed)}
+        >
+          Save
+        </Button>
       </div>
       <p className="max-w-2xl text-muted-foreground text-xs">{help}</p>
       <ChangedNote changed={changed} />

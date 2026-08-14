@@ -37,6 +37,24 @@ export const CleanupSteps = named(
   }),
 );
 
+/**
+ * Which app ids a step may touch, as `*` globs matched case-insensitively —
+ * `com.google.*`, `*.google.*`, `com.acme.harness`.
+ *
+ * An empty `allow` means everything is in scope; a non-empty one narrows the
+ * step to exactly what it lists. `deny` always wins. Clearing app data is
+ * destructive to state an app may not survive losing — a signed-in MDM agent,
+ * a test harness holding its own credentials — so the safe configuration is to
+ * name what may be cleared rather than to guess at what may not.
+ */
+export const AppFilter = named(
+  "AppFilter",
+  z.object({
+    allow: z.array(z.string()),
+    deny: z.array(z.string()),
+  }),
+);
+
 export const CommandPayload = named(
   "CommandPayload",
   z.discriminatedUnion("kind", [
@@ -81,6 +99,8 @@ export const CommandPayload = named(
       kind: z.literal("device.cleanup"),
       deviceId: z.string(),
       steps: CleanupSteps,
+      /** Scopes `clearAppData`. Ignored by the other steps. */
+      clearAppDataFilter: AppFilter,
       /** Whole-run deadline. The provider lands the device on `ready` regardless. */
       timeoutSeconds: z.number().int(),
     }),

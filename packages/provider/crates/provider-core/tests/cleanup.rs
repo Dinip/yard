@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use farm_protocol::{
-    AppInfo, CleanupSteps, CommandPayload, DeviceStatus, Platform, ProviderMessage,
+    AppFilter, AppInfo, CleanupSteps, CommandPayload, DeviceStatus, Platform, ProviderMessage,
 };
 use provider_core::backend::DeviceBackend;
 use provider_core::control::{CommandHandler, ControlSender};
@@ -35,6 +35,24 @@ fn only_uninstall() -> CleanupSteps {
         uninstall_apps: true,
         reset_screen: false,
         clear_app_data: false,
+        wipe_folders: false,
+    }
+}
+
+/// Every surviving app in scope, which is what an admin who has not narrowed
+/// the policy gets.
+fn no_filter() -> AppFilter {
+    AppFilter {
+        allow: vec![],
+        deny: vec![],
+    }
+}
+
+fn only_clear() -> CleanupSteps {
+    CleanupSteps {
+        uninstall_apps: false,
+        reset_screen: false,
+        clear_app_data: true,
         wipe_folders: false,
     }
 }
@@ -70,10 +88,15 @@ async fn authorize(supervisor: &Arc<Supervisor>, reservation_id: &str) {
 }
 
 async fn cleanup(supervisor: &Arc<Supervisor>, steps: CleanupSteps) {
+    cleanup_filtered(supervisor, steps, no_filter()).await;
+}
+
+async fn cleanup_filtered(supervisor: &Arc<Supervisor>, steps: CleanupSteps, filter: AppFilter) {
     supervisor
         .handle(CommandPayload::DeviceCleanup {
             device_id: DEVICE.into(),
             steps,
+            clear_app_data_filter: filter,
             timeout_seconds: 30,
         })
         .await
@@ -352,6 +375,7 @@ async fn a_run_that_blows_its_deadline_still_returns_the_device() {
                 clear_app_data: false,
                 wipe_folders: false,
             },
+            clear_app_data_filter: no_filter(),
             timeout_seconds: 1,
         })
         .await
@@ -400,6 +424,7 @@ async fn a_status_poll_does_not_interrupt_a_cleaning_device() {
                 clear_app_data: false,
                 wipe_folders: false,
             },
+            clear_app_data_filter: no_filter(),
             timeout_seconds: 30,
         })
         .await
@@ -434,6 +459,104 @@ async fn revoke_alone_leaves_the_device_untouched() {
         .check(DEVICE, RESERVATION)
         .await
         .is_err());
+}
+
+/// The point of the allow list: an org preinstalls a signed-in MDM agent and a
+/// test harness, and clearing either of them breaks the phone for everyone
+/// after. Naming what *may* be cleared survives someone preinstalling a fifth
+/// thing next month; a deny list does not.
+#[tokio::test]
+async fn clearing_app_data_only_touches_apps_the_allow_list_names() {
+    let backend = mock();
+    {
+        let mut installed = backend.state.installed.lock().await;
+        installed.push(preinstalled("com.google.android.gm"));
+        installed.push(preinstalled("com.acme.mdm"));
+        installed.push(preinstalled("com.acme.harness"));
+    }
+    let (supervisor, mut rx) = harness(backend.clone(), vec![]).await;
+    authorize(&supervisor, RESERVATION).await;
+
+    cleanup_filtered(
+        &supervisor,
+        only_clear(),
+        AppFilter {
+            allow: vec!["*.google.*".into(), "com.acme.harness".into()],
+            deny: vec![],
+        },
+    )
+    .await;
+    assert_eq!(settled(&supervisor).await, DeviceStatus::Ready);
+
+    let ProviderMessage::CleanupFinished {
+        cleared, errors, ..
+    } = finished(&mut rx)
+    else {
+        unreachable!()
+    };
+    let mut cleared = cleared;
+    cleared.sort();
+    assert_eq!(cleared, vec!["com.acme.harness", "com.google.android.gm"]);
+    assert!(errors.is_empty(), "{errors:?}");
+}
+
+/// Deny wins, so an admin can widen with a glob and still carve one app out
+/// without having to enumerate the rest.
+#[tokio::test]
+async fn a_denied_app_is_spared_even_when_the_allow_list_matches_it() {
+    let backend = mock();
+    {
+        let mut installed = backend.state.installed.lock().await;
+        installed.push(preinstalled("com.acme.harness"));
+        installed.push(preinstalled("com.acme.mdm"));
+    }
+    let (supervisor, mut rx) = harness(backend.clone(), vec![]).await;
+    authorize(&supervisor, RESERVATION).await;
+
+    cleanup_filtered(
+        &supervisor,
+        only_clear(),
+        AppFilter {
+            allow: vec!["com.acme.*".into()],
+            deny: vec!["com.acme.mdm".into()],
+        },
+    )
+    .await;
+    assert_eq!(settled(&supervisor).await, DeviceStatus::Ready);
+
+    let ProviderMessage::CleanupFinished { cleared, .. } = finished(&mut rx) else {
+        unreachable!()
+    };
+    assert_eq!(cleared, vec!["com.acme.harness"]);
+}
+
+/// An app the filter skips is not a failed step: it is policy working.
+#[tokio::test]
+async fn an_out_of_scope_app_is_skipped_silently() {
+    let backend = mock();
+    let (supervisor, mut rx) = harness(backend.clone(), vec![]).await;
+    authorize(&supervisor, RESERVATION).await;
+
+    cleanup_filtered(
+        &supervisor,
+        only_clear(),
+        AppFilter {
+            allow: vec!["nothing.matches.this".into()],
+            deny: vec![],
+        },
+    )
+    .await;
+    assert_eq!(settled(&supervisor).await, DeviceStatus::Ready);
+
+    let ProviderMessage::CleanupFinished {
+        cleared, errors, ..
+    } = finished(&mut rx)
+    else {
+        unreachable!()
+    };
+    assert!(cleared.is_empty(), "{cleared:?}");
+    assert!(errors.is_empty(), "{errors:?}");
+    assert!(backend.state.cleared.lock().await.is_empty());
 }
 
 fn preinstalled(id: &str) -> AppInfo {

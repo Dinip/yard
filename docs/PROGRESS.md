@@ -1322,7 +1322,8 @@ what `cleanup.js` does and the four bugs not to inherit.
 | Backend primitives + cleanup orchestrator, under a deadline | ✅ | `provider-core/src/cleanup.rs`, all three backends |
 | Per-reservation app baseline, taken on `session.authorize` | ✅ | `.../supervisor.rs` |
 | `releaseActive` holds the device; reaper unsticks a stale one | ✅ | `.../lib/reservations.ts` |
-| Six settings, all defaulting to today's behaviour | ✅ | `.../lib/settings.ts` |
+| Eight settings, all defaulting to today's behaviour | ✅ | `.../lib/settings.ts` |
+| Allow/deny app id globs scoping `clearAppData` | ✅ | `.../cleanup.rs`, `.../lib/settings.ts` |
 | `cleanup_paths` per device, guarded against `/system` at load | ✅ | `.../config.rs` |
 | Settings card + `cleaning` treatment in the UI | ✅ | `packages/web` |
 

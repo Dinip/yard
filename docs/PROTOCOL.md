@@ -112,8 +112,9 @@ accepts a command and never answers must not wedge the caller.
 
 `device.cleanup` is the one deliberately sent fire-and-forget, because a
 multi-package uninstall runs far past that timeout. It carries the farm's
-`CleanupSteps` and a deadline; the device's return to `ready` arrives as an
-ordinary `device.status`, and the report as `cleanup.finished`. See
+`CleanupSteps`, an `AppFilter` scoping which apps `clearAppData` may touch, and
+a deadline; the device's return to `ready` arrives as an ordinary
+`device.status`, and the report as `cleanup.finished`. See
 [CLEANUP.md](CLEANUP.md).
 
 ### Reconcile, don't patch

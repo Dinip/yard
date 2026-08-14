@@ -134,12 +134,44 @@ if that turns out to matter in practice.
 | Clear data of surviving third-party apps | `cleanup.clearAppData` | **off** | `pm clear` | unsupported |
 | Wipe configured scratch directories | `cleanup.wipeFolders` | **off** | `rm -rf` per entry | staged `.ipa` |
 
-Plus `cleanup.enabled` (off) and `cleanup.timeoutSeconds` (120).
+Plus `cleanup.enabled` (off), `cleanup.timeoutSeconds` (120), and the two
+pattern lists that scope `clearAppData` below.
 
 `clearAppData` is off by default because `pm list packages -3` includes anything
 the organisation preinstalled — a test harness, an MDM agent — and wiping its
 data is a decision, not a default. iOS has no equivalent operation at all; the
 step reports `Unsupported` and cleanup continues.
+
+### Scoping which apps get cleared
+
+`clearAppData` alone means *every* surviving third-party app, which is rarely
+what anyone wants: clearing a signed-in MDM agent or a test harness that holds
+its own credentials breaks the device for everyone who reserves it afterwards.
+Two pattern lists narrow it, sent to the provider with the command:
+
+| Setting | Meaning |
+|---|---|
+| `cleanup.clearAppDataAllow` | Only these apps may be cleared. Empty means all of them. |
+| `cleanup.clearAppDataDeny` | These are never cleared. Checked first, so it wins. |
+
+Patterns are app ids where `*` matches any run of characters, dots included, and
+matching is case-insensitive: `*.google.*` covers `com.google.android.gm`,
+`com.acme.*` covers a whole vendor prefix, and a pattern with no `*` is a plain
+equality test. There is no `**`, no character class and no path semantics —
+these match app ids, not files.
+
+**Prefer the allow list.** An allow list of "the apps under test, plus
+`*.google.*`" keeps working when someone preinstalls a fifth thing next month;
+a deny list has to be edited every time the fleet changes, and the cost of
+forgetting is a broken device rather than a slightly dirty one. The deny list
+exists for the narrower job of carving one app out of a prefix you allowed.
+
+An app the filter skips is not a failed step. Nothing is recorded, because
+skipping it is the policy working.
+
+The lists apply to `clearAppData` only. `uninstallApps` needs no equivalent: it
+removes the diff against the session's baseline, so an app that was on the
+device before the user arrived is already out of its reach.
 
 Steps run **sequentially**, never concurrently. STF learned this one the hard
 way and left the commit message behind: "do only one adb command at a time to
@@ -151,6 +183,9 @@ the remaining steps still run.
 **Which steps run** is farm-wide policy, so it lives in the coordinator's
 settings table and is edited in `/admin/settings` like the reservation policy
 next to it. The coordinator sends the enabled set with each `device.cleanup`.
+The `clearAppData` patterns go with it: the worst a wrong pattern can do is
+clear an app's data or fail to, which is the step's own blast radius and not a
+wider one.
 
 **Which folders get wiped** lives in the provider's YAML, per device. Two
 reasons: the paths are specific to a device's platform and role, and — the real
