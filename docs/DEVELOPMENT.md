@@ -231,7 +231,10 @@ type is none of those is invisible to the changelog. To override the computed
 number, put `Release-As: 1.0.0` in a commit body.
 
 The first release will be `0.1.0`, and its changelog covers the whole history:
-there is no earlier tag to bound it.
+there is no earlier tag to bound it. That version comes from `initial-version`
+in the config, not from bumping the manifest — with no release tag to find,
+release-please bootstraps rather than bumping, and its default first version is
+`1.0.0`.
 
 One version covers everything — the four `package.json` files and the Cargo
 workspace all move together, since they only ever ship as a set. Two mechanical
@@ -245,7 +248,9 @@ notes on how that is kept true:
   check them, so nothing needs to touch it.
 
 `release-please-config.json` is the config; `.release-please-manifest.json` is
-release-please's record of the current version and is written by the bot.
+release-please's record of the current version, written by the bot from the
+first release onwards. Its `0.0.0` is a placeholder — until a release tag exists
+to match it, nothing reads it.
 
 ## Microsoft / Entra ID sign-in
 
