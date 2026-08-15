@@ -1,12 +1,11 @@
-# push to main → `edge`; push of a `v*` tag → `1.2.3`, `1.2`, `latest`.
-# Neither re-runs the tests: the commit already passed CI as a pull request.
+# The tip of main, published as `edge`. Releases are release.yml.
+# Tests are not re-run: the commit already passed CI as a pull request.
 
 name: Publish
 
 on:
   push:
     branches: [main]
-    tags: ["v*"]
 
 permissions:
   contents: read
@@ -14,9 +13,7 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  # A superseded main build is wasted work; a superseded release build is a
-  # release that silently never happened.
-  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+  cancel-in-progress: true
 
 jobs:
   images:
@@ -24,3 +21,6 @@ jobs:
     with:
       push: true
       arches: '["amd64","arm64"]'
+      tags: |
+        edge
+        sha-${{ github.sha }}

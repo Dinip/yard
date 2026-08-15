@@ -1,0 +1,75 @@
+# release-please keeps a release PR open against main, bumping the version and
+# writing the changelog from the conventional-commit history. Merging it tags
+# the release; this workflow then publishes the images for that tag.
+#
+# The images are built here rather than from a tag trigger because a tag pushed
+# by GITHUB_TOKEN does not start another workflow — a `push: tags` job would
+# never fire.
+
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: ${{ github.workflow }}
+  # A cancelled release is one that silently never happened.
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      released: ${{ steps.release.outputs.release_created }}
+      version: ${{ steps.release.outputs.version }}
+      major: ${{ steps.release.outputs.major }}
+      minor: ${{ steps.release.outputs.minor }}
+      branch: ${{ steps.release.outputs.prs_created == 'true' && fromJSON(steps.release.outputs.pr).headBranchName || '' }}
+    steps:
+      - id: release
+        uses: googleapis/release-please-action@v5
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  # release-please updates Cargo.toml but not Cargo.lock: its rust strategy
+  # cannot read a virtual workspace whose members inherit `version.workspace`,
+  # so the lockfile's own copy of those versions is left behind.
+  cargo-lock:
+    needs: release-please
+    if: needs.release-please.outputs.branch != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release-please.outputs.branch }}
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo update --workspace
+      - name: Commit the lockfile
+        run: |
+          git diff --quiet Cargo.lock && exit 0
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore: sync Cargo.lock" Cargo.lock
+          git push
+
+  images:
+    needs: release-please
+    if: needs.release-please.outputs.released == 'true'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/docker.yml
+    with:
+      push: true
+      arches: '["amd64","arm64"]'
+      tags: |
+        ${{ needs.release-please.outputs.version }}
+        ${{ needs.release-please.outputs.major }}.${{ needs.release-please.outputs.minor }}
+        latest
