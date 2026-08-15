@@ -8,6 +8,7 @@
 //!
 //! ```text
 //!   device.rs   tunnel + session supervision   (RSD, one rebuild loop)
+//!   ddi.rs      developer disk image: fetch, cache, mount
 //!   media.rs    RTP in, RTCP out, access units (the hard-won part)
 //!   hevc.rs     depacketisation, hvcC, codec string
 //!   hid.rs      touch, keyboard, buttons, rotation
@@ -19,6 +20,7 @@
 //! half-working.
 
 pub mod app_list;
+pub mod ddi;
 pub mod device;
 pub mod hevc;
 pub mod hid;
@@ -256,6 +258,14 @@ pub struct IosOptions {
     /// Force a fresh IDR while the screen is moving, to undo iOS's motion
     /// resolution-collapse. See `media.rs`.
     pub motion_idr: bool,
+    /// Mount the Developer Disk Image before building the tunnel. Off means the
+    /// device is expected to be mounted by whoever runs the host — after every
+    /// reboot, because the mount does not survive one.
+    pub auto_mount_ddi: bool,
+    /// The host's shared DDI payload. Not from `options:` — attached by
+    /// `build_backend` from the top-level `ddi:` block, the same way the
+    /// Android backend gets its port pool.
+    pub ddi: Option<Arc<crate::ddi::DdiCache>>,
 }
 
 impl IosOptions {
@@ -280,6 +290,16 @@ impl IosOptions {
                 })
                 .transpose()?
                 .unwrap_or(true),
+            auto_mount_ddi: options
+                .get("auto_mount_ddi")
+                .map(|value| {
+                    value
+                        .as_bool()
+                        .ok_or_else(|| anyhow!("auto_mount_ddi must be a boolean"))
+                })
+                .transpose()?
+                .unwrap_or(true),
+            ddi: None,
         })
     }
 }
@@ -1428,6 +1448,26 @@ mod tests {
         let options = IosOptions::parse("udid-1", &serde_json::Map::new()).unwrap();
         assert_eq!(options.display_id, 0);
         assert!(options.motion_idr);
+        // A device is mounted for unless it says otherwise — the reboot that
+        // drops the mount is nobody's job to notice.
+        assert!(options.auto_mount_ddi);
+    }
+
+    #[test]
+    fn a_device_can_opt_out_of_ddi_mounting() {
+        let mut options = serde_json::Map::new();
+        options.insert("auto_mount_ddi".into(), serde_json::json!(false));
+        assert!(
+            !IosOptions::parse("udid-1", &options)
+                .unwrap()
+                .auto_mount_ddi
+        );
+
+        options.insert("auto_mount_ddi".into(), serde_json::json!("yes"));
+        let err = IosOptions::parse("udid-1", &options)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("auto_mount_ddi"), "{err}");
     }
 
     #[test]

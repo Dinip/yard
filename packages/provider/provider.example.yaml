@@ -34,6 +34,25 @@ max_upload_mb: 2048
 remote_debug:
   ports: 7200-7249
 
+# The iOS Developer Disk Image, which the provider mounts for itself.
+#
+# An iPhone loses the mount on every reboot, and without one it offers no screen,
+# no input and no app list — only lockdown. Absent block means ON, the opposite
+# of `metrics:` above: devices nobody has to touch after a reboot is the point.
+#
+# One image serves every iOS 17+ device; what makes it device-specific is a
+# ticket signed by Apple during the mount. So it is downloaded once per host.
+# Pre-populate cache_dir — with a copy from Xcode's iOS_DDI.dmg or your own
+# mirror — and nothing is ever fetched from a third party. Note that the *first*
+# mount of a given device still reaches gs.apple.com for its ticket, whatever
+# the cache holds.
+ddi:
+  enabled: true
+  # Holds Image.dmg, BuildManifest.plist and Image.dmg.trustcache. Not under
+  # scratch_dir on purpose: that is meant to be a tmpfs, this is meant to last.
+  cache_dir: /var/lib/farm/ddi
+  base_url: https://raw.githubusercontent.com/doronz88/DeveloperDiskImage/main/PersonalizedImages/Xcode_iOS_DDI_Personalized
+
 # Prometheus metrics. Optional — an absent block means off, but writing the block
 # and omitting `enabled` means on, because writing it at all is the intent.
 #
@@ -92,6 +111,10 @@ devices:
   #   options:
   #     display_id: 0                     # 0 is the built-in screen
   #     motion_idr: true                  # undo iOS motion resolution-collapse
+  #     # Mount the Developer Disk Image for this device. Set false to leave it
+  #     # to whoever runs the host — after every reboot, because the mount does
+  #     # not survive one. See the `ddi:` block above.
+  #     auto_mount_ddi: true              # default
   #
   # - udid: R5CT10ABCDE                 # adb serial
   #   backend: android

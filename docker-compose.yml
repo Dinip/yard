@@ -113,6 +113,10 @@ services:
       # bound to this key's fingerprint, so a container that regenerates it on
       # recreate has to be re-authorised by hand, at the device, every time.
       - adb-keys:/root/.android
+      # The iOS developer disk image, downloaded once. A volume rather than a
+      # tmpfs so a container recreate does not re-fetch it — and so it can be
+      # pre-populated from Xcode's copy to keep the download off a mirror.
+      - ddi-cache:/var/lib/farm/ddi
       # - /var/run/usbmuxd:/var/run/usbmuxd     # Linux: iOS
       # - /dev/bus/usb:/dev/bus/usb             # Linux: Android
     # privileged: true                          # Linux: USB access
@@ -125,3 +129,4 @@ volumes:
   caddy-data:
   caddy-config:
   adb-keys:
+  ddi-cache:

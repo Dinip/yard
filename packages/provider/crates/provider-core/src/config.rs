@@ -32,6 +32,18 @@ fn default_metrics_interval() -> u64 {
 fn default_debug_ports() -> String {
     "7200-7249".into()
 }
+fn default_ddi_enabled() -> bool {
+    true
+}
+fn default_ddi_cache() -> PathBuf {
+    PathBuf::from("/var/lib/farm/ddi")
+}
+/// doronz88's mirror of Xcode's personalized DDI — the same one pymobiledevice3
+/// auto-mounts from. One image serves every iOS 17+ device; it is Apple's, and
+/// the per-device signing still happens against Apple's TSS server.
+fn default_ddi_base_url() -> String {
+    "https://raw.githubusercontent.com/doronz88/DeveloperDiskImage/main/PersonalizedImages/Xcode_iOS_DDI_Personalized".into()
+}
 
 /// Paths cleanup will not empty, whatever the config says. Ported from STF's
 /// equivalent guard in `lib/units/device/plugins/cleanup.js`.
@@ -81,6 +93,55 @@ pub struct Config {
     /// Ports `adb connect` reaches an exposed device on.
     #[serde(default)]
     pub remote_debug: RemoteDebugConfig,
+
+    /// The iOS Developer Disk Image the provider mounts for itself.
+    #[serde(default)]
+    pub ddi: DdiConfig,
+}
+
+/// Where the iOS Developer Disk Image comes from.
+///
+/// A device loses its DDI mount on every reboot, and without one it offers no
+/// `com.apple.coredevice.*` services at all — no screen, no input, no app list.
+/// The provider therefore mounts it itself rather than leaving a `devicectl`
+/// command for an operator to remember.
+///
+/// Unlike [`Config::scratch_dir`], which is meant to be a tmpfs, `cache_dir` is
+/// meant to survive: pre-populate it with a copy extracted from Xcode's
+/// `iOS_DDI.dmg` and nothing is ever downloaded.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DdiConfig {
+    /// Off means the old behaviour: whoever runs the host mounts the image.
+    #[serde(default = "default_ddi_enabled")]
+    pub enabled: bool,
+
+    /// Holds `Image.dmg`, `BuildManifest.plist` and `Image.dmg.trustcache`.
+    #[serde(default = "default_ddi_cache")]
+    pub cache_dir: PathBuf,
+
+    /// Fetched from only when the cache is missing a file. Point it at your own
+    /// copy to keep a third party off the path.
+    #[serde(default = "default_ddi_base_url")]
+    pub base_url: String,
+}
+
+impl Default for DdiConfig {
+    /// Symmetric with [`default_ddi_enabled`], unlike [`MetricsConfig`]: an
+    /// absent `ddi:` block means on, because unattended devices are the point.
+    fn default() -> Self {
+        Self {
+            enabled: default_ddi_enabled(),
+            cache_dir: default_ddi_cache(),
+            base_url: default_ddi_base_url(),
+        }
+    }
+}
+
+impl DdiConfig {
+    pub fn base(&self) -> &str {
+        self.base_url.trim_end_matches('/')
+    }
 }
 
 /// The port range remote debugging draws from.
@@ -277,6 +338,13 @@ impl Config {
             if !seen.insert(&device.udid) {
                 bail!("duplicate device udid {:?}", device.udid);
             }
+        }
+
+        if self.ddi.enabled && !self.ddi.base_url.starts_with("http") {
+            bail!(
+                "ddi.base_url must be an http(s) URL, got {:?}",
+                self.ddi.base_url
+            );
         }
 
         self.validate_metrics()?;
@@ -643,6 +711,53 @@ devices:
             "{MINIMAL}\nmetrics:\n  enabled: false\n  bind: nonsense\n  interval_secs: 0\n"
         ));
         assert!(Config::load_with_env(&path, None).is_ok());
+    }
+
+    /// The opposite default to `metrics:` — a farm nobody has to touch after a
+    /// phone reboots is the reason this exists.
+    #[test]
+    fn ddi_auto_mounting_is_on_when_the_block_is_absent() {
+        let (_dir, path) = write(MINIMAL);
+        let config = Config::load_with_env(&path, None).unwrap();
+
+        assert!(config.ddi.enabled);
+        assert_eq!(config.ddi.cache_dir, PathBuf::from("/var/lib/farm/ddi"));
+        assert!(config.ddi.base().ends_with("Xcode_iOS_DDI_Personalized"));
+    }
+
+    #[test]
+    fn a_ddi_block_overrides_only_what_it_names() {
+        let (_dir, path) = write(&format!(
+            "{MINIMAL}\nddi:\n  cache_dir: /srv/ddi\n  base_url: https://mirror.internal/ddi/\n"
+        ));
+        let config = Config::load_with_env(&path, None).unwrap();
+
+        assert!(config.ddi.enabled);
+        assert_eq!(config.ddi.cache_dir, PathBuf::from("/srv/ddi"));
+        assert_eq!(config.ddi.base(), "https://mirror.internal/ddi");
+    }
+
+    #[test]
+    fn a_non_http_ddi_base_url_fails_at_load() {
+        let (_dir, path) = write(&format!("{MINIMAL}\nddi:\n  base_url: /srv/ddi\n"));
+        let err = Config::load_with_env(&path, None).unwrap_err().to_string();
+        assert!(err.contains("ddi.base_url"), "{err}");
+    }
+
+    /// Same rule as the metrics block: a disabled feature cannot block startup.
+    #[test]
+    fn a_disabled_ddi_block_is_not_validated() {
+        let (_dir, path) = write(&format!(
+            "{MINIMAL}\nddi:\n  enabled: false\n  base_url: nonsense\n"
+        ));
+        let config = Config::load_with_env(&path, None).unwrap();
+        assert!(!config.ddi.enabled);
+    }
+
+    #[test]
+    fn unknown_keys_inside_the_ddi_block_are_rejected_too() {
+        let (_dir, path) = write(&format!("{MINIMAL}\nddi:\n  image_url: https://x/y\n"));
+        assert!(Config::load_with_env(&path, None).is_err());
     }
 
     #[test]
