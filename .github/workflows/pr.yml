@@ -1,0 +1,89 @@
+# What has to hold before a pull request can merge.
+#
+# The Rust and TypeScript halves are separate jobs because they fail for
+# unrelated reasons and waiting for the other's toolchain to install helps
+# nobody.
+
+name: PR
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  # A push that supersedes an in-flight run makes that run irrelevant.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typescript:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: farm
+          POSTGRES_PASSWORD: farm
+          POSTGRES_DB: farm
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U farm -d farm"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      DATABASE_URL: postgres://farm:farm@localhost:5432/farm
+      PUBLIC_URL: http://localhost:3000
+      WEB_ORIGIN: http://localhost:5173
+      # Length is validated at boot; the value is irrelevant to a test run.
+      AUTH_SECRET: ci-secret-that-is-at-least-32-characters
+      ENABLE_EMAIL_PASSWORD: "true"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - run: bun run check
+      - run: bun run typecheck
+      - run: bun run db:migrate
+      - run: bun test packages/protocol packages/coordinator/test packages/web/test
+      - run: cd packages/web && bun run build
+
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+
+  # The wire contract is committed in two languages. This is what makes a schema
+  # change that was not regenerated fail the build rather than ship a provider
+  # that encodes cleanly and delivers nothing.
+  protocol-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: bun install --frozen-lockfile
+      # Regenerates and diffs: the generated Rust is piped through rustfmt, so
+      # `cargo fmt --check` and this cannot demand different bytes.
+      - run: bun run protocol:check
+
+  # amd64 only: the arm64 build differs by runner, not by content. If the two
+  # ever diverge, main catches it before a release does.
+  images:
+    uses: ./.github/workflows/images.yml
+    with:
+      push: false
+      arches: '["amd64"]'

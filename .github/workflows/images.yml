@@ -1,0 +1,153 @@
+name: Images
+
+on:
+  workflow_call:
+    inputs:
+      push:
+        description: Push the images and merge them into a manifest list.
+        type: boolean
+        default: false
+      arches:
+        description: 'Architectures to build, as JSON: ["amd64"] or ["amd64","arm64"].'
+        type: string
+        default: '["amd64"]'
+      tags:
+        description: Tags to apply, one per line. Decided by the caller, not derived from the ref.
+        type: string
+        default: ""
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    outputs:
+      registry: ${{ steps.name.outputs.registry }}
+      arches: ${{ steps.arches.outputs.matrix }}
+      tags: ${{ steps.tags.outputs.meta }}
+    steps:
+      # A repository name may contain capitals; a container reference may not.
+      - id: name
+        run: echo "registry=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+      - id: arches
+        env:
+          ARCHES: ${{ inputs.arches }}
+        run: |
+          echo "$ARCHES" | jq -e 'type == "array" and length > 0' > /dev/null
+          echo "matrix=$(echo "$ARCHES" | jq -c .)" >> "$GITHUB_OUTPUT"
+      # Fed to metadata-action, which wants directives rather than tags.
+      - id: tags
+        env:
+          TAGS: ${{ inputs.tags }}
+        run: |
+          {
+            echo "meta<<TAGS_EOF"
+            echo "$TAGS" | sed '/^[[:space:]]*$/d; s/^/type=raw,value=/'
+            echo "TAGS_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+  # Each architecture on its own native runner. Cross-building the Rust provider
+  # under QEMU is slow enough to dominate the whole pipeline.
+  build:
+    name: ${{ matrix.image.name }} (${{ matrix.arch }})
+    needs: prepare
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - { name: coordinator, dockerfile: packages/coordinator/Dockerfile }
+          - { name: web, dockerfile: packages/web/Dockerfile }
+          - { name: provider, dockerfile: packages/provider/Dockerfile }
+        arch: ${{ fromJSON(needs.prepare.outputs.arches) }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        if: inputs.push
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ needs.prepare.outputs.registry }}/${{ matrix.image.name }}
+          tags: ${{ needs.prepare.outputs.tags }}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ${{ matrix.image.dockerfile }}
+          platforms: linux/${{ matrix.arch }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Pushed without a tag: an arch-specific tag would be a lie the moment
+          # the other architecture lands on it. The manifest job names them.
+          outputs: ${{ inputs.push && format('type=image,name={0}/{1},push-by-digest=true,name-canonical=true,push=true', needs.prepare.outputs.registry, matrix.image.name) || 'type=cacheonly' }}
+          cache-from: type=gha,scope=${{ matrix.image.name }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image.name }}-${{ matrix.arch }}
+
+      - name: Export the digest
+        if: inputs.push
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p /tmp/digests
+          # Empty file, named for the digest. The `sha256:` prefix has to go —
+          # an artifact path may not contain a colon.
+          touch "/tmp/digests/${DIGEST#sha256:}"
+
+      - uses: actions/upload-artifact@v7
+        if: inputs.push
+        with:
+          name: digest-${{ matrix.image.name }}-${{ matrix.arch }}
+          path: /tmp/digests/*
+          retention-days: 1
+          if-no-files-found: error
+
+  # Until this runs the digests are pushed but unnamed, so nothing can pull them.
+  manifest:
+    name: manifest (${{ matrix.image }})
+    if: inputs.push
+    needs: [build, prepare]
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        image: [coordinator, web, provider]
+    steps:
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ needs.prepare.outputs.registry }}/${{ matrix.image }}
+          tags: ${{ needs.prepare.outputs.tags }}
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: digest-${{ matrix.image }}-*
+          merge-multiple: true
+          path: /tmp/digests
+
+      - name: Create the manifest list
+        working-directory: /tmp/digests
+        env:
+          IMAGE: ${{ needs.prepare.outputs.registry }}/${{ matrix.image }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          docker buildx imagetools create \
+            $(echo "$TAGS" | xargs -r -n1 printf -- '--tag %s ') \
+            $(printf "$IMAGE@sha256:%s " *)
+
+      - name: Show what was published
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          IMAGE: ${{ needs.prepare.outputs.registry }}/${{ matrix.image }}
+        run: docker buildx imagetools inspect "$IMAGE:$VERSION"

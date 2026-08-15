@@ -198,6 +198,60 @@ The `provider` service is behind a profile because it needs host device access:
 docker compose --profile provider up
 ```
 
+## CI and releases
+
+| Workflow | Runs on | Does |
+|---|---|---|
+| `pr.yml` | pull requests | lint, typecheck, tests, drift guard, amd64 build of all three images |
+| `edge.yml` | push to `main` | publishes `edge` and `sha-<commit>` |
+| `release.yml` | push to `main` | grooms the release PR; on merge, publishes `1.2.3`, `1.2` and `latest` |
+
+All three call `images.yml`, which builds each architecture on its own native
+runner (`ubuntu-24.04` and `ubuntu-24.04-arm`) and merges the digests into one
+manifest list. Nothing is cross-built under QEMU — emulating a Rust compile is
+slow enough to dominate the pipeline. Tags are decided by the caller and passed
+in, never derived from the ref, because a release build does not run from a tag.
+
+Neither publishing path re-runs the test suite: the commit passed CI as a pull
+request, and the only thing left to prove is that the images build.
+
+### Cutting a release
+
+You don't tag by hand. [release-please](https://github.com/googleapis/release-please)
+keeps a PR titled `chore(main): release 0.2.0` open against `main`, rewriting it
+on every push. It contains the version bump, an updated `CHANGELOG.md`, and
+nothing else. **Merging that PR is the release** — it creates the tag and the
+GitHub release, and `release.yml` publishes the images for it.
+
+The version comes from the commits since the last release, which is the reason
+the [Conventional Commits](https://www.conventionalcommits.org) rule is
+load-bearing rather than cosmetic: `fix:` is a patch bump, `feat:` a minor one,
+and `!` also a minor one while the version is below 1.0.0 — and a commit whose
+type is none of those is invisible to the changelog. To override the computed
+number, put `Release-As: 1.0.0` in a commit body.
+
+The first release will be `0.1.0`, and its changelog covers the whole history:
+there is no earlier tag to bound it. That version comes from `initial-version`
+in the config, not from bumping the manifest — with no release tag to find,
+release-please bootstraps rather than bumping, and its default first version is
+`1.0.0`.
+
+One version covers everything — the four `package.json` files and the Cargo
+workspace all move together, since they only ever ship as a set. Two mechanical
+notes on how that is kept true:
+
+- `Cargo.lock` records each workspace member's version, and release-please can't
+  update it (its Rust support cannot read a virtual workspace whose members
+  inherit `version.workspace`). The `cargo-lock` job in `release.yml` runs
+  `cargo update --workspace` on the release branch and commits the result.
+- `bun.lock` records workspace versions too, but `--frozen-lockfile` does not
+  check them, so nothing needs to touch it.
+
+`release-please-config.json` is the config; `.release-please-manifest.json` is
+release-please's record of the current version, written by the bot from the
+first release onwards. Its `0.0.0` is a placeholder — until a release tag exists
+to match it, nothing reads it.
+
 ## Microsoft / Entra ID sign-in
 
 1. Register an app in Entra ID.

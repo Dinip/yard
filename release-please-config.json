@@ -1,0 +1,28 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "bump-minor-pre-major": true,
+  "changelog-sections": [
+    { "type": "feat", "section": "Features" },
+    { "type": "fix", "section": "Bug Fixes" },
+    { "type": "perf", "section": "Performance" },
+    { "type": "refactor", "section": "Refactors" },
+    { "type": "docs", "section": "Documentation" },
+    { "type": "chore", "section": "Chores", "hidden": true },
+    { "type": "ci", "section": "CI", "hidden": true },
+    { "type": "test", "section": "Tests", "hidden": true }
+  ],
+  "packages": {
+    ".": {
+      "release-type": "simple",
+      "include-component-in-tag": false,
+      "initial-version": "0.1.0",
+      "extra-files": [
+        { "type": "json", "path": "packages/coordinator/package.json", "jsonpath": "$.version" },
+        { "type": "json", "path": "packages/web/package.json", "jsonpath": "$.version" },
+        { "type": "json", "path": "packages/db/package.json", "jsonpath": "$.version" },
+        { "type": "json", "path": "packages/protocol/package.json", "jsonpath": "$.version" },
+        { "type": "toml", "path": "Cargo.toml", "jsonpath": "$.workspace.package.version" }
+      ]
+    }
+  }
+}

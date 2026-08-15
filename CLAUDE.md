@@ -135,5 +135,9 @@ This includes PRs: merges are squashed, so the PR title becomes the commit on
 `main` and must be a valid Conventional Commit — not a bare description of the
 branch.
 
+Commit types drive releases: release-please reads them to compute the next
+version and write the changelog, so a mistyped `feat:` ships a version bump. See
+the release section of [DEVELOPMENT.md](docs/DEVELOPMENT.md).
+
 **Ask before opening a PR.** Finishing a unit of work is not permission to
 publish it; propose the title and body and wait for a yes.

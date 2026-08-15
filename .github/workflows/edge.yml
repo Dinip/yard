@@ -1,0 +1,26 @@
+# The tip of main, published as `edge`. Versioned images are release.yml.
+# Tests are not re-run: the commit already passed the PR gate.
+
+name: Edge
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  images:
+    uses: ./.github/workflows/images.yml
+    with:
+      push: true
+      arches: '["amd64","arm64"]'
+      tags: |
+        edge
+        sha-${{ github.sha }}
