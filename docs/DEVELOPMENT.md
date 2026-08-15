@@ -198,6 +198,33 @@ The `provider` service is behind a profile because it needs host device access:
 docker compose --profile provider up
 ```
 
+## CI and releases
+
+Three workflows, and only one of them builds anything you can pull:
+
+| Workflow | Runs on | Does |
+|---|---|---|
+| `ci.yml` | pull requests | lint, typecheck, tests, drift guard, and an amd64 build of all three images |
+| `publish.yml` | push to `main` | publishes `edge` and `sha-<commit>` |
+| `publish.yml` | push of a `v*` tag | publishes `1.2.3`, `1.2` and `latest` |
+
+Both publishing paths call `docker.yml`, which builds each architecture on its
+own native runner (`ubuntu-24.04` and `ubuntu-24.04-arm`) and merges the digests
+into one manifest list. Nothing is cross-built under QEMU — emulating a Rust
+compile is slow enough to dominate the pipeline.
+
+Neither publishing path re-runs the test suite: the commit passed CI as a pull
+request, and the only thing left to prove is that the images build.
+
+Cutting a release is a tag:
+
+```bash
+git tag -a v0.1.0 -m "v0.1.0" && git push origin v0.1.0
+```
+
+A prerelease tag (`v0.2.0-rc.1`) publishes only its own version — `latest` never
+moves to one.
+
 ## Microsoft / Entra ID sign-in
 
 1. Register an app in Entra ID.

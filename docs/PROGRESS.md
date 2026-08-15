@@ -336,7 +336,8 @@ secure, and the UI says so plainly — that is the hook the fallback plugs into.
 | Audit log UI | ✅ | `web/src/routes/_app/admin.audit.tsx` |
 | Degraded fallback stream | ✅ | `provider-core/src/server.rs`, `web/src/components/device-screen.tsx` |
 | Healthchecks on every service | ✅ | `docker-compose.yml`, `packages/*/Dockerfile` |
-| CI: lint, typecheck, tests, drift guard, multi-arch images | ✅ | `.github/workflows/ci.yml` |
+| CI: lint, typecheck, tests, drift guard, image build | ✅ | `.github/workflows/ci.yml` |
+| Publishing: `edge` from main, `v*` tags from a release | ✅ | `.github/workflows/publish.yml`, `docker.yml` |
 | Docs finalised | ✅ | `docs/` |
 
 Releasing a reservation now lives in one place. There were four ways a device
