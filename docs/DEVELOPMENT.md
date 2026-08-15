@@ -202,11 +202,11 @@ docker compose --profile provider up
 
 | Workflow | Runs on | Does |
 |---|---|---|
-| `ci.yml` | pull requests | lint, typecheck, tests, drift guard, amd64 build of all three images |
-| `publish.yml` | push to `main` | publishes `edge` and `sha-<commit>` |
+| `pr.yml` | pull requests | lint, typecheck, tests, drift guard, amd64 build of all three images |
+| `edge.yml` | push to `main` | publishes `edge` and `sha-<commit>` |
 | `release.yml` | push to `main` | grooms the release PR; on merge, publishes `1.2.3`, `1.2` and `latest` |
 
-All three call `docker.yml`, which builds each architecture on its own native
+All three call `images.yml`, which builds each architecture on its own native
 runner (`ubuntu-24.04` and `ubuntu-24.04-arm`) and merges the digests into one
 manifest list. Nothing is cross-built under QEMU — emulating a Rust compile is
 slow enough to dominate the pipeline. Tags are decided by the caller and passed

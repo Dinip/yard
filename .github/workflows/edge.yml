@@ -1,7 +1,7 @@
-# The tip of main, published as `edge`. Releases are release.yml.
-# Tests are not re-run: the commit already passed CI as a pull request.
+# The tip of main, published as `edge`. Versioned images are release.yml.
+# Tests are not re-run: the commit already passed the PR gate.
 
-name: Publish
+name: Edge
 
 on:
   push:
@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   images:
-    uses: ./.github/workflows/docker.yml
+    uses: ./.github/workflows/images.yml
     with:
       push: true
       arches: '["amd64","arm64"]'

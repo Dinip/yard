@@ -4,7 +4,7 @@
 # unrelated reasons and waiting for the other's toolchain to install helps
 # nobody.
 
-name: CI
+name: PR
 
 on:
   pull_request:
@@ -83,7 +83,7 @@ jobs:
   # amd64 only: the arm64 build differs by runner, not by content. If the two
   # ever diverge, main catches it before a release does.
   images:
-    uses: ./.github/workflows/docker.yml
+    uses: ./.github/workflows/images.yml
     with:
       push: false
       arches: '["amd64"]'

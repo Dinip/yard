@@ -336,8 +336,8 @@ secure, and the UI says so plainly — that is the hook the fallback plugs into.
 | Audit log UI | ✅ | `web/src/routes/_app/admin.audit.tsx` |
 | Degraded fallback stream | ✅ | `provider-core/src/server.rs`, `web/src/components/device-screen.tsx` |
 | Healthchecks on every service | ✅ | `docker-compose.yml`, `packages/*/Dockerfile` |
-| CI: lint, typecheck, tests, drift guard, image build | ✅ | `.github/workflows/ci.yml` |
-| Publishing: `edge` from main | ✅ | `.github/workflows/publish.yml`, `docker.yml` |
+| PR gate: lint, typecheck, tests, drift guard, image build | ✅ | `.github/workflows/pr.yml` |
+| Publishing: `edge` from main | ✅ | `.github/workflows/edge.yml`, `images.yml` |
 | Releases: release-please PR → tag → versioned images | ✅ | `.github/workflows/release.yml`, `release-please-config.json` |
 | Docs finalised | ✅ | `docs/` |
 
