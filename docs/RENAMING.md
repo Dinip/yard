@@ -31,6 +31,10 @@ mechanical; `bun run typecheck` will catch anything missed.
 `git remote set-url origin …` after renaming on GitHub. GitHub redirects the old
 URL, so nothing breaks in the interim.
 
+Also update `REPO_URL` in `packages/web/src/lib/build-info.ts`, which the
+account menu and sign-in page link to. Deliberately a constant rather than an
+env var: the source a build came from is not something an operator configures.
+
 ### 3. The compose project name — easy, but note the volumes
 
 `name: device-farm` in `docker-compose.yml`. **Renaming it orphans the existing

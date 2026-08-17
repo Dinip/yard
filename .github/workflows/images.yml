@@ -83,6 +83,7 @@ jobs:
           file: ${{ matrix.image.dockerfile }}
           platforms: linux/${{ matrix.arch }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: GIT_SHA=${{ github.sha }}
           # Pushed without a tag: an arch-specific tag would be a lie the moment
           # the other architecture lands on it. The manifest job names them.
           outputs: ${{ inputs.push && format('type=image,name={0}/{1},push-by-digest=true,name-canonical=true,push=true', needs.prepare.outputs.registry, matrix.image.name) || 'type=cacheonly' }}

@@ -11,6 +11,7 @@ import {
   Smartphone,
 } from "lucide-react";
 import type { ReactNode } from "react";
+import { BuildStamp, GithubMark } from "@/components/build-stamp";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -24,6 +25,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { authClient } from "@/lib/auth-client";
+import { REPO_URL } from "@/lib/build-info";
 import { trpc } from "@/lib/trpc";
 
 /**
@@ -101,6 +103,22 @@ export function AppShell({ children }: { children: ReactNode }) {
                 <LogOut className="size-4" />
                 Sign out
               </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              {/* A footnote, not a menu item: nobody opens this menu to visit
+                  the repository, so the link is the mark beside the build it
+                  points at. */}
+              <div className="flex items-center justify-between px-2 py-1.5">
+                <BuildStamp />
+                <a
+                  href={REPO_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-muted-foreground hover:text-foreground"
+                  aria-label="Source on GitHub"
+                >
+                  <GithubMark className="size-3.5" />
+                </a>
+              </div>
             </DropdownMenuContent>
           </DropdownMenu>
         </nav>

@@ -1442,6 +1442,37 @@ phase 15 note about horizontal cuts.
 
 ---
 
+## Phase 19 — which build am I looking at ✅
+
+*Done when: a bug report can name the exact commit the reporter's browser is
+running, without anyone reading a container tag.*
+
+| Item | State | Where |
+|---|---|---|
+| `REPO_URL`, `VERSION`, `COMMIT` + label/link helpers | ✅ | `packages/web/src/lib/build-info.ts` |
+| `BuildStamp` + inline GitHub mark | ✅ | `packages/web/src/components/build-stamp.tsx` |
+| Account menu: the stamp, GitHub mark beside it | ✅ | `.../components/app-shell.tsx` |
+| Sign-in page: the stamp, under the card as a footnote | ✅ | `.../routes/login.tsx` |
+| `define` from `package.json` + `GIT_SHA`, git as fallback | ✅ | `packages/web/vite.config.ts` |
+| `ARG GIT_SHA` fed by `github.sha` | ✅ | `packages/web/Dockerfile`, `.github/workflows/images.yml` |
+| Degradation tests: no sha → no link, version stays | ✅ | `packages/web/test/build-info.test.ts` |
+
+### Baked in, not served
+
+The sign-in page carries the stamp too, and it renders before there is a
+session — before a misconfigured coordinator would answer anything at all,
+which is precisely when someone needs to say which build they are on. So the
+values are vite `define` literals rather than another field on
+`user.capabilities`. The cost is that the sha has to reach the *image* build:
+the Docker context has no `.git`, so `images.yml` passes `github.sha` as a
+build arg and a local build asks git itself.
+
+Unlike `APP_NAME`, the repo URL is a constant. Where a deployment's source
+lives is a property of the build, not something an operator sets — it is listed
+in [RENAMING.md](./RENAMING.md) instead.
+
+---
+
 ## Open decisions
 
 - **Name.** The project is "Device Farm" as a placeholder. See
