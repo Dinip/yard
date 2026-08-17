@@ -3,12 +3,14 @@ import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
+import { BuildStamp, GithubMark } from "@/components/build-stamp";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { authClient } from "@/lib/auth-client";
+import { REPO_URL } from "@/lib/build-info";
 import { trpc } from "@/lib/trpc";
 
 export const Route = createFileRoute("/login")({
@@ -53,7 +55,7 @@ function LoginPage() {
   });
 
   return (
-    <div className="flex min-h-svh items-center justify-center bg-background p-6">
+    <div className="flex min-h-svh flex-col items-center justify-center gap-4 bg-background p-6">
       <Card className="w-full max-w-sm">
         <CardHeader>
           <CardTitle className="text-2xl">{caps?.appName ?? "Device Farm"}</CardTitle>
@@ -133,6 +135,22 @@ function LoginPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Under the card, not in the header: it is a footnote, and putting it
+          between the product name and the first sign-in button read as part of
+          the greeting. */}
+      <div className="flex items-center gap-2">
+        <BuildStamp />
+        <a
+          href={REPO_URL}
+          target="_blank"
+          rel="noreferrer"
+          className="text-muted-foreground hover:text-foreground"
+          aria-label="Source on GitHub"
+        >
+          <GithubMark className="size-3.5" />
+        </a>
+      </div>
     </div>
   );
 }

@@ -216,6 +216,25 @@ A top bar spent a whole row of *every* page on, for a non-admin, a product name
 and one link, and the device page then stacked its own header underneath it. The
 rail costs width instead, which is the axis a portrait device leaves spare.
 
+### Which build you are looking at
+
+`src/lib/build-info.ts` holds the repo URL, the version and the commit; the
+account menu and the sign-in page render them through `BuildStamp` as
+`v0.1.0 · a1b2c3d`, linking to that commit on GitHub.
+
+The values are baked in by vite's `define` rather than served by the
+coordinator: the sign-in page shows the stamp too, and it renders before there
+is a session — which is exactly the state someone is in when a deployment is
+broken and they need to say which build broke. The version comes from
+`package.json` (release-please bumps it); the sha comes from `GIT_SHA`, which
+the image build passes in because the Docker context carries no `.git`, falling
+back to `git rev-parse HEAD` locally. A build with neither still ships — the
+stamp drops the sha, not the version.
+
+Unlike the product name, the repo URL is not `APP_NAME`-style configuration:
+where a deployment's source lives is a property of the build, not of the
+operator. It is a rename site — see [RENAMING.md](./RENAMING.md).
+
 **Everything on this path goes to the provider's origin.** The coordinator is
 asked for one thing — a session token, from `device.sessionToken` — and is then
 out of the way. Video, input, screenshots and uploads never touch it.

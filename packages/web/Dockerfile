@@ -18,6 +18,9 @@ COPY packages/coordinator ./packages/coordinator
 COPY packages/web ./packages/web
 
 WORKDIR /app/packages/web
+# The context has no .git, so the sha the UI shows can only come from outside.
+ARG GIT_SHA
+ENV GIT_SHA=$GIT_SHA
 RUN bun run build
 
 FROM caddy:2-alpine AS runtime

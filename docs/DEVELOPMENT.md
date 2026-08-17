@@ -215,6 +215,10 @@ in, never derived from the ref, because a release build does not run from a tag.
 Neither publishing path re-runs the test suite: the commit passed CI as a pull
 request, and the only thing left to prove is that the images build.
 
+`images.yml` passes `GIT_SHA=${{ github.sha }}` as a build arg. The web image
+bakes it into the bundle so the UI can name the commit it is running; see
+[WEB.md](./WEB.md). A local `bun run build` asks git instead.
+
 ### Cutting a release
 
 You don't tag by hand. [release-please](https://github.com/googleapis/release-please)
