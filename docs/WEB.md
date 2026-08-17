@@ -92,7 +92,30 @@ Scrollbars are restyled globally in `styles.css` — `scrollbar-color` for Firef
 and the `::-webkit-scrollbar-*` pseudo-elements for Chrome and Safari, which
 need the colours spelled out a second time. Global rather than a utility class:
 a scrollbar that matched only where someone remembered to opt in would look like
-a bug, and the platform default reads as a pale seam against a dark panel.
+a bug, and the platform default reads as a pale seam against a panel edge. They
+are drawn from `--border`, so they follow the theme.
+
+### Light and dark
+
+Both palettes live in `styles.css` — light on `:root`, dark on `.dark` — and
+`next-themes` decides which class `<html>` carries. The stored preference is
+`system` by default, so a first visit follows `prefers-color-scheme` and keeps
+following it when the OS flips. `ThemeToggle` (System / Light / Dark) hangs off
+the account menu in the left rail.
+
+Two things are easy to get wrong here:
+
+- **A pre-paint script in `index.html` sets the class**, because `next-themes`
+  can only do it once React has mounted — long enough to flash a white page at
+  a dark-theme user on every load. It reads the same `theme` key; changing
+  one without the other reintroduces the flash.
+- **`color-scheme` is set alongside each palette.** Native form controls, the
+  canvas backdrop and the platform scrollbar read that property, not our tokens.
+
+The popout is a second window on the same origin, so it picks up a theme change
+through the `storage` event with no protocol involvement. The device video keeps
+a literal black letterbox and white overlay chrome in both themes — that is the
+picture's own frame, not app chrome.
 
 One recurring detail: a small caption beside a large heading (`Devices 7 of 7 ·
 live`, `Users 8 total`) is `items-center` **with `leading-none` on every item**.

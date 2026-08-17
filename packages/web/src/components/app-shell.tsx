@@ -11,6 +11,7 @@ import {
   Smartphone,
 } from "lucide-react";
 import type { ReactNode } from "react";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -88,6 +89,8 @@ export function AppShell({ children }: { children: ReactNode }) {
                 <span>{me?.name}</span>
                 <span className="font-normal text-muted-foreground text-xs">{me?.email}</span>
               </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <ThemeToggle />
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 onSelect={async () => {
