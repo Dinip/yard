@@ -8,6 +8,9 @@
  * lightness flip rather than a second hand-tuned palette.
  */
 :root {
+  /* Native form controls, the canvas backdrop and the platform scrollbar read
+     this rather than our tokens, so it has to be flipped alongside them. */
+  color-scheme: light;
   --radius: 0.625rem;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
@@ -34,6 +37,7 @@
 }
 
 .dark {
+  color-scheme: dark;
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.205 0 0);
@@ -100,8 +104,8 @@
   /*
    * Scrollbars, in both spellings.
    *
-   * The platform default is a light-grey bar that reads as a seam on a dark
-   * page, and this app is mostly dark panels next to a black device screen.
+   * The platform default is a bar that reads as a seam against a panel edge,
+   * so it is drawn from the border token and follows the theme with it.
    * `scrollbar-*` is the standard property and covers Firefox; the WebKit
    * pseudo-elements are what Chrome and Safari actually honour, and they need
    * the colours spelled out again.

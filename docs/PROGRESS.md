@@ -1399,6 +1399,49 @@ and never fatal, so a farm whose devices are mounted by hand is unaffected.
 
 ---
 
+## Phase 18 — a light theme ✅
+
+*Done when: a user whose browser asks for light gets light, without asking, and
+can overrule it from the account menu.*
+
+The app was dark because `index.html` hardcoded `class="dark"` on `<html>` —
+never a decision, just the shadcn starter. The light half of the token set had
+been sitting in `:root` unused since phase 1, so this was wiring rather than a
+palette.
+
+| Item | State | Where |
+|---|---|---|
+| `class="dark"` dropped; pre-paint script picks the class | ✅ | `packages/web/index.html` |
+| `ThemeProvider`, `defaultTheme="system"`, key `theme` | ✅ | `.../routes/__root.tsx` |
+| System / Light / Dark submenu in the account menu | ✅ | `.../components/theme-toggle.tsx`, `.../app-shell.tsx` |
+| `color-scheme` per palette; scrollbars follow `--border` | ✅ | `.../styles.css` |
+
+### The flash you get for free if you forget
+
+`next-themes` can only set the class once React has mounted, which on a cold
+load is long enough to paint a white page at a dark-theme user. The class is
+therefore applied by a small inline script in `index.html`, before first paint,
+reading the same `theme` key. The two are coupled on purpose; changing the key
+in one place reintroduces the flash.
+
+`color-scheme` is set alongside each palette because native form controls, the
+canvas backdrop and the platform scrollbar read that property and not our
+tokens. The scrollbar rules already drew from `--border`, so they flipped for
+free — only their comment, which asserted the app was always dark, was wrong.
+
+### What deliberately stays black
+
+The device video's letterbox and the overlay chrome on top of it. That is the
+picture's own frame, not app chrome, and a white letterbox around a phone screen
+reads as a rendering bug. The popout needed no work: same origin, so
+`next-themes` syncs it through the `storage` event.
+
+The account menu was already the only per-user surface in the rail, so the
+toggle went there rather than adding a second icon to a 56px column — see the
+phase 15 note about horizontal cuts.
+
+---
+
 ## Open decisions
 
 - **Name.** The project is "Device Farm" as a placeholder. See
