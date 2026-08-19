@@ -1534,7 +1534,7 @@ identity rather than an enrollment.
 | `user_adb_key` table | ✅ | `db/src/schema/farm.ts`, `drizzle/0008_*.sql` |
 | `adb-bridge` crate: framing | ✅ | `adb-bridge/src/message.rs` |
 | `adb-bridge`: authentication | ✅ | `adb-bridge/src/{auth,key}.rs` |
-| `adb-bridge`: service demux | ⬜ | `provider/crates/adb-bridge` |
+| `adb-bridge`: service demux | ✅ | `adb-bridge/src/bridge.rs` |
 | Android backend swaps the splice for the bridge | ⬜ | `backend-android/src/lib.rs` |
 | Key management + approval in tRPC | ⬜ | `coordinator/src/trpc/routers/` |
 | Settings key list, holder approval card | ⬜ | `web/src/routes/` |
@@ -1551,6 +1551,20 @@ offered key means going back over the challenges it already answered. `adbd`
 skips that and trusts whoever taps "allow" on the phone — there is nobody
 standing next to a farm device, so a key that never signed anything is refused
 before the holder is even shown it.
+
+**A stream is acknowledged before it says anything.** The first cut spawned the
+copy task before writing the `OKAY` that tells the client the stream exists, so
+a service that speaks the instant it opens — `logcat`, a shell printing its
+prompt — could get its first `WRTE` out in front of it, carrying an id the
+client had never been given. The writer lock is now held across both. Found by a
+test, not by a phone.
+
+**`adb connect` prints "failed to authenticate" on a first-time key**, and that
+is not a failure. It reports whatever state the transport is in when it returns,
+and on the prompt path the holder has not answered yet. The device comes online
+the moment they do — `adb wait-for-device` blocks until then. A key already
+registered never takes this path. The UI copy has to say so, or every new user
+will file a bug.
 
 **The parked-connection registry lives in `provider-core`, not the bridge.** A
 decision can only arrive over the control socket, so losing that socket has to

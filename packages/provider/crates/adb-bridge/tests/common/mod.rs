@@ -1,4 +1,8 @@
 //! A fake `adb` client, for driving the bridge over an in-memory stream.
+//!
+//! Cargo compiles this into every integration-test binary, so anything only one
+//! of them uses looks dead to the others.
+#![allow(dead_code)]
 
 use adb_bridge::message::{auth, Command, Message, MAX_PAYLOAD, VERSION};
 use adb_bridge::PublicKey;

@@ -104,6 +104,7 @@ where
 
     for _ in 0..MAX_ATTEMPTS {
         let msg = Message::read(stream).await?;
+        debug!(?msg, "auth frame");
         if msg.command != Command::Auth {
             return Err(AuthError::Unexpected {
                 expected: "AUTH",

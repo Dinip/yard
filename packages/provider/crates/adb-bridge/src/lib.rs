@@ -16,9 +16,11 @@
 //! that can authorize a public key, and something that can open a service.
 
 pub mod auth;
+pub mod bridge;
 pub mod key;
 pub mod message;
 
+pub use bridge::{Bridge, ServiceOpener, Transport};
 pub use auth::{AuthError, Authorizer, Handshake, Identity};
 pub use key::{KeyError, PublicKey};
 pub use message::{Command, FrameError, Message, MAX_PAYLOAD, VERSION};
