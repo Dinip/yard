@@ -1531,7 +1531,7 @@ identity rather than an enrollment.
 | `AdbKey`, `adbKeys` on `session.authorize`, `device.adb.keys`, `adb.auth.request`/`.decision` | ✅ | `protocol/src/control.ts` |
 | `adbkey.pub` parsing + `SHA256:` fingerprint, vectors shared with Rust | ✅ | `protocol/src/adbkey.ts`, `protocol/test/vectors/` |
 | Parked-connection registry, bounded and refused on control-plane loss | ✅ | `provider-core/src/adb_auth.rs` |
-| `user_adb_key` table | ⬜ | `db/src/schema/farm.ts` |
+| `user_adb_key` table | ✅ | `db/src/schema/farm.ts`, `drizzle/0008_*.sql` |
 | `adb-bridge` crate: framing | ⬜ | `provider/crates/adb-bridge` |
 | `adb-bridge`: authentication | ⬜ | `provider/crates/adb-bridge` |
 | `adb-bridge`: service demux | ⬜ | `provider/crates/adb-bridge` |

@@ -276,6 +276,44 @@ export const setting = pgTable("setting", {
 });
 
 /**
+ * A developer's ADB public key.
+ *
+ * This is what makes `adb connect` work without enrolling anyone's key on a
+ * phone: the provider authenticates the connection itself and matches the key
+ * against the rows here, so the only key a device ever trusts is the
+ * provider's own. See PROVIDER.md.
+ *
+ * `fingerprint` is unique across the whole table, not per user. A key
+ * identifies one person — two accounts claiming the same key would make
+ * "who ran this `adb shell`" unanswerable, which is the question the whole
+ * mechanism exists to answer.
+ */
+export const userAdbKey = pgTable(
+  "user_adb_key",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    /** `SHA256:<base64>` over the DER SubjectPublicKeyInfo, as `ssh-keygen -l` prints. */
+    fingerprint: text("fingerprint").notNull(),
+    /** The base64 blob from `~/.android/adbkey.pub`; the provider verifies against it. */
+    publicKey: text("public_key").notNull(),
+    /** The key file's own trailing comment, usually `user@host`. */
+    comment: text("comment"),
+    /** What the owner called it. */
+    title: text("title").notNull(),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    /** Last time this key was admitted by a provider. */
+    lastUsedAt: timestamp("last_used_at"),
+  },
+  (t) => [
+    uniqueIndex("user_adb_key_fingerprint_idx").on(t.fingerprint),
+    index("user_adb_key_user_idx").on(t.userId),
+  ],
+);
+
+/**
  * There is no artifact/app table by design — uploads are transient and deleted
  * after install. An install therefore leaves its only trace here.
  */
@@ -307,5 +345,6 @@ export type AuditLog = typeof auditLog.$inferSelect;
 export type Setting = typeof setting.$inferSelect;
 export type ReservationObserver = typeof reservationObserver.$inferSelect;
 export type JoinRequest = typeof joinRequest.$inferSelect;
+export type UserAdbKey = typeof userAdbKey.$inferSelect;
 export type Platform = (typeof platformEnum.enumValues)[number];
 export type DeviceStatus = (typeof deviceStatusEnum.enumValues)[number];
