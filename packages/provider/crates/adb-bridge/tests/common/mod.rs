@@ -4,37 +4,87 @@
 //! of them uses looks dead to the others.
 #![allow(dead_code)]
 
+use std::sync::LazyLock;
+
 use adb_bridge::message::{auth, Command, Message, MAX_PAYLOAD, VERSION};
 use adb_bridge::PublicKey;
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine as _;
 use rsa::pkcs1v15::Pkcs1v15Sign;
-use rsa::pkcs8::DecodePrivateKey;
-use rsa::RsaPrivateKey;
+use rsa::traits::PublicKeyParts as _;
+use rsa::{RsaPrivateKey, RsaPublicKey};
 use sha1::Sha1;
 use tokio::io::{AsyncRead, AsyncWrite};
 
-pub const VECTORS: &str = concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/../../../protocol/test/vectors/"
-);
+/// Keys these tests sign with are generated, not committed.
+///
+/// The alternative was a private key in the repository, and a throwaway one is
+/// still a private key in the history forever. Generating costs a couple of
+/// seconds once per test binary and nothing is lost: what these tests need is a
+/// *real* RSA signature over our challenge, not one particular key. The one
+/// place a fixed key genuinely matters is the cross-language fingerprint
+/// vector, and that only needs the public half — `adbkey.pub`, which is
+/// committed and asserted against in `vectors.rs`.
+///
+/// `LazyLock`, because generation is the slow part and `test_key()` is called
+/// several times per test.
+static KEY: LazyLock<(PublicKey, RsaPrivateKey)> = LazyLock::new(generate);
+static OTHER: LazyLock<(PublicKey, RsaPrivateKey)> = LazyLock::new(generate);
 
-pub fn vector(name: &str) -> String {
-    std::fs::read_to_string(format!("{VECTORS}{name}")).expect("the vector exists")
+fn generate() -> (PublicKey, RsaPrivateKey) {
+    // `rsa`'s own re-export: the workspace `rand` is a major version ahead, and
+    // the two `rand_core` traits do not unify.
+    let mut rng = rsa::rand_core::OsRng;
+    let private = RsaPrivateKey::new(&mut rng, 2048).expect("keygen succeeds");
+    let public = PublicKey::parse(&android_blob(&private.to_public_key(), "dev@example.test"))
+        .expect("our own blob parses");
+    (public, private)
 }
 
-/// The shared throwaway key, public half.
+/// Encode a public key the way `~/.android/adbkey.pub` does.
+///
+/// Android's own struct: `modulus_size_words`, `n0inv`, a little-endian
+/// modulus, R², then the exponent. `n0inv` and R² are derivable from the
+/// modulus and exist only to save the device's bootloader the work, so the
+/// parser reads past them and this leaves them zero — writing them would be
+/// inventing a second implementation of arithmetic nothing checks.
+fn android_blob(key: &RsaPublicKey, comment: &str) -> String {
+    const MODULUS_SIZE: usize = 256;
+
+    let mut blob = vec![0u8; 524];
+    blob[0..4].copy_from_slice(&((MODULUS_SIZE / 4) as u32).to_le_bytes());
+
+    // Left-padded to the full width first: a modulus with a leading zero byte
+    // is shorter big-endian, and reversing it unpadded would shift every byte.
+    let mut modulus = [0u8; MODULUS_SIZE];
+    let be = key.n().to_bytes_be();
+    modulus[MODULUS_SIZE - be.len()..].copy_from_slice(&be);
+    modulus.reverse();
+    blob[8..8 + MODULUS_SIZE].copy_from_slice(&modulus);
+
+    let mut exponent = [0u8; 4];
+    let be = key.e().to_bytes_be();
+    exponent[4 - be.len()..].copy_from_slice(&be);
+    let exponent = u32::from_be_bytes(exponent);
+    blob[8 + MODULUS_SIZE * 2..8 + MODULUS_SIZE * 2 + 4].copy_from_slice(&exponent.to_le_bytes());
+
+    format!("{} {comment}", STANDARD.encode(&blob))
+}
+
+/// The throwaway key, public half.
 pub fn test_key() -> PublicKey {
-    PublicKey::parse(&vector("adbkey.pub")).expect("the vector parses")
+    KEY.0.clone()
 }
 
-/// The shared throwaway key, private half — so tests produce the signatures a
-/// real `adb` would produce.
+/// The throwaway key, private half — so tests produce the signatures a real
+/// `adb` would produce.
 pub fn test_private_key() -> RsaPrivateKey {
-    RsaPrivateKey::from_pkcs8_pem(&vector("adbkey.testonly.pem")).expect("the private key parses")
+    KEY.1.clone()
 }
 
 /// A second key, standing in for somebody else's laptop.
 pub fn other_key() -> PublicKey {
-    PublicKey::parse(&vector("adbkey-other.pub")).expect("the second vector parses")
+    OTHER.0.clone()
 }
 
 pub fn sign(key: &RsaPrivateKey, token: &[u8]) -> Vec<u8> {

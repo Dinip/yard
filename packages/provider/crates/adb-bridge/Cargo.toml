@@ -22,6 +22,4 @@ rand.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["io-std"] }
-# Test clients sign real challenges with the shared throwaway key.
-rsa = { workspace = true, features = ["pem"] }
 tracing-subscriber.workspace = true
