@@ -182,6 +182,20 @@ function DevicePage() {
     }),
   );
 
+  const answerAdbAuth = useMutation(
+    trpc.device.answerAdbAuthRequest.mutationOptions({
+      onSuccess: (result) => {
+        toast.success(
+          result.approved
+            ? "Key approved and added to your account"
+            : "Key denied — the connection was closed",
+        );
+        invalidate();
+      },
+      onError: (e) => toast.error(e.message),
+    }),
+  );
+
   // An approval announces itself — the console simply opens. Being turned down
   // or timing out does not, so say it once, on the transition.
   const lastAnswer = useRef<string | null>(null);
@@ -233,6 +247,17 @@ function DevicePage() {
           requests={device.reservation.joinRequests}
           pending={answerJoinRequest.isPending}
           onAnswer={(requestId, approve) => answerJoinRequest.mutate({ requestId, approve })}
+        />
+      )}
+
+      {/* Not a dialog. A dialog over the screen is exactly wrong here: the
+          developer is at a terminal watching `adb connect` sit there, and
+          whatever they were doing on the phone should stay visible. */}
+      {mine && device.reservation && device.reservation.adbAuthRequests.length > 0 && (
+        <AdbAuthPrompt
+          requests={device.reservation.adbAuthRequests}
+          pending={answerAdbAuth.isPending}
+          onAnswer={(requestId, approve) => answerAdbAuth.mutate({ requestId, approve })}
         />
       )}
 
@@ -555,6 +580,72 @@ function ObserverDisclosure({ observers }: { observers: Observer[] }) {
 }
 
 type JoinRequest = { id: string; userId: string; name: string | null; note: string | null };
+
+type AdbAuthRequest = {
+  requestId: string;
+  fingerprint: string;
+  comment: string | null;
+  /** Serialised over tRPC, like every other date this page renders. */
+  askedAt: string;
+  expiresAt: string;
+};
+
+/**
+ * An `adb connect` carrying a key nobody has registered.
+ *
+ * Approving adds the key to *your* account, which is the only thing the holder
+ * can honestly assert: they know somebody is at the door, not who. Somebody
+ * else's key belongs on that person's account, added in their own settings.
+ */
+function AdbAuthPrompt({
+  requests,
+  pending,
+  onAnswer,
+}: {
+  requests: AdbAuthRequest[];
+  pending: boolean;
+  onAnswer: (requestId: string, approve: boolean) => void;
+}) {
+  return (
+    <div className="grid gap-3 rounded-lg border border-warning/30 bg-warning/10 p-4">
+      {requests.map((request) => (
+        <div key={request.requestId} className="grid gap-2">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="font-medium text-sm">An adb key is asking to use this device</span>
+            {/* A request whose window has closed is refused on the provider
+                whatever this page shows, so the countdown is not decoration. */}
+            <span className="font-mono text-muted-foreground text-xs">
+              <Countdown deadline={request.expiresAt} /> left
+            </span>
+          </div>
+          <code className="truncate rounded bg-background/60 px-2 py-1 font-mono text-xs">
+            {request.fingerprint}
+          </code>
+          {request.comment && (
+            <span className="text-muted-foreground text-xs">from {request.comment}</span>
+          )}
+          <p className="text-muted-foreground text-xs">
+            Approve only if this is your own machine. The key is added to your account, so your next
+            connect anywhere is silent — and every `adb shell` through it is attributed to you.
+          </p>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={pending}
+              onClick={() => onAnswer(request.requestId, false)}
+            >
+              Deny
+            </Button>
+            <Button size="sm" disabled={pending} onClick={() => onAnswer(request.requestId, true)}>
+              Approve, it is mine
+            </Button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 /**
  * Asks the holder to answer the oldest outstanding request.

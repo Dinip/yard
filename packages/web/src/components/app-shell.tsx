@@ -92,6 +92,15 @@ export function AppShell({ children }: { children: ReactNode }) {
                 <span className="font-normal text-muted-foreground text-xs">{me?.email}</span>
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
+              {/* In the account menu rather than the rail: these are yours,
+                  not the farm's, and the rail is for places you go often. */}
+              <DropdownMenuItem asChild>
+                <Link to="/settings">
+                  <SlidersHorizontal className="size-4" />
+                  Your settings
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
               <ThemeToggle />
               <DropdownMenuSeparator />
               <DropdownMenuItem
