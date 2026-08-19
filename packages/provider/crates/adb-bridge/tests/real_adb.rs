@@ -60,7 +60,7 @@ impl ServiceOpener for Canned {
         "device::ro.product.name=farm;ro.product.model=bridge;features=cmd,shell_v2".into()
     }
 
-    fn activity(&self) {}
+    async fn activity(&self) {}
 }
 
 // Multi-threaded on purpose: `adb` is driven with a blocking `Command`, and on

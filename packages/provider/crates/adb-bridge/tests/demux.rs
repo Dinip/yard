@@ -65,7 +65,7 @@ impl ServiceOpener for FakeDevice {
         "device::ro.product.name=farm;features=shell_v2,cmd".into()
     }
 
-    fn activity(&self) {
+    async fn activity(&self) {
         self.activity.fetch_add(1, Ordering::SeqCst);
     }
 }

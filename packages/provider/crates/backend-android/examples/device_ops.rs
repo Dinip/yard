@@ -41,23 +41,37 @@ async fn main() -> anyhow::Result<()> {
     tokio::fs::remove_file(&bogus).await.ok();
 
     println!("\nremote debug:");
-    let exposed = backend.remote_debug().await?;
+    // Nobody is entitled and there is no coordinator to ask, so the bridge will
+    // refuse every client. What this shows is that the port is served at all —
+    // and that the device is left alone, which is the change.
+    let (control, _upstream) = provider_core::control::ControlSender::detached();
+    let authority = std::sync::Arc::new(provider_core::adb_auth::AdbAuthority::new(
+        serial.clone(),
+        provider_core::session::SessionRegistry::new(),
+        provider_core::adb_auth::AdbAuthWaiters::new(),
+        control,
+    ));
+    let exposed = backend.remote_debug(authority).await?;
     println!("  exposed on port {}", exposed.port);
-    println!("  device is listening: {}", listening(&serial).await);
     println!(
-        "  connectable on the forwarded port: {}",
+        "  device is listening on the network: {} (it should not be)",
+        listening(&serial).await
+    );
+    println!(
+        "  connectable on the bridge port: {}",
         connectable(exposed.port).await
     );
 
     backend.remote_debug_stop().await?;
-    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
     println!("  withdrawn");
-    println!("  device is listening: {}", listening(&serial).await);
 
     Ok(())
 }
 
-/// Whether adbd is actually listening on the device, as the device sees it.
+/// Whether adbd is listening on the network, as the device sees it.
+///
+/// With the bridge this should stay false throughout: the provider answers
+/// `adb connect` itself and never asks the device to open a port.
 async fn listening(serial: &str) -> bool {
     let adb = backend_android::adb::Adb::new(backend_android::adb::DEFAULT_ADB_SERVER);
     adb.shell(serial, "getprop service.adb.tcp.port")

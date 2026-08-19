@@ -17,7 +17,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{mpsc, Mutex, Semaphore};
 use tracing::{debug, info, warn};
 
-use crate::auth::{authenticate, AuthError, Authorizer, Identity};
+use crate::auth::{authenticate, AuthError, Authorizer, BannerSource, Identity};
 use crate::message::{Command, Message};
 
 /// Services that change a device in ways that outlive the session.
@@ -51,7 +51,7 @@ pub trait ServiceOpener: Send + Sync {
 
     /// Somebody is driving this device. Called as traffic flows, so
     /// implementations must rate-limit rather than forward every call.
-    fn activity(&self);
+    async fn activity(&self);
 }
 
 pub struct Bridge {
@@ -67,8 +67,8 @@ impl Bridge {
     /// Serve one client to completion.
     pub async fn serve<S: Transport>(&self, socket: S, peer: &str) -> Result<(), AuthError> {
         let mut socket = socket;
-        let banner = self.opener.banner().await;
-        let handshake = authenticate(&mut socket, &*self.authorizer, &banner).await?;
+        let handshake =
+            authenticate(&mut socket, &*self.authorizer, DeviceBanner(&*self.opener)).await?;
         let identity = handshake.identity.clone();
         info!(
             %peer,
@@ -90,6 +90,17 @@ impl Bridge {
         let outcome = session.run(reader).await;
         session.close_all().await;
         outcome
+    }
+}
+
+/// Lets the auth machine pull the banner off the device without knowing what a
+/// device is.
+struct DeviceBanner<'a>(&'a dyn ServiceOpener);
+
+#[async_trait]
+impl BannerSource for DeviceBanner<'_> {
+    async fn banner(&self) -> String {
+        self.0.banner().await
     }
 }
 
@@ -139,7 +150,7 @@ impl Session {
 
     /// The client wants a service. `remote` is *its* id for the stream.
     async fn on_open(&self, remote: u32, service: String) {
-        self.opener.activity();
+        self.opener.activity().await;
 
         if let Some(name) = refused(&service) {
             warn!(
@@ -223,7 +234,7 @@ impl Session {
     }
 
     async fn on_write(&self, local: u32, payload: Bytes) {
-        self.opener.activity();
+        self.opener.activity().await;
         let sender = {
             let streams = self.streams.lock().await;
             streams.get(&local).map(|s| s.to_device.clone())

@@ -11,6 +11,7 @@
 //! The scrcpy server is embedded in this binary and runs on the phone.
 
 pub mod adb;
+pub mod bridge;
 pub mod h264;
 pub mod metrics;
 pub mod scrcpy;
@@ -22,11 +23,15 @@ use std::time::{Duration, Instant};
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
 use farm_protocol::{AppInfo, Display, FileEntry, FileKind, FileListing, Platform};
+use adb_bridge::Bridge;
+use provider_core::adb_auth::AdbAuthority;
 use provider_core::backend::{
     join_path, parent_of, AppFilter, BackendError, DeviceBackend, DeviceInfo, DeviceMetrics,
     InputEvent, ProgressSink, RemoteDebug, Result as BackendResult,
 };
 use provider_core::ports::{PortLease, PortPool};
+
+use crate::bridge::{DeviceAuthorizer, DeviceServices};
 use provider_core::video::{channel, VideoGeometry, VideoHandle, VideoPublisher};
 use tokio::net::TcpStream;
 use tokio::sync::{watch, Mutex};
@@ -41,20 +46,6 @@ const RECONNECT_DELAY: Duration = Duration::from_secs(5);
 
 /// How long a request waits for a session before giving up.
 const SESSION_WAIT: Duration = Duration::from_secs(20);
-
-/// How long to wait for a device to come back after `adbd` restarts.
-const ADB_RESTART_TIMEOUT: Duration = Duration::from_secs(15);
-
-/// How long a device keeps reading as healthy after we bounce `adbd` ourselves.
-///
-/// Long enough for `RECONNECT_DELAY` plus pushing and starting the scrcpy
-/// server again, and no longer: a device that really did go away has to reach
-/// `unhealthy` on its own.
-const ADB_RESTART_GRACE: Duration = Duration::from_secs(15);
-
-/// The port `adbd` listens on when told to. 5555 is the convention every
-/// `adb connect` example assumes.
-const DEVICE_ADB_PORT: u16 = 5555;
 
 /// Where the file browser opens. Shared external storage is where anything a
 /// tester wants off a phone ends up — screenshots, exports, downloads — and it
@@ -159,9 +150,6 @@ pub struct AndroidBackend {
     pointer: Mutex<Pointer>,
     clipboard_sequence: std::sync::atomic::AtomicU64,
     exposed: Mutex<Option<Exposed>>,
-    /// Until when an `adbd` restart we asked for excuses a dead session. See
-    /// [`AndroidBackend::hold_through_adbd_restart`].
-    adb_restart_until: Mutex<Option<Instant>>,
 }
 
 /// A live remote-debugging listener: the accept loop, and the port it holds.
@@ -189,7 +177,6 @@ impl AndroidBackend {
             pointer: Mutex::new(Pointer::default()),
             clipboard_sequence: std::sync::atomic::AtomicU64::new(1),
             exposed: Mutex::new(None),
-            adb_restart_until: Mutex::new(None),
         });
 
         tokio::spawn(supervise(Supervisor {
@@ -322,68 +309,6 @@ impl AndroidBackend {
             .await;
     }
 
-    /// Wait until the device reports the adb TCP port we are aiming for.
-    ///
-    /// `None` means "listening on nothing". Polling the property is what
-    /// actually confirms the restart landed; transport presence does not,
-    /// because the old transport is still there for a moment after the request.
-    async fn await_adb_port(&self, want: Option<u16>) -> BackendResult<()> {
-        let deadline = Instant::now() + ADB_RESTART_TIMEOUT;
-
-        loop {
-            // The shell itself fails while adbd is down, which is expected and
-            // is why this polls rather than asking once.
-            if let Ok(value) = self.shell("getprop service.adb.tcp.port").await {
-                if listening_port(&value) == want {
-                    return Ok(());
-                }
-            }
-            if Instant::now() >= deadline {
-                return Err(BackendError::Unavailable(format!(
-                    "adbd did not settle on {} within {ADB_RESTART_TIMEOUT:?}",
-                    want.map(|p| p.to_string()).unwrap_or_else(|| "usb".into())
-                )));
-            }
-            tokio::time::sleep(Duration::from_millis(300)).await;
-        }
-    }
-
-    /// Restart `adbd` into (or out of) TCP mode and wait for it to settle,
-    /// without the device reading as broken while it is down.
-    ///
-    /// The restart takes the USB transport and the scrcpy session with it, so
-    /// `ready` goes false and `info()` fails for a few seconds. That is us, not
-    /// a fault: a health poll landing in the window used to flip a phone
-    /// someone was actively using to `unhealthy`.
-    async fn bounce_adbd(&self, want: Option<u16>) -> BackendResult<()> {
-        // Covers the restart *and* the session rebuild that follows it, because
-        // `adbd` answering again does not mean scrcpy is back yet.
-        self.hold_through_adbd_restart(ADB_RESTART_TIMEOUT + ADB_RESTART_GRACE)
-            .await;
-        let settled = self.await_adb_port(want).await;
-        // Whatever the port did, only the rebuild is still outstanding — a
-        // device that fails to come back must not be excused for the full
-        // timeout as well.
-        self.hold_through_adbd_restart(ADB_RESTART_GRACE).await;
-        settled
-    }
-
-    /// Read as healthy for `window`, however dead the session looks.
-    async fn hold_through_adbd_restart(&self, window: Duration) {
-        *self.adb_restart_until.lock().await = Some(Instant::now() + window);
-    }
-
-    async fn restarting_adbd(&self) -> bool {
-        let mut until = self.adb_restart_until.lock().await;
-        match *until {
-            Some(deadline) if Instant::now() < deadline => true,
-            Some(_) => {
-                *until = None;
-                false
-            }
-            None => false,
-        }
-    }
 
     async fn shell(&self, command: &str) -> BackendResult<String> {
         self.adb
@@ -735,18 +660,23 @@ impl DeviceBackend for AndroidBackend {
         Ok(())
     }
 
-    /// Expose this device's adb transport on a provider port.
+    /// Expose this device on a provider port for `adb connect`.
     ///
-    /// This is remote debugging: a developer runs `adb connect provider:port`
-    /// and gets the device on their own machine. `service.adb.tcp.port` is what
-    /// makes the device listen at all; without it the proxy reaches nothing.
+    /// The provider answers that connection itself — see the `adb-bridge`
+    /// crate — rather than forwarding it to the device's own `adbd`. That is
+    /// what makes remote debugging work without enrolling every developer's key
+    /// on every phone: the only key a device trusts is this provider's.
+    ///
+    /// It is also why nothing here touches `tcpip:` any more. The device never
+    /// listens on the network, so there is no `adbd` restart to survive and no
+    /// port left open on whatever Wi-Fi the phone is on.
     ///
     /// The listener is the provider's own, on a port claimed from the pool
     /// `remote_debug.ports` configures. `adb forward` cannot serve this: its
     /// socket binds the adb server's loopback, so a containerised provider
     /// forwards to a port nothing outside the container can reach, on an
     /// ephemeral number nothing could have published.
-    async fn remote_debug(&self) -> BackendResult<RemoteDebug> {
+    async fn remote_debug(&self, authority: Arc<AdbAuthority>) -> BackendResult<RemoteDebug> {
         if let Some(exposed) = self.exposed.lock().await.as_ref() {
             return Ok(RemoteDebug {
                 port: exposed.lease.port(),
@@ -757,61 +687,35 @@ impl DeviceBackend for AndroidBackend {
             BackendError::Failed("remote debugging is not configured on this provider".into())
         })?;
 
-        // Make the device listen before forwarding to it. `tcpip:` is a
-        // transport service; the setprop recipe needs root and fails silently.
-        self.adb
-            .tcpip(&self.options.serial, DEVICE_ADB_PORT)
-            .await
-            .map_err(|err| BackendError::Failed(format!("{err:#}")))?;
-
-        // Wait for the *end state*, not for the transport to reappear: adbd
-        // has not dropped yet at this point, so a presence check passes
-        // immediately against the connection that is about to die, and
-        // everything after it races the restart.
-        self.bounce_adbd(Some(DEVICE_ADB_PORT)).await?;
-
         let (lease, listener) = bind_from_pool(pool)
             .await
             .map_err(|err| BackendError::Failed(format!("{err:#}")))?;
         let port = lease.port();
 
-        let task = tokio::spawn(serve_debug_proxy(
+        let task = tokio::spawn(serve_adb_bridge(
             listener,
             self.adb.clone(),
             self.options.serial.clone(),
+            authority,
         ));
 
         *self.exposed.lock().await = Some(Exposed { lease, task });
-        info!(serial = %self.options.serial, port, "adb transport exposed");
+        info!(serial = %self.options.serial, port, "adb bridge listening");
         Ok(RemoteDebug { port })
     }
 
-    /// Stop remote debugging, and stop the *device* listening too.
+    /// Stop accepting `adb connect` clients and drop the ones connected.
     ///
-    /// Closing the listener alone would leave `adbd` bound to port 5555 on
-    /// whatever network the phone is on, reachable by anyone who can route to
-    /// it, for as long as the device stays up. A farm device must not be left
-    /// in that state because someone finished debugging.
+    /// Aborting the task drops the listener and every connection under it: a
+    /// developer must not keep driving a device after the reservation that
+    /// granted it ended. Dropping the lease returns the port to the pool.
+    ///
+    /// There is nothing to undo on the device. It was never asked to listen.
     async fn remote_debug_stop(&self) -> BackendResult<()> {
-        // Aborting drops the listener, and any connection still spliced through
-        // it dies with the task — a developer must not keep driving a device
-        // after the reservation that granted it ended. Dropping the lease with
-        // it is what returns the port to the pool.
         if let Some(exposed) = self.exposed.lock().await.take() {
             exposed.task.abort();
+            info!(serial = %self.options.serial, "adb bridge withdrawn");
         }
-
-        // Runs even when no listener was recorded: a provider restart loses that
-        // memory while the device keeps listening, and this is the only thing
-        // that closes it.
-        self.adb
-            .usb_only(&self.options.serial)
-            .await
-            .map_err(|err| BackendError::Failed(format!("{err:#}")))?;
-        // Same restart, same wait: returning before adbd is back makes the
-        // next command fail for a reason that has nothing to do with it.
-        self.bounce_adbd(None).await?;
-        info!(serial = %self.options.serial, "adb transport withdrawn");
         Ok(())
     }
 
@@ -833,7 +737,7 @@ impl DeviceBackend for AndroidBackend {
         // The health poll is also the only regular tick this backend gets, so
         // it is where a forgotten contact gets lifted.
         self.release_if_stale().await;
-        *self.ready.borrow() || self.restarting_adbd().await
+        *self.ready.borrow()
     }
 
     /// Two adb round trips, or three when app patterns are configured.
@@ -903,6 +807,8 @@ struct Supervisor {
 /// The video socket ending *is* the session ending: the server exits with it,
 /// and its control socket is then talking to nothing.
 async fn supervise(supervisor: Supervisor) {
+    close_legacy_tcp_listener(&supervisor.adb, &supervisor.options.serial).await;
+
     loop {
         if let Err(err) = run_once(&supervisor).await {
             warn!(
@@ -1188,32 +1094,64 @@ async fn bind_from_pool(pool: &Arc<PortPool>) -> Result<(PortLease, tokio::net::
     outcome
 }
 
-/// Accept `adb connect` clients and splice each one to the device's own adbd.
+/// Accept `adb connect` clients and serve each one the ADB protocol.
 ///
-/// One task per connection, and a failed dial closes only that connection: the
-/// listener outlives it, because a phone that drops mid-debug otherwise takes
-/// the port with it until the session ends.
-async fn serve_debug_proxy(listener: tokio::net::TcpListener, adb: Adb, serial: String) {
+/// One task per connection, and a refused or broken client closes only itself:
+/// the listener outlives it, because a phone that drops mid-debug otherwise
+/// takes the port with it until the session ends.
+async fn serve_adb_bridge(
+    listener: tokio::net::TcpListener,
+    adb: Adb,
+    serial: String,
+    authority: Arc<AdbAuthority>,
+) {
+    // Shared across connections: the entitled key set is read per handshake, so
+    // one instance stays current, and the banner is cached behind it.
+    let authorizer = Arc::new(DeviceAuthorizer::new(authority.clone()));
+    let services = Arc::new(DeviceServices::new(adb, serial.clone(), authority));
+
     loop {
-        let Ok((mut client, peer)) = listener.accept().await else {
+        let Ok((client, peer)) = listener.accept().await else {
             return;
         };
 
-        let adb = adb.clone();
+        let bridge = Bridge::new(authorizer.clone(), services.clone());
         let serial = serial.clone();
         tokio::spawn(async move {
-            let mut device = match adb.device_tcp(&serial, DEVICE_ADB_PORT).await {
-                Ok(device) => device,
-                Err(err) => {
-                    warn!(%serial, %peer, error = %format!("{err:#}"), "remote debug dial failed");
-                    return;
-                }
-            };
-
-            if let Err(err) = tokio::io::copy_bidirectional(&mut client, &mut device).await {
-                debug!(%serial, %peer, error = %err, "remote debug connection ended");
+            if let Err(err) = bridge.serve(client, &peer.to_string()).await {
+                // Refusals are ordinary — an unregistered key, a holder who
+                // said no — so this is not a device fault.
+                debug!(%serial, %peer, error = %err, "adb client refused");
             }
         });
+    }
+}
+
+/// Close a network `adbd` port left open by an older provider.
+///
+/// Remote debugging used to work by putting the device into `tcpip:` mode and
+/// forwarding to its own `adbd`. The bridge does not, so nothing turns that
+/// port off any more — and a device upgraded mid-exposure would sit there
+/// listening on whatever network it is on, indefinitely, for anyone whose key
+/// it already trusts. This is the one thing that closes it.
+///
+/// Checked before acting because `adb usb` restarts `adbd`: doing it
+/// unconditionally would bounce every device on every provider start.
+async fn close_legacy_tcp_listener(adb: &Adb, serial: &str) {
+    let Ok(value) = adb.shell(serial, "getprop service.adb.tcp.port").await else {
+        return;
+    };
+    let Some(port) = listening_port(&value) else {
+        return;
+    };
+
+    warn!(
+        %serial,
+        port,
+        "this device is still listening for adb over the network, from before the bridge; closing it"
+    );
+    if let Err(err) = adb.usb_only(serial).await {
+        warn!(%serial, error = %format!("{err:#}"), "could not close the legacy adb port");
     }
 }
 
@@ -1230,43 +1168,6 @@ fn staging_suffix() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// A backend with nowhere to connect: `ready` never goes true, which is
-    /// exactly the state an `adbd` restart puts a real device in.
-    fn offline_backend() -> Arc<AndroidBackend> {
-        let mut options = serde_json::Map::new();
-        // Port 1 refuses immediately, so the session loop never blocks on a
-        // real adb server that may or may not be running on this host.
-        options.insert("adb_server".into(), serde_json::json!("127.0.0.1:1"));
-        AndroidBackend::new(
-            AndroidOptions::parse("R5CY82FT35T", &options).unwrap(),
-            None,
-        )
-    }
-
-    #[tokio::test]
-    async fn a_deliberate_adbd_restart_is_not_a_broken_device() {
-        // The bug this replaces: enabling remote debugging restarts `adbd`,
-        // which takes the transport and the scrcpy session with it, and the
-        // health poll landing in that window flipped a working, reserved phone
-        // to `unhealthy`.
-        let backend = offline_backend();
-        assert!(!backend.is_healthy().await);
-
-        backend
-            .hold_through_adbd_restart(Duration::from_millis(150))
-            .await;
-        assert!(
-            backend.is_healthy().await,
-            "we are the ones who took it away"
-        );
-
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        assert!(
-            !backend.is_healthy().await,
-            "the window is bounded — a device that never comes back is unhealthy"
-        );
-    }
 
     #[test]
     fn the_override_resolution_wins_over_the_panel() {
@@ -1437,50 +1338,75 @@ mod tests {
         addr
     }
 
-    #[tokio::test]
-    async fn the_debug_proxy_carries_bytes_to_the_device_transport() {
-        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    /// An authority with nobody entitled and no coordinator to ask.
+    fn lonely_authority() -> Arc<AdbAuthority> {
+        let (control, _rx) = provider_core::control::ControlSender::detached();
+        Arc::new(AdbAuthority::new(
+            "R5CY82FT35T",
+            provider_core::session::SessionRegistry::new(),
+            provider_core::adb_auth::AdbAuthWaiters::new(),
+            control,
+        ))
+    }
 
+    #[tokio::test]
+    async fn the_bridge_challenges_a_client_rather_than_forwarding_it() {
+        use tokio::io::AsyncWriteExt as _;
+
+        // The point of the whole change: bytes from `adb connect` are answered
+        // here, not handed to the phone. A client that connects gets *our*
+        // authentication challenge, and the device is never involved.
         let server = fake_transport().await;
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
-        let task = tokio::spawn(serve_debug_proxy(
+        let task = tokio::spawn(serve_adb_bridge(
             listener,
             Adb::new(server),
             "R5CY82FT35T".to_owned(),
+            lonely_authority(),
         ));
 
-        // What `adb connect 127.0.0.1:port` would open.
         let mut client = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
-        client.write_all(b"CNXN").await.unwrap();
+        adb_bridge::Message::new(
+            adb_bridge::Command::Cnxn,
+            adb_bridge::VERSION,
+            adb_bridge::MAX_PAYLOAD,
+            &b"host::\0"[..],
+        )
+        .write(&mut client)
+        .await
+        .unwrap();
 
-        let mut echoed = [0u8; 4];
-        client.read_exact(&mut echoed).await.unwrap();
-        assert_eq!(&echoed, b"CNXN");
+        let answer = adb_bridge::Message::read(&mut client).await.unwrap();
+        assert_eq!(answer.command, adb_bridge::Command::Auth);
+        assert_eq!(answer.payload.len(), 20, "a 20-byte challenge, as adbd issues");
 
+        client.shutdown().await.unwrap();
         task.abort();
     }
 
     #[tokio::test]
-    async fn the_debug_proxy_survives_a_connection_that_cannot_reach_the_device() {
+    async fn the_listener_survives_a_client_it_refuses() {
         use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
-        // No adb server at all: the first connection fails, and the listener
-        // must stay up — a phone unplugged mid-debug otherwise takes the port
-        // with it until the session is torn down.
+        // No adb server at all, and nobody entitled. The first client is turned
+        // away and the listener must stay up — a phone unplugged mid-debug
+        // otherwise takes the port with it until the session is torn down.
         let dead = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let dead_addr = dead.local_addr().unwrap().to_string();
         drop(dead);
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
-        let task = tokio::spawn(serve_debug_proxy(
+        let task = tokio::spawn(serve_adb_bridge(
             listener,
             Adb::new(dead_addr),
             "R5CY82FT35T".to_owned(),
+            lonely_authority(),
         ));
 
         let mut doomed = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        doomed.write_all(b"nonsense not adb at all!").await.unwrap();
         let mut buffer = [0u8; 1];
         assert_eq!(
             doomed.read(&mut buffer).await.unwrap(),

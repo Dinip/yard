@@ -1535,7 +1535,7 @@ identity rather than an enrollment.
 | `adb-bridge` crate: framing | ✅ | `adb-bridge/src/message.rs` |
 | `adb-bridge`: authentication | ✅ | `adb-bridge/src/{auth,key}.rs` |
 | `adb-bridge`: service demux | ✅ | `adb-bridge/src/bridge.rs` |
-| Android backend swaps the splice for the bridge | ⬜ | `backend-android/src/lib.rs` |
+| Android backend swaps the splice for the bridge | ✅ | `backend-android/src/{bridge,lib}.rs` |
 | Key management + approval in tRPC | ⬜ | `coordinator/src/trpc/routers/` |
 | Settings key list, holder approval card | ⬜ | `web/src/routes/` |
 
@@ -1565,6 +1565,13 @@ and on the prompt path the holder has not answered yet. The device comes online
 the moment they do — `adb wait-for-device` blocks until then. A key already
 registered never takes this path. The UI copy has to say so, or every new user
 will file a bug.
+
+**The banner is read after a client authenticates, never before.** The first
+cut fetched it at the top of `serve()`, which meant an unauthenticated
+connection caused a `getprop` on the device — and against an adb server that
+never answered, the client sat there having never been challenged. A test that
+asserted the client gets *our* challenge caught it by hanging. The auth machine
+now takes a `BannerSource` it resolves only at the point of admitting somebody.
 
 **The parked-connection registry lives in `provider-core`, not the bridge.** A
 decision can only arrive over the control socket, so losing that socket has to

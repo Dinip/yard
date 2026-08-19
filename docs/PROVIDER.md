@@ -428,20 +428,19 @@ no server, and every session retries against a refused connection.
 
 **Remote debugging is the provider's own listener**, not `adb forward`, whose
 socket binds the adb server's loopback and so is unreachable from a container.
-Each connection is spliced to the device's `adbd` over the USB transport. Ports
-come from the `remote_debug.ports` pool, claimed while exposed and returned on
-release, because they have to be published by whoever runs the provider.
+Ports come from the `remote_debug.ports` pool, claimed while exposed and
+returned on release, because they have to be published by whoever runs the
+provider.
 
 **The exposed port is part of every snapshot**, not just the reply to
 `device.adb.expose`. The coordinator reconciles a device from a whole snapshot,
 so a poll that said nothing about the port would clear the one the user had
 just asked for.
 
-**Turning it on restarts `adbd`**, which takes the USB transport and the scrcpy
-session with it for a few seconds. The backend holds a bounded healthy window
-across a restart it asked for, so the health poll does not flip a phone someone
-is using to `unhealthy` and back. Bounded, so a device that really did go away
-still gets there on its own.
+**Nothing touches `tcpip:` any more.** That port is served by the `adb-bridge`
+crate, below, which answers the client itself instead of splicing it to the
+device. The device never listens on the network and `adbd` is never restarted,
+which removes the health-flap the restart used to cause.
 
 The scrcpy server is **embedded in the binary** and pushed to the phone at
 session start, so nothing is installed on a provider host for it. It is started
@@ -468,6 +467,67 @@ which is a reset, so this is the common path rather than an edge case.
 Sessions run with `stay_awake` and `power_on`. A device left to its own screen
 timeout goes black, and a black stream from a dozing phone is indistinguishable
 from a broken one until you run `adb screencap` and see the same black.
+
+## `adb-bridge`
+
+The provider is the ADB daemon a developer's `adb connect` talks to. It
+terminates the connection, authenticates it, and turns each service the client
+opens into an ordinary request against the provider's own adb server over the
+USB transport it already owns.
+
+> The provider's adb key is the only one enrolled on a device. A client key is
+> an identity checked against the coordinator, never an enrollment.
+
+That is the whole point. Enrolling every developer's key on every phone does not
+scale, gives the coordinator no say in who gets in, and leaves no audit trail
+naming anybody.
+
+```
+crates/adb-bridge/src/
+├── message.rs  the 24-byte header: command, arg0, arg1, length, checksum, magic
+├── key.rs      Android's 524-byte modulus blob, and the SHA256 fingerprint
+├── auth.rs     the CNXN/AUTH challenge-response machine
+└── bridge.rs   OPEN/OKAY/WRTE/CLSE demux, one upstream stream per client stream
+```
+
+The crate knows the ADB protocol and nothing about this farm. `backend-android`
+supplies the two farm-specific halves through `Authorizer` (which keys may drive
+this device, and how to ask about one that may not) and `ServiceOpener` (how to
+open a service on it). Split that way so the auth machine and the demux are
+testable with no phone, no adb server and no coordinator.
+
+**Authentication.** The client sends `CNXN`, we answer `AUTH(TOKEN)` with 20
+random bytes, and it signs. A signature that verifies against any key the
+coordinator sent admits the connection as that user — the common case, and
+nobody is asked anything. Otherwise we issue a fresh token, which makes the
+client try its next key and eventually offer a public key instead. We then ask
+the holder, through `adb.auth.request`, and park for 120 seconds.
+
+**We keep every `(token, signature)` pair the connection produced** and accept
+an offered key only if one of them verifies against it. `adbd` skips this proof
+of possession because it has somebody standing at the phone to tap "allow"; we
+do not. It also covers the client whose first key signed and whose second key
+was offered.
+
+**The banner is proxied, not invented.** The feature list comes from
+`host-serial:<serial>:features` and goes back verbatim, so `shell,v2:` (exit
+codes, separated stderr) and `cmd:` keep working. A static banner silently
+downgrades every client on the farm. It is read *after* a client authenticates,
+never before: fetching it up front would let an unauthenticated connection cause
+a request to the device, and a wedged adb server would delay the challenge.
+
+**`root:`, `unroot:` and `remount:` are refused.** They change device state that
+outlives the session, and the first two restart `adbd`, taking the provider's
+own transport down on the way. Everything else passes through, including
+`shell:su -c …` on a phone that genuinely has `su` — that is the operator's
+decision about their fleet, not a state change the bridge caused.
+
+**There is no raw-splice fallback.** A strictly less secure path is what an
+operator reaches for the first time the bridge misbehaves, which hides the bug.
+
+Known limitation: `reverse:` works, but the socket opens on the provider host,
+so `adb reverse tcp:8081 tcp:8081` will not reach a Metro bundler on the
+developer's machine. STF has the same hole.
 
 ## Backend trait
 

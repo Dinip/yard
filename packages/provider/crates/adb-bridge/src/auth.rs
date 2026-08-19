@@ -74,13 +74,31 @@ pub struct Handshake {
 /// `banner` is what the client sees as the device's identity and features —
 /// proxied from the real device rather than invented, because a client that is
 /// not told about `shell_v2` silently falls back to a shell with no exit codes.
-pub async fn authenticate<S>(
+/// Where the `device::…` banner comes from.
+///
+/// Indirect, rather than a `&str`, so it is resolved only once a client is
+/// admitted. Reading it costs a round trip to the device, and an
+/// unauthenticated connection must not be able to cause one.
+#[async_trait]
+pub trait BannerSource {
+    async fn banner(&self) -> String;
+}
+
+#[async_trait]
+impl BannerSource for &str {
+    async fn banner(&self) -> String {
+        (*self).to_owned()
+    }
+}
+
+pub async fn authenticate<S, B>(
     stream: &mut S,
     authorizer: &dyn Authorizer,
-    banner: &str,
+    banner: B,
 ) -> Result<Handshake, AuthError>
 where
     S: AsyncRead + AsyncWrite + Unpin,
+    B: BannerSource,
 {
     let connect = Message::read(stream).await?;
     if connect.command != Command::Cnxn {
@@ -122,7 +140,7 @@ where
                         user_id: owner_of(key),
                         fingerprint: key.fingerprint().to_owned(),
                     };
-                    accept(stream, banner, max_payload).await?;
+                    accept(stream, &banner.banner().await, max_payload).await?;
                     return Ok(Handshake {
                         identity,
                         max_payload,
@@ -166,7 +184,7 @@ where
                     user_id,
                     fingerprint: key.fingerprint().to_owned(),
                 };
-                accept(stream, banner, max_payload).await?;
+                accept(stream, &banner.banner().await, max_payload).await?;
                 return Ok(Handshake {
                     identity,
                     max_payload,

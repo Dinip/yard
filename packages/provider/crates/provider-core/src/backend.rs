@@ -6,11 +6,13 @@
 //! once and knows nothing about either.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use farm_protocol::{AppInfo, Display, FileListing, Platform};
 use wildmatch::WildMatch;
 
+use crate::adb_auth::AdbAuthority;
 use crate::video::VideoHandle;
 
 pub type Result<T> = std::result::Result<T, BackendError>;
@@ -306,7 +308,13 @@ pub trait DeviceBackend: Send + Sync + 'static {
     async fn reboot(&self) -> Result<()>;
 
     /// Android only; the default refuses rather than silently doing nothing.
-    async fn remote_debug(&self) -> Result<RemoteDebug> {
+    ///
+    /// `authority` is how the ADB bridge reaches the rest of the provider: the
+    /// keys entitled to this session, the question to ask the holder about one
+    /// that is not, and where to report that the device is being used. It is
+    /// passed in rather than held by the backend because a backend is built
+    /// before the control plane exists.
+    async fn remote_debug(&self, _authority: Arc<AdbAuthority>) -> Result<RemoteDebug> {
         Err(BackendError::Unsupported("remote debugging"))
     }
 

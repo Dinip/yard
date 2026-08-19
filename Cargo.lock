@@ -288,6 +288,7 @@ dependencies = [
 name = "backend-android"
 version = "0.1.0"
 dependencies = [
+ "adb-bridge",
  "anyhow",
  "async-trait",
  "farm-protocol",

@@ -19,7 +19,7 @@ use tokio::sync::RwLock;
 use tracing::{info, warn};
 
 use crate::backend::{DeviceBackend, DeviceInfo};
-use crate::adb_auth::AdbAuthWaiters;
+use crate::adb_auth::{AdbAuthWaiters, AdbAuthority};
 use crate::control::{now_millis, AdbAuthDecision, CommandHandler, ControlSender};
 use crate::session::{Authorization, SessionRegistry};
 
@@ -591,7 +591,21 @@ impl CommandHandler for Supervisor {
             }
 
             CommandPayload::DeviceAdbExpose { device_id } => {
-                let debug = self.require(&device_id)?.backend.remote_debug().await?;
+                let authority = Arc::new(AdbAuthority::new(
+                    device_id.clone(),
+                    self.sessions.clone(),
+                    self.adb_auth.clone(),
+                    self.control
+                        .read()
+                        .await
+                        .clone()
+                        .ok_or_else(|| anyhow!("not connected to the coordinator"))?,
+                ));
+                let debug = self
+                    .require(&device_id)?
+                    .backend
+                    .remote_debug(authority)
+                    .await?;
                 Ok(Some(CommandData {
                     apps: None,
                     adb_port: Some(debug.port as i64),
