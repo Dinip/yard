@@ -603,6 +603,13 @@ impl DeviceBackend for MockBackend {
         Ok(())
     }
 
+    async fn remote_debug_port(&self) -> Option<u16> {
+        match self.state.adb_port.load(Ordering::Relaxed) {
+            0 => None,
+            port => Some(port),
+        }
+    }
+
     async fn restart(&self) -> Result<()> {
         self.state.healthy.store(true, Ordering::Relaxed);
         Ok(())

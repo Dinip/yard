@@ -116,7 +116,8 @@ impl Device {
         // The codec the stream is actually running, read without waiting: a
         // device that is not streaming simply has none to report.
         let codec = self.backend.video().current_codec().map(|c| c.codec);
-        snapshot_from(&self.id, status, info.as_ref(), codec)
+        let adb_port = self.backend.remote_debug_port().await;
+        snapshot_from(&self.id, status, info.as_ref(), codec, adb_port)
     }
 }
 
@@ -125,7 +126,10 @@ fn snapshot_from(
     status: DeviceStatus,
     info: Option<&DeviceInfo>,
     stream_codec: Option<String>,
+    adb_port: Option<u16>,
 ) -> DeviceSnapshot {
+    let adb_port = adb_port.map(i64::from);
+
     match info {
         Some(info) => DeviceSnapshot {
             id: id.to_owned(),
@@ -150,7 +154,7 @@ fn snapshot_from(
                 }
             }),
             stream_codec,
-            adb_port: None,
+            adb_port,
             note: None,
         },
         // Reported before the backend has managed to read the device — better
@@ -173,7 +177,7 @@ fn snapshot_from(
             display: None,
             battery: None,
             stream_codec,
-            adb_port: None,
+            adb_port,
             note: None,
         },
     }

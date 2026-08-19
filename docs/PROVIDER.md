@@ -432,6 +432,17 @@ Each connection is spliced to the device's `adbd` over the USB transport. Ports
 come from the `remote_debug.ports` pool, claimed while exposed and returned on
 release, because they have to be published by whoever runs the provider.
 
+**The exposed port is part of every snapshot**, not just the reply to
+`device.adb.expose`. The coordinator reconciles a device from a whole snapshot,
+so a poll that said nothing about the port would clear the one the user had
+just asked for.
+
+**Turning it on restarts `adbd`**, which takes the USB transport and the scrcpy
+session with it for a few seconds. The backend holds a bounded healthy window
+across a restart it asked for, so the health poll does not flip a phone someone
+is using to `unhealthy` and back. Bounded, so a device that really did go away
+still gets there on its own.
+
 The scrcpy server is **embedded in the binary** and pushed to the phone at
 session start, so nothing is installed on a provider host for it. It is started
 with `tunnel_forward=true`, which makes it listen on a device-side abstract
