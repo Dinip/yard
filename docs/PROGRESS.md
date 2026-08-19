@@ -1473,6 +1473,47 @@ in [RENAMING.md](./RENAMING.md) instead.
 
 ---
 
+## Phase 20 — remote debugging that stays on ✅
+
+*Done when: enabling `adb connect` on a reserved phone leaves it reserved and
+healthy, and the connect string is still on screen a minute later.*
+
+Two separate bugs, both reported from one click on **Enable**.
+
+| Item | State | Where |
+|---|---|---|
+| `remote_debug_port()` on the backend trait, read into every snapshot | ✅ | `provider-core/src/backend.rs`, `.../supervisor.rs` |
+| A deliberate `adbd` bounce no longer reads as unhealthy | ✅ | `backend-android/src/lib.rs` |
+| The fake provider remembers what it exposed | ✅ | `protocol/test/fake-provider.ts` |
+| Tests: snapshot keeps the port, bounce keeps the health | ✅ | `provider-core/tests/remote_debug.rs`, `backend-android` unit test |
+
+### The port disappeared because the provider never mentioned it again
+
+`device.adb.expose` returns the port, the coordinator writes it, and the UI
+shows it. Then the next poll pushed a `device.upsert` built by `snapshot_from`,
+which hardcoded `adb_port: None` — and the upsert is a *reconcile*, so absent
+means gone. The row was cleared within seconds and the card fell back to
+**Enable**. Exactly the `stream_codec: None` bug from phase 8, in the same
+function, and the fix is the same shape: read the live value instead of
+asserting there isn't one. It also means the DB self-corrects when a provider
+restarts and forgets an exposure.
+
+### Unhealthy because we were the ones who unplugged it
+
+`tcpip:` restarts `adbd`, which takes the USB transport and the scrcpy session
+with it for a few seconds. `is_healthy()` reads the scrcpy session, so a health
+poll landing in that window flipped a phone someone was actively using to
+`unhealthy` — and `unhealthy → ready` afterwards, which is not `busy`.
+
+The backend now holds a bounded window across a restart *it asked for*:
+`ADB_RESTART_TIMEOUT` while waiting for the port, then `ADB_RESTART_GRACE`
+(15s — `RECONNECT_DELAY` plus pushing and starting the scrcpy server again) for
+the session to come back. Bounded on purpose: a device that really did go away
+still has to reach `unhealthy` on its own, so this cannot mask an unplugged
+phone. Disabling remote debugging restarts `adbd` too and takes the same path.
+
+---
+
 ## Open decisions
 
 - **Name.** The project is "Device Farm" as a placeholder. See

@@ -147,11 +147,27 @@ export class FakeProvider {
             { id: "com.android.settings", name: "Settings", system: true },
           ],
         };
-      case "device.adb.expose":
-        return { adbPort: this.nextAdbPort++ };
+      case "device.adb.expose": {
+        const port = this.nextAdbPort++;
+        // Recorded on the snapshot, not just returned: the real provider
+        // reports the port in every snapshot it sends afterwards, and a fake
+        // that forgot it would hide the bug where a later upsert cleared it.
+        this.device(payload.deviceId).adbPort = port;
+        return { adbPort: port };
+      }
+      case "device.adb.unexpose":
+        this.device(payload.deviceId).adbPort = undefined;
+        return undefined;
       default:
         return undefined;
     }
+  }
+
+  /** The snapshot this fake holds for a device, which commands mutate. */
+  device(deviceId: string): DeviceSnapshot {
+    const found = this.opts.devices.find((d) => d.id === deviceId);
+    if (!found) throw new Error(`this fake provider does not own ${deviceId}`);
+    return found;
   }
 
   /** Pushes a new state for one device, as real hotplug would. */

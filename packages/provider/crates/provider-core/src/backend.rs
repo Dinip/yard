@@ -314,6 +314,15 @@ pub trait DeviceBackend: Send + Sync + 'static {
         Err(BackendError::Unsupported("remote debugging"))
     }
 
+    /// The provider port this device is exposed on right now, if any.
+    ///
+    /// Read into every snapshot rather than only reported when it changes: the
+    /// coordinator reconciles a device from the whole snapshot, so a poll that
+    /// said nothing about the port would clear the one the user just asked for.
+    async fn remote_debug_port(&self) -> Option<u16> {
+        None
+    }
+
     /// Tears the device session down and brings it back up.
     async fn restart(&self) -> Result<()>;
 

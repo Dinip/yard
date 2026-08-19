@@ -201,6 +201,15 @@ describe("provider gateway", () => {
     const [stored] = await db.select().from(device).where(eq(device.id, target));
     expect(stored?.adbPort).toBe(adb.port);
 
+    // The provider's next poll re-reports the whole device. It carries the port
+    // it is still serving, and the upsert must not read the snapshot as "no
+    // port" — that wiped the `adb connect` line out of the UI seconds after it
+    // appeared.
+    fake.upsertDevice(fake.device(target));
+    await Bun.sleep(150);
+    const [after] = await db.select().from(device).where(eq(device.id, target));
+    expect(after?.adbPort).toBe(adb.port);
+
     await caller(USER_A).device.release({ deviceId: target });
     await fake.close();
   });

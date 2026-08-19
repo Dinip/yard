@@ -45,6 +45,13 @@ const SESSION_WAIT: Duration = Duration::from_secs(20);
 /// How long to wait for a device to come back after `adbd` restarts.
 const ADB_RESTART_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// How long a device keeps reading as healthy after we bounce `adbd` ourselves.
+///
+/// Long enough for `RECONNECT_DELAY` plus pushing and starting the scrcpy
+/// server again, and no longer: a device that really did go away has to reach
+/// `unhealthy` on its own.
+const ADB_RESTART_GRACE: Duration = Duration::from_secs(15);
+
 /// The port `adbd` listens on when told to. 5555 is the convention every
 /// `adb connect` example assumes.
 const DEVICE_ADB_PORT: u16 = 5555;
@@ -152,6 +159,9 @@ pub struct AndroidBackend {
     pointer: Mutex<Pointer>,
     clipboard_sequence: std::sync::atomic::AtomicU64,
     exposed: Mutex<Option<Exposed>>,
+    /// Until when an `adbd` restart we asked for excuses a dead session. See
+    /// [`AndroidBackend::hold_through_adbd_restart`].
+    adb_restart_until: Mutex<Option<Instant>>,
 }
 
 /// A live remote-debugging listener: the accept loop, and the port it holds.
@@ -179,6 +189,7 @@ impl AndroidBackend {
             pointer: Mutex::new(Pointer::default()),
             clipboard_sequence: std::sync::atomic::AtomicU64::new(1),
             exposed: Mutex::new(None),
+            adb_restart_until: Mutex::new(None),
         });
 
         tokio::spawn(supervise(Supervisor {
@@ -334,6 +345,43 @@ impl AndroidBackend {
                 )));
             }
             tokio::time::sleep(Duration::from_millis(300)).await;
+        }
+    }
+
+    /// Restart `adbd` into (or out of) TCP mode and wait for it to settle,
+    /// without the device reading as broken while it is down.
+    ///
+    /// The restart takes the USB transport and the scrcpy session with it, so
+    /// `ready` goes false and `info()` fails for a few seconds. That is us, not
+    /// a fault: a health poll landing in the window used to flip a phone
+    /// someone was actively using to `unhealthy`.
+    async fn bounce_adbd(&self, want: Option<u16>) -> BackendResult<()> {
+        // Covers the restart *and* the session rebuild that follows it, because
+        // `adbd` answering again does not mean scrcpy is back yet.
+        self.hold_through_adbd_restart(ADB_RESTART_TIMEOUT + ADB_RESTART_GRACE)
+            .await;
+        let settled = self.await_adb_port(want).await;
+        // Whatever the port did, only the rebuild is still outstanding — a
+        // device that fails to come back must not be excused for the full
+        // timeout as well.
+        self.hold_through_adbd_restart(ADB_RESTART_GRACE).await;
+        settled
+    }
+
+    /// Read as healthy for `window`, however dead the session looks.
+    async fn hold_through_adbd_restart(&self, window: Duration) {
+        *self.adb_restart_until.lock().await = Some(Instant::now() + window);
+    }
+
+    async fn restarting_adbd(&self) -> bool {
+        let mut until = self.adb_restart_until.lock().await;
+        match *until {
+            Some(deadline) if Instant::now() < deadline => true,
+            Some(_) => {
+                *until = None;
+                false
+            }
+            None => false,
         }
     }
 
@@ -720,7 +768,7 @@ impl DeviceBackend for AndroidBackend {
         // has not dropped yet at this point, so a presence check passes
         // immediately against the connection that is about to die, and
         // everything after it races the restart.
-        self.await_adb_port(Some(DEVICE_ADB_PORT)).await?;
+        self.bounce_adbd(Some(DEVICE_ADB_PORT)).await?;
 
         let (lease, listener) = bind_from_pool(pool)
             .await
@@ -762,7 +810,7 @@ impl DeviceBackend for AndroidBackend {
             .map_err(|err| BackendError::Failed(format!("{err:#}")))?;
         // Same restart, same wait: returning before adbd is back makes the
         // next command fail for a reason that has nothing to do with it.
-        self.await_adb_port(None).await?;
+        self.bounce_adbd(None).await?;
         info!(serial = %self.options.serial, "adb transport withdrawn");
         Ok(())
     }
@@ -773,11 +821,19 @@ impl DeviceBackend for AndroidBackend {
         Ok(())
     }
 
+    async fn remote_debug_port(&self) -> Option<u16> {
+        self.exposed
+            .lock()
+            .await
+            .as_ref()
+            .map(|exposed| exposed.lease.port())
+    }
+
     async fn is_healthy(&self) -> bool {
         // The health poll is also the only regular tick this backend gets, so
         // it is where a forgotten contact gets lifted.
         self.release_if_stale().await;
-        *self.ready.borrow()
+        *self.ready.borrow() || self.restarting_adbd().await
     }
 
     /// Two adb round trips, or three when app patterns are configured.
@@ -1174,6 +1230,43 @@ fn staging_suffix() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A backend with nowhere to connect: `ready` never goes true, which is
+    /// exactly the state an `adbd` restart puts a real device in.
+    fn offline_backend() -> Arc<AndroidBackend> {
+        let mut options = serde_json::Map::new();
+        // Port 1 refuses immediately, so the session loop never blocks on a
+        // real adb server that may or may not be running on this host.
+        options.insert("adb_server".into(), serde_json::json!("127.0.0.1:1"));
+        AndroidBackend::new(
+            AndroidOptions::parse("R5CY82FT35T", &options).unwrap(),
+            None,
+        )
+    }
+
+    #[tokio::test]
+    async fn a_deliberate_adbd_restart_is_not_a_broken_device() {
+        // The bug this replaces: enabling remote debugging restarts `adbd`,
+        // which takes the transport and the scrcpy session with it, and the
+        // health poll landing in that window flipped a working, reserved phone
+        // to `unhealthy`.
+        let backend = offline_backend();
+        assert!(!backend.is_healthy().await);
+
+        backend
+            .hold_through_adbd_restart(Duration::from_millis(150))
+            .await;
+        assert!(
+            backend.is_healthy().await,
+            "we are the ones who took it away"
+        );
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(
+            !backend.is_healthy().await,
+            "the window is bounded — a device that never comes back is unhealthy"
+        );
+    }
 
     #[test]
     fn the_override_resolution_wins_over_the_panel() {
