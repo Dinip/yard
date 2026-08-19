@@ -14,5 +14,13 @@ thiserror.workspace = true
 tracing.workspace = true
 async-trait.workspace = true
 
+rsa.workspace = true
+sha1.workspace = true
+sha2.workspace = true
+base64.workspace = true
+rand.workspace = true
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["io-std"] }
+# Test clients sign real challenges with the shared throwaway key.
+rsa = { workspace = true, features = ["pem"] }

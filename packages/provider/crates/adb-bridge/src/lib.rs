@@ -15,6 +15,10 @@
 //! The crate knows nothing about this farm. It is given two things: something
 //! that can authorize a public key, and something that can open a service.
 
+pub mod auth;
+pub mod key;
 pub mod message;
 
+pub use auth::{AuthError, Authorizer, Handshake, Identity};
+pub use key::{KeyError, PublicKey};
 pub use message::{Command, FrameError, Message, MAX_PAYLOAD, VERSION};

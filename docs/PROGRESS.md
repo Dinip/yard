@@ -1533,7 +1533,7 @@ identity rather than an enrollment.
 | Parked-connection registry, bounded and refused on control-plane loss | ✅ | `provider-core/src/adb_auth.rs` |
 | `user_adb_key` table | ✅ | `db/src/schema/farm.ts`, `drizzle/0008_*.sql` |
 | `adb-bridge` crate: framing | ✅ | `adb-bridge/src/message.rs` |
-| `adb-bridge`: authentication | ⬜ | `provider/crates/adb-bridge` |
+| `adb-bridge`: authentication | ✅ | `adb-bridge/src/{auth,key}.rs` |
 | `adb-bridge`: service demux | ⬜ | `provider/crates/adb-bridge` |
 | Android backend swaps the splice for the bridge | ⬜ | `backend-android/src/lib.rs` |
 | Key management + approval in tRPC | ⬜ | `coordinator/src/trpc/routers/` |
@@ -1544,6 +1544,13 @@ ever disagree every connection asks the holder to approve a key they already
 registered. The vector in `protocol/test/vectors/` is a real key from
 `adb keygen` whose expected fingerprint was computed with `openssl`, so neither
 implementation can define itself into being correct; both assert against it.
+
+**We check proof of possession where `adbd` does not.** A client only reveals
+its public key *after* its signatures have been refused, so admitting an
+offered key means going back over the challenges it already answered. `adbd`
+skips that and trusts whoever taps "allow" on the phone — there is nobody
+standing next to a farm device, so a key that never signed anything is refused
+before the holder is even shown it.
 
 **The parked-connection registry lives in `provider-core`, not the bridge.** A
 decision can only arrive over the control socket, so losing that socket has to

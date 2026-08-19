@@ -8,7 +8,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64 0.23.1",
  "bytes",
+ "rand 0.10.2",
+ "rsa",
+ "sha1 0.10.7",
+ "sha2 0.11.0",
  "thiserror 2.0.19",
  "tokio",
  "tracing",

@@ -1,5 +1,5 @@
 {
-  "note": "A real key from 'adb keygen'. The fingerprint was computed independently with openssl (spki DER -> sha256 -> base64, unpadded) so that neither implementation can define it into being correct. Both the TypeScript parser and the Rust one in adb-bridge assert against this file.",
-  "fingerprint": "SHA256:HZ7j4M3gY4CTMHIxwdhDZrXE0HtvXx2mhi4zyfPU7l4",
+  "note": "A throwaway keypair from 'adb keygen', shared by every implementation that has to agree about ADB keys. The fingerprint was computed independently with openssl (SPKI DER -> sha256 -> base64, unpadded) so that neither the TypeScript parser nor the Rust one in adb-bridge can define it into being correct. adbkey.testonly.pem is the matching private key: it exists so Rust tests can produce real signatures, it has never been enrolled anywhere, and it authorizes nothing.",
+  "fingerprint": "SHA256:OFQy61uY9HJQ50q30NKcoxdOpr9VTeOwdra+ONvolM0",
   "comment": "dev@example.test"
 }
