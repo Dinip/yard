@@ -72,9 +72,11 @@ v11, fetch adapter, mounted at `/api/trpc`. Three procedure levels in
 | Router | Procedures | Status |
 |---|---|---|
 | `user` | `me`, `capabilities` | ✅ |
+| `user` | `adbKeys.list`/`add`/`remove` | ✅ |
 | `device` | `list`, `get`, `reserve`, `renew`, `release`, `myReservations` | ✅ |
 | `device` | `sessionToken`, `apps`, `launch`, `uninstall`, `reboot`, `rotate`, `adbExpose`, `adbUnexpose` | ✅ |
 | `device` | `requestJoin`, `cancelJoinRequest`, `answerJoinRequest`, `myJoinRequest`, `leaveSession` | ✅ |
+| `device` | `answerAdbAuthRequest` | ✅ |
 | `provider` | `list`, `create`, `update`, `remove`, `restartDevice` | ✅ |
 | `provider` | `tokens.list`/`create`/`revoke` | ✅ |
 | `admin` | `users`, `forceRelease`, `joinSession`, `audit` | ✅ |
@@ -115,6 +117,38 @@ Releasing is also where a device is held back for cleaning: when the policy is
 on and the provider is connected, `releaseActive` sets `cleaning` instead of
 `ready` and sends `device.cleanup` after `session.revoke`. The provider returns
 the device with a `device.status`. Nothing waits — see [CLEANUP.md](CLEANUP.md).
+
+### Who may `adb connect`
+
+The coordinator decides; the provider enforces. It never answers a per-connection
+question — a provider must keep serving an authorised session across a
+coordinator restart, exactly as it does on the session plane.
+
+The entitled set for a reservation is the holder's keys plus those of everyone
+still present as an observer (`lib/adb-keys.ts`). It rides out with
+`session.authorize` and is re-pushed as `device.adb.keys` whenever it changes: a
+key added or removed, somebody joining or leaving. **Always the whole set,
+never a delta** — a dropped message can leave a provider with a stale set, but
+never with a revoked key. Adding or removing a key fans out only to the
+reservations that user is actually in.
+
+A key nobody recognises parks on the provider and arrives as `adb.auth.request`.
+Those live in **memory** (`lib/adb-auth.ts`), not a table: each is bound to a
+socket held open on a provider, so a coordinator restart means the connection
+was already refused and a persisted row could only describe something nobody can
+approve. They live 120 seconds, and are dropped when the provider disconnects or
+the reservation ends. This is the opposite call from `joinRequest`, which is a
+table precisely because the requester's browser outlives a socket blip.
+
+`device.answerAdbAuthRequest` is the holder's answer (an admin may answer too,
+as with join requests). Approving registers the key **on the answerer's own
+account** and admits that connection with `adb.auth.decision`; the
+`device.adb.keys` refresh that follows is what makes the *next* connection
+silent. Admission deliberately does not depend on the refresh arriving first.
+
+The durable trace is the `auditLog` row. `user.adbKeys.add` returns a 409 on a
+fingerprint already registered — the index is global, because a key identifies
+one person or "who ran this `adb shell`" has no answer.
 
 ## The reservation reaper
 

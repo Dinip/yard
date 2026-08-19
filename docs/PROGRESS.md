@@ -1512,7 +1512,7 @@ the session to come back. Bounded on purpose: a device that really did go away
 still has to reach `unhealthy` on its own, so this cannot mask an unplugged
 phone. Disabling remote debugging restarts `adbd` too and takes the same path.
 
-## Phase 21 — provider-terminated ADB authentication 🚧
+## Phase 21 — provider-terminated ADB authentication ✅
 
 Until now `adb connect` required *your* key to be enrolled on the phone: the
 provider put the device in `tcpip:` mode and spliced raw TCP to its `adbd`, so
@@ -1536,8 +1536,8 @@ identity rather than an enrollment.
 | `adb-bridge`: authentication | ✅ | `adb-bridge/src/{auth,key}.rs` |
 | `adb-bridge`: service demux | ✅ | `adb-bridge/src/bridge.rs` |
 | Android backend swaps the splice for the bridge | ✅ | `backend-android/src/{bridge,lib}.rs` |
-| Key management + approval in tRPC | ⬜ | `coordinator/src/trpc/routers/` |
-| Settings key list, holder approval card | ⬜ | `web/src/routes/` |
+| Key management + approval in tRPC | ✅ | `coordinator/src/{lib/adb-*,trpc/routers}` |
+| Settings key list, holder approval card | ✅ | `web/.../settings.tsx`, `devices.$deviceId.tsx` |
 
 **The fingerprint is derived twice**, in TypeScript and in Rust, and if the two
 ever disagree every connection asks the holder to approve a key they already
@@ -1572,6 +1572,12 @@ connection caused a `getprop` on the device — and against an adb server that
 never answered, the client sat there having never been challenged. A test that
 asserted the client gets *our* challenge caught it by hanging. The auth machine
 now takes a `BannerSource` it resolves only at the point of admitting somebody.
+
+**`lastUsedAt` is only written when a key is approved**, never when one is
+silently admitted — the common case. There is no wire message for "this key just
+connected", and `device.activity` does not carry one, so the settings page shows
+"never used" for a key in daily use. Adding a fingerprint to `device.activity`
+would fix it; the design did not call for one and the column is not load-bearing.
 
 **The parked-connection registry lives in `provider-core`, not the bridge.** A
 decision can only arrive over the control socket, so losing that socket has to

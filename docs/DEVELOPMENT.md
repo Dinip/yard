@@ -125,8 +125,13 @@ you `Connection refused (os error 111)`.
 Its keypair lives in the `adb-keys` volume, because the phone's "Allow USB
 debugging" grant is bound to that key's fingerprint — a regenerated key means
 tapping the dialog at the device again. Authorise once, tick *Always allow*, and
-recreates are silent. To reuse a key the devices already trust, seed the volume
-from the host's before the first start:
+recreates are silent.
+
+**This is now the only key any device trusts.** Since the provider terminates
+`adb connect` itself, a developer's own key is checked against the coordinator
+and never reaches the phone — so losing this volume means walking to every
+device in the fleet and tapping the dialog again. Seed it from the host's key
+before the first start, and keep that key:
 
 ```bash
 docker compose --profile provider create provider

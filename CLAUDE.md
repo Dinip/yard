@@ -116,6 +116,10 @@ See docs/DEVELOPMENT.md.
   authorized. A signed, unexpired token for a revoked reservation is refused.
 - **JWT leeway is 5s on purpose.** The library default of 60 doubled a ~60s
   token's lifetime; there is a regression test.
+- **The provider's adb key is the only one enrolled on a device.** A client key
+  is an identity checked against the coordinator, never an enrollment. The
+  provider terminates `adb connect` itself; the phone never authenticates
+  anyone, never enters `tcpip:` mode, and never listens on the network.
 - **Pointer coordinates are normalised 0..1, never pixels**, and down/move/up
   are never collapsed into a `tap` — the backend needs them to tell a drag from
   a tap.
