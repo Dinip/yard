@@ -79,7 +79,9 @@ impl Bridge {
 
         let (reader, writer) = tokio::io::split(socket);
         let session = Session {
-            writer: Arc::new(Mutex::new(Box::new(writer) as Box<dyn AsyncWrite + Unpin + Send>)),
+            writer: Arc::new(Mutex::new(
+                Box::new(writer) as Box<dyn AsyncWrite + Unpin + Send>
+            )),
             opener: self.opener.clone(),
             streams: Mutex::new(HashMap::new()),
             next_id: AtomicU32::new(1),
@@ -158,10 +160,13 @@ impl Session {
                 %service,
                 "refusing a service that would outlive the session"
             );
-            self.refuse(remote, &format!(
+            self.refuse(
+                remote,
+                &format!(
                 "adb {name} is not available on a farm device: it changes the device for whoever \
                  has it next.\n"
-            ))
+            ),
+            )
             .await;
             return;
         }
@@ -222,7 +227,8 @@ impl Session {
     /// running it would reasonably conclude the farm is broken.
     async fn refuse(&self, remote: u32, message: &str) {
         let local = self.next_id.fetch_add(1, Ordering::Relaxed);
-        self.send(Message::empty(Command::Okay, local, remote)).await;
+        self.send(Message::empty(Command::Okay, local, remote))
+            .await;
         self.send(Message::new(
             Command::Wrte,
             local,
@@ -230,7 +236,8 @@ impl Session {
             message.as_bytes().to_vec(),
         ))
         .await;
-        self.send(Message::empty(Command::Clse, local, remote)).await;
+        self.send(Message::empty(Command::Clse, local, remote))
+            .await;
     }
 
     async fn on_write(&self, local: u32, payload: Bytes) {
@@ -330,7 +337,9 @@ async fn pump(
     // Whichever side ended it, the client has to be told, or `adb shell` sits
     // at a prompt that will never answer again.
     let mut w = writer.lock().await;
-    let _ = Message::empty(Command::Clse, local, remote).write(&mut *w).await;
+    let _ = Message::empty(Command::Clse, local, remote)
+        .write(&mut *w)
+        .await;
 }
 
 /// The service name a refusal applies to, if this is one.

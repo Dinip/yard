@@ -2,8 +2,8 @@
 
 mod common;
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use adb_bridge::auth::{authenticate, AuthError, Authorizer};
 use adb_bridge::message::{auth, Command, Message};
@@ -98,7 +98,10 @@ async fn an_unknown_key_is_offered_and_approved() {
     let _second = expect_token(&mut client).await;
     send_public_key(&mut client, &test_key()).await;
 
-    assert_eq!(Message::read(&mut client).await.unwrap().command, Command::Cnxn);
+    assert_eq!(
+        Message::read(&mut client).await.unwrap().command,
+        Command::Cnxn
+    );
     let handshake = bridge.await.unwrap().expect("approval admits");
     assert_eq!(handshake.identity.user_id, "user-7");
     assert_eq!(authorizer.asked.load(Ordering::SeqCst), 1);
@@ -193,7 +196,10 @@ async fn a_second_key_still_gets_its_turn() {
     let _third = expect_token(&mut client).await;
     send_public_key(&mut client, &test_key()).await;
 
-    assert_eq!(Message::read(&mut client).await.unwrap().command, Command::Cnxn);
+    assert_eq!(
+        Message::read(&mut client).await.unwrap().command,
+        Command::Cnxn
+    );
     assert!(bridge.await.unwrap().is_ok());
 }
 
@@ -227,11 +233,17 @@ async fn a_client_that_does_not_open_with_cnxn_is_refused() {
 
     let bridge = tokio::spawn(async move { authenticate(&mut server, &*authorizer, BANNER).await });
 
-    Message::empty(Command::Open, 1, 0).write(&mut client).await.unwrap();
+    Message::empty(Command::Open, 1, 0)
+        .write(&mut client)
+        .await
+        .unwrap();
 
     assert!(matches!(
         bridge.await.unwrap(),
-        Err(AuthError::Unexpected { expected: "CNXN", .. })
+        Err(AuthError::Unexpected {
+            expected: "CNXN",
+            ..
+        })
     ));
 }
 

@@ -51,7 +51,10 @@ pub enum AuthError {
     #[error(transparent)]
     Frame(#[from] FrameError),
     #[error("expected {expected} from the client, got {got:?}")]
-    Unexpected { expected: &'static str, got: Command },
+    Unexpected {
+        expected: &'static str,
+        got: Command,
+    },
     #[error("the offered key is malformed: {0}")]
     BadKey(#[from] KeyError),
     #[error("the client offered a key it never signed with")]
@@ -175,7 +178,10 @@ where
                     return Err(AuthError::NoProofOfPossession);
                 }
 
-                debug!(fingerprint = key.fingerprint(), "asking about an unknown key");
+                debug!(
+                    fingerprint = key.fingerprint(),
+                    "asking about an unknown key"
+                );
                 let Some(user_id) = authorizer.request(&key).await else {
                     return Err(AuthError::Refused);
                 };

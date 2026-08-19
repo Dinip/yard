@@ -55,7 +55,10 @@ impl PublicKey {
     /// than checked.
     pub fn parse(contents: &str) -> Result<Self, KeyError> {
         let mut parts = contents.split_whitespace();
-        let encoded = parts.next().filter(|s| !s.is_empty()).ok_or(KeyError::Empty)?;
+        let encoded = parts
+            .next()
+            .filter(|s| !s.is_empty())
+            .ok_or(KeyError::Empty)?;
         let comment = {
             let rest: Vec<&str> = parts.collect();
             (!rest.is_empty()).then(|| rest.join(" "))
@@ -78,11 +81,8 @@ impl PublicKey {
                 .unwrap(),
         );
 
-        let inner = RsaPublicKey::new(
-            BigUint::from_bytes_be(&modulus),
-            BigUint::from(exponent),
-        )
-        .map_err(|_| KeyError::NotAnRsaKey)?;
+        let inner = RsaPublicKey::new(BigUint::from_bytes_be(&modulus), BigUint::from(exponent))
+            .map_err(|_| KeyError::NotAnRsaKey)?;
 
         Ok(Self {
             fingerprint: fingerprint_of(&inner),
@@ -142,5 +142,8 @@ fn fingerprint_of(key: &RsaPublicKey) -> String {
         // once the modulus and exponent are in hand.
         .expect("a parsed RSA key encodes to DER");
     let digest = Sha256::digest(der.as_bytes());
-    format!("SHA256:{}", base64::engine::general_purpose::STANDARD_NO_PAD.encode(digest))
+    format!(
+        "SHA256:{}",
+        base64::engine::general_purpose::STANDARD_NO_PAD.encode(digest)
+    )
 }

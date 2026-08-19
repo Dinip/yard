@@ -20,10 +20,10 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use adb_bridge::Bridge;
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
 use farm_protocol::{AppInfo, Display, FileEntry, FileKind, FileListing, Platform};
-use adb_bridge::Bridge;
 use provider_core::adb_auth::AdbAuthority;
 use provider_core::backend::{
     join_path, parent_of, AppFilter, BackendError, DeviceBackend, DeviceInfo, DeviceMetrics,
@@ -308,7 +308,6 @@ impl AndroidBackend {
             })
             .await;
     }
-
 
     async fn shell(&self, command: &str) -> BackendResult<String> {
         self.adb
@@ -1379,7 +1378,11 @@ mod tests {
 
         let answer = adb_bridge::Message::read(&mut client).await.unwrap();
         assert_eq!(answer.command, adb_bridge::Command::Auth);
-        assert_eq!(answer.payload.len(), 20, "a 20-byte challenge, as adbd issues");
+        assert_eq!(
+            answer.payload.len(),
+            20,
+            "a 20-byte challenge, as adbd issues"
+        );
 
         client.shutdown().await.unwrap();
         task.abort();

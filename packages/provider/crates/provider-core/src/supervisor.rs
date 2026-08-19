@@ -18,8 +18,8 @@ use farm_protocol::{
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
-use crate::backend::{DeviceBackend, DeviceInfo};
 use crate::adb_auth::{AdbAuthWaiters, AdbAuthority};
+use crate::backend::{DeviceBackend, DeviceInfo};
 use crate::control::{now_millis, AdbAuthDecision, CommandHandler, ControlSender};
 use crate::session::{Authorization, SessionRegistry};
 

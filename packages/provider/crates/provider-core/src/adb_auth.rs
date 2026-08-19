@@ -55,7 +55,11 @@ impl AdbAuthWaiters {
         self.register(request_id).await.answer().await
     }
 
-    async fn wait_on(&self, request_id: &str, rx: oneshot::Receiver<AdbAuthDecision>) -> Option<AdbAuthDecision> {
+    async fn wait_on(
+        &self,
+        request_id: &str,
+        rx: oneshot::Receiver<AdbAuthDecision>,
+    ) -> Option<AdbAuthDecision> {
         let outcome = tokio::time::timeout(ADB_AUTH_TIMEOUT, rx).await;
         // Whatever happened, this request is over; leaving the entry behind
         // would leak one map slot per abandoned `adb connect`.

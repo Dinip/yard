@@ -177,7 +177,11 @@ async fn a_service_is_opened_upstream_and_bytes_flow_both_ways() {
     let echoed = client
         .next_where(|msg| msg.command == Command::Wrte && msg.arg0 == local)
         .await;
-    assert_eq!(echoed.payload, &b"ping"[..], "bytes reached the device and came back");
+    assert_eq!(
+        echoed.payload,
+        &b"ping"[..],
+        "bytes reached the device and came back"
+    );
 }
 
 #[tokio::test]
@@ -211,8 +215,12 @@ async fn a_stream_is_acknowledged_before_it_says_anything() {
 #[tokio::test]
 async fn two_streams_do_not_interfere() {
     let mut device = FakeDevice::default();
-    device.greetings.insert("shell:one".into(), b"first".to_vec());
-    device.greetings.insert("shell:two".into(), b"second".to_vec());
+    device
+        .greetings
+        .insert("shell:one".into(), b"first".to_vec());
+    device
+        .greetings
+        .insert("shell:two".into(), b"second".to_vec());
     let device = Arc::new(device);
     let mut client = Client::connected(device.clone()).await;
 
@@ -228,19 +236,26 @@ async fn two_streams_do_not_interfere() {
         .await;
     assert_eq!(first.payload_str(), "first");
     assert_eq!(second.payload_str(), "second");
-    assert_eq!(first.arg1, 100, "each frame carries the client's id for its own stream");
+    assert_eq!(
+        first.arg1, 100,
+        "each frame carries the client's id for its own stream"
+    );
     assert_eq!(second.arg1, 200);
 }
 
 #[tokio::test]
 async fn closing_one_stream_leaves_the_other_alone() {
     let mut device = FakeDevice::default();
-    device.greetings.insert("shell:two".into(), b"still here".to_vec());
+    device
+        .greetings
+        .insert("shell:two".into(), b"still here".to_vec());
     let device = Arc::new(device);
     let mut client = Client::connected(device.clone()).await;
 
     let doomed = client.open(100, "shell:one").await.arg0;
-    client.send(Message::empty(Command::Clse, 100, doomed)).await;
+    client
+        .send(Message::empty(Command::Clse, 100, doomed))
+        .await;
 
     let b = client.open(200, "shell:two").await.arg0;
     let msg = client
@@ -309,7 +324,9 @@ async fn traffic_counts_as_using_the_device() {
 #[tokio::test]
 async fn the_device_hanging_up_closes_the_stream() {
     let mut device = FakeDevice::default();
-    device.greetings.insert("shell:echo hi".into(), b"hi\n".to_vec());
+    device
+        .greetings
+        .insert("shell:echo hi".into(), b"hi\n".to_vec());
     let device = Arc::new(device);
     let mut client = Client::connected(device.clone()).await;
 

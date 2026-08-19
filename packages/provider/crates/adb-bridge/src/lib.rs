@@ -20,7 +20,7 @@ pub mod bridge;
 pub mod key;
 pub mod message;
 
-pub use bridge::{Bridge, ServiceOpener, Transport};
 pub use auth::{AuthError, Authorizer, Handshake, Identity};
+pub use bridge::{Bridge, ServiceOpener, Transport};
 pub use key::{KeyError, PublicKey};
 pub use message::{Command, FrameError, Message, MAX_PAYLOAD, VERSION};

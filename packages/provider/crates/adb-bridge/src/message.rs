@@ -182,7 +182,9 @@ impl Message {
 }
 
 fn checksum(payload: &[u8]) -> u32 {
-    payload.iter().fold(0u32, |sum, b| sum.wrapping_add(*b as u32))
+    payload
+        .iter()
+        .fold(0u32, |sum, b| sum.wrapping_add(*b as u32))
 }
 
 /// Payloads are arbitrary bytes; dumping them into a log is noise at best.
