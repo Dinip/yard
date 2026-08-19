@@ -3,6 +3,8 @@ import { device, joinRequest, reservation, reservationObserver } from "@farm/db"
 import type { AuditAction } from "@farm/protocol";
 import { and, eq, inArray, isNull, lt } from "drizzle-orm";
 import { providers } from "../gateway/registry.ts";
+import { adbAuthRequests } from "./adb-auth.ts";
+import { pushAdbKeysForReservation } from "./adb-keys.ts";
 import { audit } from "./audit.ts";
 import { deviceEvents } from "./events.ts";
 import { getSettings } from "./settings.ts";
@@ -79,6 +81,10 @@ export async function releaseActive(
   await expirePendingRequests(db, reservationIds);
 
   const ids = released.map((row) => row.deviceId);
+
+  // The session an unanswered `adb connect` was asking to get into is over.
+  // `session.revoke` below already closes the connection itself.
+  adbAuthRequests.dropDevices(ids);
 
   if (options.revoke !== false) {
     // Revocation is a push, not a token-expiry side effect: live viewers must
@@ -161,6 +167,12 @@ export async function addObserver(db: Database, reservationId: string, userId: s
     .insert(reservationObserver)
     .values({ id: crypto.randomUUID(), reservationId, userId })
     .onConflictDoNothing();
+
+  // Somebody in the session may `adb connect` to it, so the provider needs
+  // their keys. Here rather than at the two call sites, because an observer
+  // created by one path and not the other is exactly the drift this function
+  // exists to prevent.
+  await pushAdbKeysForReservation(db, reservationId);
 }
 
 /**

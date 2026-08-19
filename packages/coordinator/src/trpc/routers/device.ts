@@ -1,8 +1,18 @@
-import { device, joinRequest, provider, reservation, reservationObserver, user } from "@farm/db";
+import {
+  device,
+  joinRequest,
+  provider,
+  reservation,
+  reservationObserver,
+  user,
+  userAdbKey,
+} from "@farm/db";
 import { TRPCError } from "@trpc/server";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { providers } from "../../gateway/registry.ts";
+import { adbAuthRequests } from "../../lib/adb-auth.ts";
+import { entitledKeys, pushAdbKeys, pushAdbKeysForReservation } from "../../lib/adb-keys.ts";
 import { audit } from "../../lib/audit.ts";
 import { deviceEvents } from "../../lib/events.ts";
 import { isUniqueViolation } from "../../lib/pg-errors.ts";
@@ -120,6 +130,19 @@ async function listDevices(db: import("@farm/db").Database) {
               note,
               requestedAt,
             })),
+          /**
+           * `adb connect` attempts parked on a key nobody recognises.
+           *
+           * From memory, not the database: each is bound to a socket held open
+           * on a provider, and lives 120 seconds.
+           */
+          adbAuthRequests: adbAuthRequests.forDevice(r.device.id).map((q) => ({
+            requestId: q.requestId,
+            fingerprint: q.fingerprint,
+            comment: q.comment ?? null,
+            askedAt: q.askedAt,
+            expiresAt: q.expiresAt,
+          })),
         }
       : null,
   }));
@@ -214,7 +237,9 @@ export const deviceRouter = router({
         deviceId: input.deviceId,
         reservationId: created.id,
         userId: ctx.user.id,
-        adbKeys: [],
+        // Sent with the authorization rather than after it, so the provider can
+        // admit the holder's own `adb connect` without asking anybody.
+        adbKeys: await entitledKeys(ctx.db, created.id),
       });
 
       await audit(ctx.db, ctx.user.id, "device.reserve", "device", input.deviceId);
@@ -536,6 +561,89 @@ export const deviceRouter = router({
     }),
 
   /**
+   * The holder's answer to an unknown `adb` key at the door.
+   *
+   * Approving registers the key **on the answerer's own account**, so their
+   * next `adb connect` anywhere in the farm is silent. That is the only shape
+   * that makes sense: a holder cannot vouch for whose key this is beyond their
+   * own, and somebody else's key belongs on their own account, added in
+   * settings.
+   */
+  answerAdbAuthRequest: protectedProcedure
+    .input(z.object({ requestId: z.string(), approve: z.boolean() }))
+    .mutation(async ({ ctx, input }) => {
+      // Claimed rather than read: taking it out of the map is what stops two
+      // tabs both answering, and there is no row to guard on.
+      const pending = adbAuthRequests.claim(input.requestId);
+      if (!pending) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "That request is no longer open",
+        });
+      }
+
+      const [held] = await ctx.db
+        .select({ id: reservation.id, holderId: reservation.userId })
+        .from(reservation)
+        .where(and(eq(reservation.deviceId, pending.deviceId), eq(reservation.state, "active")))
+        .limit(1);
+
+      if (!held) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Session is over" });
+      if (held.holderId !== ctx.user.id && ctx.user.role !== "admin") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "This is not your session" });
+      }
+
+      const conn = providers.get(pending.providerId);
+
+      if (!input.approve) {
+        conn?.push({ type: "adb.auth.decision", requestId: pending.requestId, allow: false });
+        await audit(ctx.db, ctx.user.id, "device.adb.key_denied", "device", pending.deviceId, {
+          fingerprint: pending.fingerprint,
+        });
+        deviceEvents.publish();
+        return { approved: false };
+      }
+
+      // The key first, because the decision below admits the connection: a
+      // provider that let somebody in against a key we then failed to store
+      // would ask again on their next connect, for no reason they could see.
+      const owner = ctx.user.id;
+      try {
+        await ctx.db.insert(userAdbKey).values({
+          id: crypto.randomUUID(),
+          userId: owner,
+          fingerprint: pending.fingerprint,
+          publicKey: pending.publicKey,
+          comment: pending.comment ?? null,
+          title: pending.comment ?? "Approved from a device",
+          lastUsedAt: new Date(),
+        });
+      } catch (err) {
+        // Somebody registered it in the 120 seconds this sat here, or it is on
+        // another account. Either way the connection at the door is the one
+        // this request describes, and refusing it now would be perverse.
+        if (!isUniqueViolation(err)) throw err;
+      }
+
+      conn?.push({
+        type: "adb.auth.decision",
+        requestId: pending.requestId,
+        allow: true,
+        userId: owner,
+      });
+      // Follows the decision, never replaces it: this is what makes the *next*
+      // connection silent, and it must not be what admits this one.
+      await pushAdbKeys(ctx.db, pending.deviceId);
+
+      await audit(ctx.db, ctx.user.id, "device.adb.key_approved", "device", pending.deviceId, {
+        fingerprint: pending.fingerprint,
+        reservationId: held.id,
+      });
+      deviceEvents.publish();
+      return { approved: true };
+    }),
+
+  /**
    * Step out of a session you are in.
    *
    * Not an admin power, which is what it was when only admins could be in one:
@@ -566,6 +674,9 @@ export const deviceRouter = router({
       // Leaving a session you are not in is a no-op worth reporting: the
       // button should not have been there.
       if (!left) throw new TRPCError({ code: "NOT_FOUND", message: "You are not in this session" });
+
+      // Their entitlement to this device went with their presence.
+      await pushAdbKeysForReservation(ctx.db, held.id);
 
       await audit(ctx.db, ctx.user.id, "device.session_leave", "device", input.deviceId);
       deviceEvents.publish();

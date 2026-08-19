@@ -45,6 +45,13 @@ export const AUDIT_ACTIONS = [
   { value: "device.restart", label: "Session restarts", group: "Devices" },
   { value: "device.adb.expose", label: "Remote debugging enabled", group: "Devices" },
   { value: "device.file_pull", label: "Pulled a file", group: "Devices" },
+  { value: "device.adb.key_approved", label: "adb key approved", group: "Devices" },
+  { value: "device.adb.key_denied", label: "adb key denied", group: "Devices" },
+
+  // A user's own ADB keys. Not "Devices": these are account-level and outlive
+  // any one session, which is the whole point of registering one.
+  { value: "user.adb_key.add", label: "adb key added", group: "Administration" },
+  { value: "user.adb_key.remove", label: "adb key removed", group: "Administration" },
 
   // Administration.
   { value: "provider.create", label: "Provider created", group: "Administration" },
