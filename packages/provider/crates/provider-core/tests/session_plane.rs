@@ -223,6 +223,7 @@ impl Harness {
                 Authorization {
                     reservation_id: RESERVATION.into(),
                     user_id: "user-1".into(),
+                    adb_keys: Vec::new(),
                 },
             )
             .await;

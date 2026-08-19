@@ -10,6 +10,7 @@
 //!   browser ─── server.rs ──────────┘                      (ios / android / mock)
 //! ```
 
+pub mod adb_auth;
 pub mod auth;
 pub mod backend;
 pub mod cleanup;

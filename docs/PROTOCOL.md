@@ -92,6 +92,7 @@ command dispatch.
 | `device.removed` | Device → `absent` |
 | `device.status` / `.display` / `.battery` | Targeted field updates |
 | `command.result` | Settles the correlated pending command |
+| `adb.auth.request` | An `adb connect` offered a key the provider has not been told about; its connection is parked pending an answer |
 | `install.finished` | Written to `auditLog` — the file is already deleted |
 | `cleanup.finished` | Written to `auditLog` — what a between-users reset removed, cleared, wiped and failed at |
 | `file.pulled` | Written to `auditLog` — bytes left the device and the coordinator was not on the path |
@@ -101,11 +102,13 @@ command dispatch.
 `hello.ack` (carries the heartbeat interval, the JWKS URL, the token `issuer`,
 and `webOrigins` — the browser origins the provider may serve; see below),
 `hello.reject`,
-`ping`, and `command` — whose `payload` is one of:
+`ping`, `adb.auth.decision` (admits or refuses a parked `adb connect`), and
+`command` — whose `payload` is one of:
 
 `session.authorize` · `session.revoke` · `device.reboot` · `device.rotate` ·
 `device.apps` · `device.launch` · `device.uninstall` · `device.cleanup` ·
-`device.adb.expose` · `device.adb.unexpose` · `device.restart`
+`device.adb.expose` · `device.adb.unexpose` · `device.adb.keys` ·
+`device.restart`
 
 Every command is correlated by id and bounded by a 15s timeout — a provider that
 accepts a command and never answers must not wedge the caller.
@@ -117,12 +120,31 @@ a deadline; the device's return to `ready` arrives as an ordinary
 `device.status`, and the report as `cleanup.finished`. See
 [CLEANUP.md](CLEANUP.md).
 
+### ADB authentication
+
+`adb connect` is authenticated by the **provider**, against keys the coordinator
+tells it about — the device itself only ever trusts the provider's own key. See
+[PROVIDER.md](PROVIDER.md) for the bridge that does it.
+
+`session.authorize` carries `adbKeys`, the set entitled to that session: the
+holder's keys plus those of anyone approved into the session. `device.adb.keys`
+replaces that set when it changes. A key the provider has never seen produces an
+`adb.auth.request`, the connection parks for 120s, and the holder's answer comes
+back as `adb.auth.decision`. Any of a timeout, a refusal or a dropped control
+plane closes the connection.
+
+`AdbKey` carries the whole public key, not just a fingerprint, because ADB
+authentication is challenge-response: the provider issues a token and verifies a
+signature over it, which it cannot do from a fingerprint.
+
 ### Reconcile, don't patch
 
 `hello` carries the provider's **entire** device list, and anything the database
 still has for that provider which the provider no longer reports becomes
 `absent`. A provider that crashed mid-change therefore cannot leave a stale row
-behind. The same stance drives the `stream` subscription (below).
+behind. The same stance drives the `stream` subscription (below), and
+`device.adb.keys`, which is always the whole set — a lost delta would leave a
+provider trusting a key an admin deleted.
 
 ### Failure semantics
 

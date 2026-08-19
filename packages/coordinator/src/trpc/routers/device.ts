@@ -214,6 +214,7 @@ export const deviceRouter = router({
         deviceId: input.deviceId,
         reservationId: created.id,
         userId: ctx.user.id,
+        adbKeys: [],
       });
 
       await audit(ctx.db, ctx.user.id, "device.reserve", "device", input.deviceId);

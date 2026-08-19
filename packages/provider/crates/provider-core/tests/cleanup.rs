@@ -82,6 +82,7 @@ async fn authorize(supervisor: &Arc<Supervisor>, reservation_id: &str) {
             device_id: DEVICE.into(),
             reservation_id: reservation_id.into(),
             user_id: "user-1".into(),
+            adb_keys: Vec::new(),
         })
         .await
         .expect("authorize");

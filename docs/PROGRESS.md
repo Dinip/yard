@@ -1512,6 +1512,44 @@ the session to come back. Bounded on purpose: a device that really did go away
 still has to reach `unhealthy` on its own, so this cannot mask an unplugged
 phone. Disabling remote debugging restarts `adbd` too and takes the same path.
 
+## Phase 21 — provider-terminated ADB authentication 🚧
+
+Until now `adb connect` required *your* key to be enrolled on the phone: the
+provider put the device in `tcpip:` mode and spliced raw TCP to its `adbd`, so
+the phone did the authenticating. That does not scale past a handful of devices,
+leaves the coordinator with no idea who ran `adb shell`, and needs an `adbd`
+restart to set up.
+
+The provider becomes the ADB daemon instead. It terminates the client's
+connection, verifies the key itself against a set the coordinator pushed, and
+translates each opened service onto the USB transport it already holds. The
+provider's key stays the only one any device trusts, and a client key becomes an
+identity rather than an enrollment.
+
+| Item | State | Where |
+|---|---|---|
+| `AdbKey`, `adbKeys` on `session.authorize`, `device.adb.keys`, `adb.auth.request`/`.decision` | ✅ | `protocol/src/control.ts` |
+| `adbkey.pub` parsing + `SHA256:` fingerprint, vectors shared with Rust | ✅ | `protocol/src/adbkey.ts`, `protocol/test/vectors/` |
+| Parked-connection registry, bounded and refused on control-plane loss | ✅ | `provider-core/src/adb_auth.rs` |
+| `user_adb_key` table | ⬜ | `db/src/schema/farm.ts` |
+| `adb-bridge` crate: framing | ⬜ | `provider/crates/adb-bridge` |
+| `adb-bridge`: authentication | ⬜ | `provider/crates/adb-bridge` |
+| `adb-bridge`: service demux | ⬜ | `provider/crates/adb-bridge` |
+| Android backend swaps the splice for the bridge | ⬜ | `backend-android/src/lib.rs` |
+| Key management + approval in tRPC | ⬜ | `coordinator/src/trpc/routers/` |
+| Settings key list, holder approval card | ⬜ | `web/src/routes/` |
+
+**The fingerprint is derived twice**, in TypeScript and in Rust, and if the two
+ever disagree every connection asks the holder to approve a key they already
+registered. The vector in `protocol/test/vectors/` is a real key from
+`adb keygen` whose expected fingerprint was computed with `openssl`, so neither
+implementation can define itself into being correct; both assert against it.
+
+**The parked-connection registry lives in `provider-core`, not the bridge.** A
+decision can only arrive over the control socket, so losing that socket has to
+refuse everything waiting — a bridge that owned its own waiters would have no
+way to know.
+
 ---
 
 ## Open decisions

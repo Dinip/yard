@@ -1,0 +1,5 @@
+{
+  "note": "A real key from 'adb keygen'. The fingerprint was computed independently with openssl (spki DER -> sha256 -> base64, unpadded) so that neither implementation can define it into being correct. Both the TypeScript parser and the Rust one in adb-bridge assert against this file.",
+  "fingerprint": "SHA256:HZ7j4M3gY4CTMHIxwdhDZrXE0HtvXx2mhi4zyfPU7l4",
+  "comment": "dev@example.test"
+}

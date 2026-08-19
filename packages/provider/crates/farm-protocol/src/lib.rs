@@ -101,9 +101,16 @@ mod tests {
             device_id: "udid-1".into(),
             reservation_id: "res-1".into(),
             user_id: "user-1".into(),
+            adb_keys: vec![AdbKey {
+                user_id: "user-1".into(),
+                fingerprint: "SHA256:abc".into(),
+                public_key: "QAAAAO0l96Y=".into(),
+                comment: Some("dev@example.test".into()),
+            }],
         };
         let json = serde_json::to_value(&cmd).unwrap();
         assert_eq!(json["kind"], "session.authorize");
+        assert_eq!(json["adbKeys"][0]["publicKey"], "QAAAAO0l96Y=");
         assert_eq!(json["deviceId"], "udid-1");
         assert_eq!(json["reservationId"], "res-1");
 
