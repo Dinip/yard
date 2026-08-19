@@ -1532,7 +1532,7 @@ identity rather than an enrollment.
 | `adbkey.pub` parsing + `SHA256:` fingerprint, vectors shared with Rust | ✅ | `protocol/src/adbkey.ts`, `protocol/test/vectors/` |
 | Parked-connection registry, bounded and refused on control-plane loss | ✅ | `provider-core/src/adb_auth.rs` |
 | `user_adb_key` table | ✅ | `db/src/schema/farm.ts`, `drizzle/0008_*.sql` |
-| `adb-bridge` crate: framing | ⬜ | `provider/crates/adb-bridge` |
+| `adb-bridge` crate: framing | ✅ | `adb-bridge/src/message.rs` |
 | `adb-bridge`: authentication | ⬜ | `provider/crates/adb-bridge` |
 | `adb-bridge`: service demux | ⬜ | `provider/crates/adb-bridge` |
 | Android backend swaps the splice for the bridge | ⬜ | `backend-android/src/lib.rs` |
