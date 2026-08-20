@@ -1604,6 +1604,48 @@ way to know.
 
 ---
 
+## Phase 22 — parking idle screens ✅
+
+Devices sat unreserved were rendering their lock screens all day and getting
+warm doing it, iOS worst of all. An idle device now goes dark, and reserving it
+brings it back to a home screen rather than to whatever the last user left.
+
+| Item | State | Where |
+|---|---|---|
+| `set_screen_awake(on)` on the backend trait, defaulting to `Unsupported` | ✅ | `provider-core/src/backend.rs` |
+| Park on the poll, wake on `session.authorize` | ✅ | `provider-core/src/supervisor.rs` |
+| `blank_idle_screens` config, on by default | ✅ | `provider-core/src/config.rs`, `provider.example.yaml` |
+| Android: scrcpy `SET_DISPLAY_POWER`, plus dismiss-keyguard and Home on wake | ✅ | `backend-android/src/{scrcpy,lib}.rs` |
+| iOS: side button, plus Home through the lock screen on wake | ✅ | `backend-ios/src/lib.rs` |
+| Mock records every attempt, refusals included | ✅ | `backend-mock/src/lib.rs` |
+| Tests: park once, wake on reserve, survive a cleanup, honour the config | ✅ | `provider-core/tests/screen.rs` |
+
+**Parking is reconciled, not hooked.** The obvious implementation blanks the
+screen on `session.revoke`, and it is wrong: the cleanup run that follows a
+release presses Home, which lights the panel straight back up. A provider
+starting up and a device coming back healthy are two more ways to be idle with
+a lit screen and no revocation in sight. The poll reads the current state
+instead, so all four cases end dark without any of them being written down.
+
+**The wake is gated on having parked it.** A renew re-authorizes the same
+reservation every renewal interval; waking on every `session.authorize` would
+press Home on somebody mid-session, over and over.
+
+**iOS is a toggle against a belief.** Apple exposes no read of the display's
+power state to a host, so the side button is pressed against what the provider
+thinks the screen is doing, and that belief is dropped whenever anything else
+could have touched it. A human pressing the side button on a shelved device is
+the uncovered case: the next park wakes it instead, and it stays awake until
+that device is reserved and released again — the state every device was in
+before this phase, so it degrades to the status quo. `com.apple.springboard.hasBlankedScreen`
+over the notification proxy would close it, if it turns out to matter.
+
+**The video pipeline still runs while a device is idle.** On iOS it starts at
+attach and never stops, so parking the screen does not stop the capture and
+encode. If heat is still a problem, that is the next thing to look at.
+
+---
+
 ## Open decisions
 
 - **Name.** The project is "Device Farm" as a placeholder. See

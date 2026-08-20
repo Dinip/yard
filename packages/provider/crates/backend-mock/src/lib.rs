@@ -126,6 +126,17 @@ pub struct MockState {
     pub screen_fault: Mutex<Option<ScreenFault>>,
     /// Answer `clear_app_data` with `Unsupported`, the way iOS does.
     pub no_clear_app_data: AtomicBool,
+    /// Every `set_screen_awake` call, in order. A test asserts on the sequence
+    /// rather than the final state: blanking a device twice is a bug even
+    /// though it leaves the screen in the right place.
+    pub screen_power: Mutex<Vec<bool>>,
+    /// Answer `set_screen_awake` with `Unsupported`, the way a backend that
+    /// cannot reach the display does.
+    pub no_screen_power: AtomicBool,
+    /// Every attempt, refusals included — `screen_power` only records the ones
+    /// that got through, and "asked an unsupporting backend on every poll" is
+    /// exactly the bug that distinction catches.
+    pub screen_power_attempts: AtomicI64,
     adb_port: AtomicU16,
 }
 
@@ -487,6 +498,17 @@ impl DeviceBackend for MockBackend {
         }
         drop(installed);
         self.state.cleared.lock().await.push(app_id.to_owned());
+        Ok(())
+    }
+
+    async fn set_screen_awake(&self, on: bool) -> Result<()> {
+        self.state
+            .screen_power_attempts
+            .fetch_add(1, Ordering::Relaxed);
+        if self.state.no_screen_power.load(Ordering::Relaxed) {
+            return Err(BackendError::Unsupported("setting screen power"));
+        }
+        self.state.screen_power.lock().await.push(on);
         Ok(())
     }
 

@@ -415,6 +415,7 @@ pub mod control_message {
     pub const BACK_OR_SCREEN_ON: u8 = 4;
     pub const GET_CLIPBOARD: u8 = 8;
     pub const SET_CLIPBOARD: u8 = 9;
+    pub const SET_DISPLAY_POWER: u8 = 10;
     pub const ROTATE_DEVICE: u8 = 11;
     pub const RESET_VIDEO: u8 = 17;
 }
@@ -493,6 +494,15 @@ pub fn get_clipboard() -> Vec<u8> {
     // copy_key = 0: read what is already there rather than asking the focused
     // app to copy first, which would alter the device's state to answer a read.
     vec![control_message::GET_CLIPBOARD, 0]
+}
+
+/// Turns the display's power on or off while the stream keeps running.
+///
+/// Absolute rather than a toggle, which is what makes an idle Android device
+/// simpler to park than an iOS one. The server restores the display when it
+/// exits, so a provider that dies never leaves a phone that looks dead.
+pub fn set_display_power(on: bool) -> Vec<u8> {
+    vec![control_message::SET_DISPLAY_POWER, u8::from(on)]
 }
 
 pub fn rotate_device() -> Vec<u8> {

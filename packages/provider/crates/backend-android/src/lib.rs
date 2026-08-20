@@ -652,6 +652,27 @@ impl DeviceBackend for AndroidBackend {
         Ok(())
     }
 
+    /// Absolute, because scrcpy's `SET_DISPLAY_POWER` is: no belief about the
+    /// current state is needed on this side, unlike iOS's side button.
+    ///
+    /// Waking is more than the panel, though. The server already runs with
+    /// `power_on=true stay_awake=true`, so the device does not sleep on its
+    /// own, but a display that was powered off comes back to whatever keyguard
+    /// the device has — hence the dismiss and the Home press, which together
+    /// leave the next tester at a home screen rather than a lock screen.
+    async fn set_screen_awake(&self, on: bool) -> BackendResult<()> {
+        self.send_control(scrcpy::set_display_power(on)).await?;
+        if on {
+            // Best-effort: a device with a secure keyguard refuses this, and
+            // waking to its lock screen is the honest outcome there.
+            let _ = self.shell("wm dismiss-keyguard").await;
+            // The hardware Home key, not the keyboard's — as in `reset_screen`.
+            self.send_control(scrcpy::keycode(0, 3)).await?;
+            self.send_control(scrcpy::keycode(1, 3)).await?;
+        }
+        Ok(())
+    }
+
     async fn reboot(&self) -> BackendResult<()> {
         // `reboot` never answers — the transport dies with the device — so its
         // silence is success and only an early error is interesting.

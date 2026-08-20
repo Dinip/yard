@@ -132,6 +132,12 @@ async fn health() -> impl IntoResponse {
 /// Verifies the token, then checks it against the reservation the coordinator
 /// last authorized. Both must pass: a signed, unexpired token whose reservation
 /// has since been revoked is refused.
+//
+// `result_large_err` does not apply to this shape: the `Err` is a ready-made
+// axum rejection, consumed by `return response` at every call site and never
+// propagated or stored. Boxing it would buy a heap allocation on every refused
+// connection and a deref at six call sites, in exchange for nothing.
+#[allow(clippy::result_large_err)]
 async fn authorize(
     state: &ServerState,
     device_id: &str,

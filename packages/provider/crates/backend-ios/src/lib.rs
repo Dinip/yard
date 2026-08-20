@@ -174,6 +174,12 @@ const APPS_TIMEOUT: Duration = Duration::from_secs(12);
 /// interval below this, `info()` never makes one at all.
 const BATTERY_TTL: Duration = Duration::from_secs(60);
 
+/// How long to let the lock screen come up before pressing Home through it.
+///
+/// A Home press that lands while the device is still waking is swallowed, and
+/// the user then arrives at a lock screen instead of their home screen.
+const WAKE_SETTLE: Duration = Duration::from_millis(700);
+
 /// Which diagnostics call a battery reading came from. See [`IosBackend::read_battery`]
 /// for why the registry is tried first.
 #[derive(Debug, Clone, Copy)]
@@ -561,6 +567,24 @@ impl IosBackend {
             Some(handle) => handle.send(input),
             None => debug!("no session — dropping a HID report"),
         }
+    }
+
+    /// Presses a named hardware button — see [`hid::named_button`].
+    ///
+    /// Sends both edges even though only the down edge acts, so button presses
+    /// made from inside this backend look on the wire like the ones a browser
+    /// sends.
+    async fn press(&self, key: &str) -> BackendResult<()> {
+        self.input(InputEvent::Key {
+            key: key.into(),
+            down: true,
+        })
+        .await?;
+        self.input(InputEvent::Key {
+            key: key.into(),
+            down: false,
+        })
+        .await
     }
 
     async fn pointer_down(&self, x: f64, y: f64) {
@@ -1090,17 +1114,31 @@ impl DeviceBackend for IosBackend {
     /// empty sync is not the same as clearing what the device holds. Leaving
     /// the step out is better than reporting a clear that did not happen.
     async fn reset_screen(&self) -> BackendResult<()> {
-        self.input(InputEvent::Key {
-            key: "Home".into(),
-            down: true,
-        })
-        .await?;
-        self.input(InputEvent::Key {
-            key: "Home".into(),
-            down: false,
-        })
-        .await?;
+        self.press("Home").await?;
         self.rotate(0).await
+    }
+
+    /// The side button, which is a *toggle* — iOS exposes no read of the
+    /// display's power state to a host.
+    ///
+    /// What makes this absolute from the outside is the caller's belief about
+    /// the screen, which the supervisor keeps and drops whenever anything else
+    /// could have touched it. The gap that leaves is a human walking up and
+    /// pressing the side button on a shelved device: the next park then wakes
+    /// it instead, and it stays awake until the device is reserved and
+    /// released again. That is the state every device is in today, so it
+    /// degrades to the status quo rather than to something worse.
+    async fn set_screen_awake(&self, on: bool) -> BackendResult<()> {
+        self.press("lock").await?;
+        if on {
+            // A woken iPhone is on its lock screen, which is not somewhere a
+            // tester can do anything. Home dismisses it on a passcode-free
+            // device, which is what a farm device should be; a device with a
+            // passcode wakes to the lock screen and stops there.
+            tokio::time::sleep(WAKE_SETTLE).await;
+            self.press("Home").await?;
+        }
+        Ok(())
     }
 
     /// Empties the staging directory installs upload through.

@@ -97,6 +97,18 @@ pub struct Config {
     /// The iOS Developer Disk Image the provider mounts for itself.
     #[serde(default)]
     pub ddi: DdiConfig,
+
+    /// Turn an idle device's screen off until somebody reserves it.
+    ///
+    /// On by default: a shelf of phones rendering their lock screens all day
+    /// is heat nobody asked for, and iOS devices in particular get warm enough
+    /// to matter. Set false for a wall meant to stay visibly lit.
+    #[serde(default = "default_true")]
+    pub blank_idle_screens: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// Where the iOS Developer Disk Image comes from.

@@ -75,6 +75,7 @@ async fn main() -> Result<()> {
 
     let sessions = SessionRegistry::new();
     let mut supervisor = Supervisor::new(sessions.clone());
+    supervisor.set_blank_idle_screens(config.blank_idle_screens);
 
     let debug_ports = PortPool::new(config.remote_debug.range()?);
 
