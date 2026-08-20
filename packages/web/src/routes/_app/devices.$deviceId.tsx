@@ -250,10 +250,9 @@ function DevicePage() {
         />
       )}
 
-      {/* Not a dialog. A dialog over the screen is exactly wrong here: the
-          developer is at a terminal watching `adb connect` sit there, and
-          whatever they were doing on the phone should stay visible. */}
-      {mine && device.reservation && device.reservation.adbAuthRequests.length > 0 && (
+      {/* Also a gate: the connect sits parked on the developer's terminal
+          until this is answered. */}
+      {mine && device.reservation && (
         <AdbAuthPrompt
           requests={device.reservation.adbAuthRequests}
           pending={answerAdbAuth.isPending}
@@ -596,6 +595,12 @@ type AdbAuthRequest = {
  * Approving adds the key to *your* account, which is the only thing the holder
  * can honestly assert: they know somebody is at the door, not who. Somebody
  * else's key belongs on that person's account, added in their own settings.
+ *
+ * A dialog, and one request at a time, for the same reason as
+ * `JoinRequestPrompt`: the connect is parked until this is answered, and an
+ * inline card at the top of the page is easy to miss while the 120-second
+ * window runs out. Dismissing it lets the request lapse — there is no badge to
+ * fall back to, because the answer is only worth anything inside that window.
  */
 function AdbAuthPrompt({
   requests,
@@ -606,44 +611,56 @@ function AdbAuthPrompt({
   pending: boolean;
   onAnswer: (requestId: string, approve: boolean) => void;
 }) {
+  const [dismissed, setDismissed] = useState<string[]>([]);
+  const next = requests.find((r) => !dismissed.includes(r.requestId));
+
   return (
-    <div className="grid gap-3 rounded-lg border border-warning/30 bg-warning/10 p-4">
-      {requests.map((request) => (
-        <div key={request.requestId} className="grid gap-2">
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <span className="font-medium text-sm">An adb key is asking to use this device</span>
-            {/* A request whose window has closed is refused on the provider
-                whatever this page shows, so the countdown is not decoration. */}
-            <span className="font-mono text-muted-foreground text-xs">
-              <Countdown deadline={request.expiresAt} /> left
-            </span>
-          </div>
-          <code className="truncate rounded bg-background/60 px-2 py-1 font-mono text-xs">
-            {request.fingerprint}
-          </code>
-          {request.comment && (
-            <span className="text-muted-foreground text-xs">from {request.comment}</span>
-          )}
-          <p className="text-muted-foreground text-xs">
+    <Dialog
+      open={Boolean(next)}
+      onOpenChange={(open) => {
+        if (!open && next) setDismissed((ids) => [...ids, next.requestId]);
+      }}
+    >
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>An adb key is asking to use this device</DialogTitle>
+          <DialogDescription>
             Approve only if this is your own machine. The key is added to your account, so your next
             connect anywhere is silent — and every `adb shell` through it is attributed to you.
-          </p>
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={pending}
-              onClick={() => onAnswer(request.requestId, false)}
-            >
-              Deny
-            </Button>
-            <Button size="sm" disabled={pending} onClick={() => onAnswer(request.requestId, true)}>
-              Approve, it is mine
-            </Button>
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="grid gap-2">
+          <code className="truncate rounded bg-muted px-2 py-1 font-mono text-xs">
+            {next?.fingerprint}
+          </code>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-muted-foreground text-xs">
+            {next?.comment && <span>from {next.comment}</span>}
+            <div className="flex-1" />
+            {/* A request whose window has closed is refused on the provider
+                whatever this page shows, so the countdown is not decoration. */}
+            {next && (
+              <span className="font-mono">
+                <Countdown deadline={next.expiresAt} /> left
+              </span>
+            )}
           </div>
         </div>
-      ))}
-    </div>
+
+        <DialogFooter>
+          <Button
+            variant="outline"
+            disabled={pending}
+            onClick={() => next && onAnswer(next.requestId, false)}
+          >
+            Deny
+          </Button>
+          <Button disabled={pending} onClick={() => next && onAnswer(next.requestId, true)}>
+            Approve, it is mine
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
