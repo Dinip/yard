@@ -694,6 +694,11 @@ async fn run_cleanup(
     timeout_seconds: i64,
 ) {
     let started = Instant::now();
+    // Cleanup runs after the viewer has gone, and `reset_screen` presses Home
+    // and rotates back upright — which is HID, which is only up while
+    // something is asking for the device. Without this lease it would find
+    // nothing to press with.
+    let _demand = device.backend.demand().lease();
     let baseline = device.baseline.read().await;
     let apps = baseline.as_ref().map(|held| &held.apps);
 

@@ -199,6 +199,12 @@ async fn run_session(
     let (mut sink, mut source) = socket.split();
     let video = device.backend.video();
 
+    // Held for the whole session: an idle device is not streaming, so this is
+    // what brings capture up. Nothing client-visible changes — the wait below
+    // is one a viewer already tolerates, and the "not streaming" path already
+    // exists for a bring-up that does not make it.
+    let _demand = device.backend.demand().lease();
+
     // A fresh viewer cannot decode anything without the parameter sets.
     let Some(codec) = video.wait_for_codec(CODEC_TIMEOUT).await else {
         let msg = ServerMessage::Error {

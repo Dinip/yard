@@ -1604,6 +1604,91 @@ way to know.
 
 ---
 
+## Phase 22 — capture that runs on demand ✅
+
+*Done when: a plugged-in, unreserved device is not running its hardware encoder,
+and stopping it costs the device nothing in the pool.*
+
+An idle iPhone ran hot on the desk, and the cause was here rather than in the
+hardware: `backend-ios` spawned `media::run` as part of device bring-up, so iOS
+held a CoreDevice screen-mirror session and encoded HEVC continuously from the
+moment the device attached. `backend-android` had the same shape — scrcpy
+supervised in the same forever-loop, encoding H.264 all day for no viewer. Full
+charge, minimum brightness and a clean DDI mount ruled out the alternatives on a
+real device.
+
+| Item | State | Where |
+|---|---|---|
+| `Demand`: a lease count, a touch, and the idle grace in one place | ✅ | `provider-core/src/demand.rs` |
+| `demand()` on the backend seam | ✅ | `.../backend.rs`, all three backends |
+| The video WebSocket leases for its whole session | ✅ | `.../server.rs` |
+| Input touches demand; the first event pays bring-up | ✅ | `backend-ios/src/lib.rs`, `backend-android/src/lib.rs` |
+| `run_cleanup` leases explicitly, so Home has something to press with | ✅ | `.../supervisor.rs` |
+| iOS: tunnel supervised separately from media + HID | ✅ | `backend-ios/src/device.rs` |
+| Android: scrcpy gated, health answered from adb's device list | ✅ | `backend-android/src/lib.rs` |
+| `backend-mock` gated the same way, with a stream-backed HID | ✅ | `backend-mock/src/lib.rs` |
+| Behaviour tests with no hardware | ✅ | `provider-core/tests/on_demand.rs` |
+
+### Splitting readiness from streaming is the part everything depends on
+
+`is_healthy` used to mean tunnel *and* media *and* HID. Stopping media on an
+idle device without touching that would have turned every idle device
+`unhealthy` and emptied the pool — trading a hot phone for an invisible one.
+So health now means *the device is reachable*: the RSD tunnel on iOS, adb's
+device list on Android. Whether capture is running is a separate watch that only
+the video and input paths await.
+
+Screenshots ride the tunnel and `screencap -p`, not the media session, so
+device-list thumbnails still work with the stream down. Had they gone through
+capture, the device list would have held every device in it hot.
+
+### Input is demand, and a viewer count cannot say so
+
+`VideoHandle::viewer_count()` was already there and would have needed no new
+API, but it can only ever answer "is anyone watching". An input event is not a
+frame subscriber, and a device being driven headlessly with no browser attached
+needs to come up all the same. That is why `Demand` sits *beside* the video
+handle rather than inside it, and why the input path touches it and then waits
+for bring-up rather than dropping the event.
+
+The subtle case: an event landing in the gap between a producer tearing down and
+re-entering `wait_for_demand` must not be lost. A pulse counter with a consumed
+watermark, rather than "anything after this call began", is what makes that
+safe — there is a test for it.
+
+### A second bug the same path was hiding
+
+`send` in `backend-ios` swallowed a missing session as a `debug!` line and
+returned nothing, so a cleanup that could not press Home reported success. It
+returns an error now, and the mock models the same dependency — its HID waits on
+the stream — so the failure is reachable in a test.
+
+### The grace period is a guess
+
+30 s, chosen to absorb a page refresh and the popout window's handoff while
+still letting a device cool between sessions. The right value depends on what
+iOS media bring-up actually costs, which has not been measured. Revisit once
+this has run on hardware for a while.
+
+### What was rejected
+
+**Polling `viewer_count()` in each supervisor** needs no new API but is a poll,
+cannot represent input demand at all, and copies the grace logic into both
+backends. **Coordinator-driven `stream.start`/`stream.stop`** puts policy with
+the component that owns policy, but adds wire protocol for a problem local to
+the provider, makes streaming depend on control-plane liveness, and stops a
+provider protecting its own devices when the coordinator is unreachable.
+**Reservation as the trigger** is simplest and has no window to tune, but a
+device left reserved all afternoon keeps encoding — which is most of the heat.
+
+### Not yet verified on hardware
+
+Everything above is tested against `backend-mock`. What a real device does when
+the media task is aborted — how promptly iOS ends the mirror session, and what
+bring-up costs the first viewer — has not been measured.
+
+---
+
 ## Open decisions
 
 - **Name.** The project is "Device Farm" as a placeholder. See

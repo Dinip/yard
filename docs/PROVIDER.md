@@ -52,6 +52,7 @@ src/
 ├── config.rs      one YAML file (replaces provider.sh's 13.5k of awk)
 ├── backend.rs     the DeviceBackend trait — the seam
 ├── video.rs       codec-agnostic access-unit fan-out
+├── demand.rs      who needs a device streaming, and the idle grace period
 ├── auth.rs        JWKS fetch + session-token verification
 ├── session.rs     which reservation may use each device
 ├── control.rs     the outbound WSS to the coordinator
@@ -234,11 +235,53 @@ contiguous under one `# HELP`/`# TYPE`.
 sampler both park. That keeps `main.rs` to one code path, where every long-lived
 task is spawned, aborted on shutdown, and fatal if it returns.
 
+## Capture runs on demand
+
+A plugged-in, idle, unreserved device used to run hot, and the cause was the
+provider rather than the hardware: both backends brought capture up as part of
+device bring-up, so an iPhone encoded HEVC and a phone encoded H.264 all day
+whether or not anyone was watching. `demand.rs` is the fix.
+
+`Demand` is a count behind a watch. `lease()` hands out a guard that increments
+on creation and decrements on drop; `touch()` is the same thing for demand that
+arrives as events rather than as a connection. A backend's capture loop waits on
+`wait_for_demand()` for the 0→1 edge and on `wait_for_idle(IDLE_GRACE)` for the
+count having been 0 continuously for the grace period. **The grace lives in one
+place** so both backends behave identically — 30 s today, chosen to absorb a
+page refresh and the popout window's handoff, and worth revisiting once iOS
+bring-up has been measured on real hardware.
+
+Three things hold demand:
+
+| Holder | How | Why |
+|---|---|---|
+| the video WebSocket | a lease for the whole session | `run_session` takes it before `wait_for_codec`, whose 30 s wait a client already tolerates |
+| input | a touch per event | an input event is not a frame subscriber, so a viewer count could never represent it |
+| cleanup | a lease for the whole run | `reset_screen` presses Home, and it runs *after* the viewer has gone |
+
+Demand sits beside `VideoHandle` rather than inside it for exactly the middle
+row: `viewer_count()` can answer "is anyone watching", never "does anything need
+this device up". The first input event after an idle period pays for bring-up
+rather than being dropped, which is what keeps headless automation working with
+no browser attached.
+
+**Readiness and streaming are different questions.** `is_healthy` means the
+device is reachable — the RSD tunnel on iOS, adb's device list on Android — and
+says nothing about capture. Getting this wrong would take every idle device out
+of the pool, which is a worse bug than the heat. Screenshots are unaffected on
+both backends: iOS goes through `ScreenCaptureServiceClient` over the tunnel and
+Android through `screencap -p`, so device-list thumbnails keep working with the
+stream down. That matters more than it sounds — thumbnails routed through the
+media session would hold every device in the list hot.
+
+`backend-mock` implements the same gate, so all of this is testable with nothing
+plugged in: see `provider-core/tests/on_demand.rs`.
+
 ## `backend-ios`
 
 ```
 crates/backend-ios/src/
-├── device.rs    tunnel + session supervision (one rebuild loop)
+├── device.rs    tunnel supervision, and capture gated on demand
 ├── media.rs     RTP in, RTCP out, access units — carried over verbatim
 ├── hevc.rs      RFC 7798 depacketisation, hvcC, codec string, frame size
 ├── hid.rs       touch, keyboard, hardware buttons, rotation
@@ -339,11 +382,23 @@ network, saying so: the tunnel is built and tested over USB, and a session that
 silently came up over Wi-Fi fails later, in the media path, where the cause is
 invisible.
 
-One supervisor task rebuilds tunnel, media and HID **together**, because they
-are not independent — the HID surfaces authenticate against the live media
-stream, so a media restart invalidates them and a tunnel drop invalidates
-everything. That is also why `restart` just closes the adapter: there is no
-finer-grained restart to offer.
+One supervisor task rebuilds the **tunnel** forever, and inside it a second loop
+brings **media and HID** up and down with demand. Those two stay together
+because they are not independent — the HID surfaces authenticate against the
+live media stream, so a media restart invalidates them. The tunnel outlives
+both, because health, identity, battery and the file and app services all ride
+on it, and because an idle device must stay in the pool.
+
+So `is_ready` means *the tunnel is up*, nothing more, and `wait_media` is the
+separate question the video and input paths ask. Idle teardown aborts the media
+task and drops the input handle; it deliberately does not close the adapter,
+which is the blunter instrument `restart` still uses — closing it shuts the
+userspace TCP stack and takes the tunnel with it, and there is no
+finer-grained rebuild to offer.
+
+`send` returns an error when there is no HID rather than logging a `debug!`
+line. It used to swallow a missing session, which meant a cleanup that could not
+press Home reported success.
 
 `media.rs` is the file to leave alone. Receiver reports are not optional (the
 encoder stalls in ~20 s without them), audio is started and then ignored on
@@ -406,7 +461,7 @@ crates/backend-android/src/
 ├── adb.rs      the adb server's host protocol — transport, shell, sync, forward
 ├── scrcpy.rs   pushing/starting the server, its sockets, its control protocol
 ├── h264.rs     Annex-B → avcC, so the browser gets the framing it wants
-└── lib.rs      session supervision and the DeviceBackend impl
+└── lib.rs      session supervision (gated on demand) and the DeviceBackend impl
 ```
 
 The provider speaks adb's TCP protocol directly instead of shelling out: one
@@ -554,6 +609,7 @@ developer's machine. STF has the same hole.
 pub trait DeviceBackend: Send + Sync + 'static {
     async fn info(&self) -> Result<DeviceInfo>;
     fn video(&self) -> VideoHandle;
+    fn demand(&self) -> Demand;                                // gates capture
     async fn input(&self, event: InputEvent) -> Result<()>;
     async fn screenshot(&self) -> Result<Vec<u8>>;
     async fn clipboard_get(&self) -> Result<Option<String>>;

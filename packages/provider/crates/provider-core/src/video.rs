@@ -207,9 +207,14 @@ impl VideoPublisher {
 
     /// Publishes one access unit. Returns the number of live viewers.
     ///
-    /// A send error only means nobody is watching, which is not a fault — the
-    /// capture pipeline keeps running so a viewer that arrives next second gets
-    /// a stream that is already warm.
+    /// A send error only means nobody is watching, which is not a fault here.
+    /// It used to also be harmless, because the capture pipeline kept running
+    /// and a viewer arriving a second later got a stream that was already warm.
+    /// It no longer does: a backend takes capture down once nothing has needed
+    /// the device for [`crate::demand::IDLE_GRACE`], so an audience of zero is
+    /// now a countdown. Losing that warm start is the price of not running a
+    /// hardware encoder all day for nobody, and it is why the grace period
+    /// exists at all — see [`crate::demand`].
     pub fn publish(&self, au: AccessUnit) -> usize {
         if au.is_key {
             self.streaming.store(true, Ordering::Relaxed);

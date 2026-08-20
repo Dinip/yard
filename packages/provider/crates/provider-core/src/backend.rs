@@ -13,6 +13,7 @@ use farm_protocol::{AppInfo, Display, FileListing, Platform};
 use wildmatch::WildMatch;
 
 use crate::adb_auth::AdbAuthority;
+use crate::demand::Demand;
 use crate::video::VideoHandle;
 
 pub type Result<T> = std::result::Result<T, BackendError>;
@@ -257,6 +258,15 @@ pub trait DeviceBackend: Send + Sync + 'static {
     /// Codec description + access-unit broadcast. Cheap and clonable; a viewer
     /// subscribing must not disturb the capture pipeline.
     fn video(&self) -> VideoHandle;
+
+    /// What is asking this device to be streaming right now.
+    ///
+    /// Beside [`Self::video`] rather than inside it because video subscribers
+    /// are not the only demand: HID is demand too, and an input event is not a
+    /// frame subscriber. A backend brings capture up on the 0→1 edge and takes
+    /// it down once the count has been 0 for [`crate::demand::IDLE_GRACE`], so
+    /// an idle device stops running its encoder without leaving the pool.
+    fn demand(&self) -> Demand;
 
     async fn input(&self, event: InputEvent) -> Result<()>;
 

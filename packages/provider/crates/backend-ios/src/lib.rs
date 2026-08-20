@@ -48,6 +48,7 @@ use provider_core::backend::{
     join_path, parent_of, AppFilter, BackendError, DeviceBackend, DeviceInfo, DeviceMetrics,
     InputEvent, ProgressSink, Result as BackendResult,
 };
+use provider_core::demand::Demand;
 use provider_core::video::{channel, VideoGeometry, VideoHandle, VideoPublisher};
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
@@ -159,6 +160,13 @@ const CONTACT_MAX: Duration = Duration::from_secs(10);
 
 /// How long to wait for a session when a request needs one.
 const SESSION_WAIT: Duration = Duration::from_secs(20);
+
+/// How long an input event waits for capture to come up.
+///
+/// The first event after an idle period pays for bring-up rather than being
+/// dropped, which is what makes headless automation — and cleanup's Home
+/// press — work with no viewer attached.
+const MEDIA_WAIT: Duration = Duration::from_secs(30);
 
 /// How long an app listing may take end to end, stream included. Under the
 /// coordinator's 15s command timeout so a slow device surfaces as itself rather
@@ -404,6 +412,9 @@ pub struct IosBackend {
     /// case is one round trip a minute, and with metrics enabled at any interval
     /// under [`BATTERY_TTL`] `info()` never makes one at all.
     battery: Mutex<Option<(Instant, BatteryReading)>>,
+    /// Viewers, input and cleanup. Capture is gated on this, so an idle iPhone
+    /// stops encoding instead of running hot on a desk.
+    demand: Demand,
 }
 
 /// What the gas gauge tells us about the battery.
@@ -419,10 +430,12 @@ impl IosBackend {
     pub fn new(options: IosOptions, name: Option<String>) -> Arc<Self> {
         let (video, publisher) = channel();
         let geometry = Geometry::default();
+        let demand = Demand::new();
         let host = Arc::new(DeviceHost::spawn(
             options.clone(),
             publisher.clone(),
             geometry.clone(),
+            demand.clone(),
         ));
 
         Arc::new(Self {
@@ -434,6 +447,7 @@ impl IosBackend {
             geometry,
             pointer: Mutex::new(Pointer::default()),
             battery: Mutex::new(None),
+            demand,
         })
     }
 
@@ -556,14 +570,32 @@ impl IosBackend {
         })
     }
 
-    async fn send(&self, input: Input) {
+    /// Queue one HID report, bringing capture up first if it is down.
+    ///
+    /// Returns an error rather than logging one: a cleanup that could not press
+    /// Home used to report success, which is worse than a device that reset
+    /// nothing — the caller thinks it did.
+    async fn send(&self, input: Input) -> BackendResult<()> {
+        // Input is demand. The first event after an idle period pays for
+        // bring-up; a burst keeps the window open behind it.
+        self.demand.touch();
+        if !self.host.wait_media(MEDIA_WAIT).await {
+            return Err(BackendError::Unavailable(
+                "no HID — the device is not streaming and did not come up".into(),
+            ));
+        }
         match self.host.input().await {
-            Some(handle) => handle.send(input),
-            None => debug!("no session — dropping a HID report"),
+            Some(handle) => {
+                handle.send(input);
+                Ok(())
+            }
+            None => Err(BackendError::Unavailable(
+                "the device session went away mid-report".into(),
+            )),
         }
     }
 
-    async fn pointer_down(&self, x: f64, y: f64) {
+    async fn pointer_down(&self, x: f64, y: f64) -> BackendResult<()> {
         let mut pointer = self.pointer.lock().await;
         pointer.down = true;
         pointer.last = (x, y);
@@ -574,17 +606,17 @@ impl IosBackend {
             x: hid::to_hid(x),
             y: hid::to_hid(y),
         })
-        .await;
+        .await
     }
 
     /// A move that arrives with no contact down is dropped rather than promoted
     /// to a down: the browser binds its move listener inside pointerdown, so a
     /// stray move means we already released and replaying it would start a
     /// phantom drag.
-    async fn pointer_move(&self, x: f64, y: f64) {
+    async fn pointer_move(&self, x: f64, y: f64) -> BackendResult<()> {
         let mut pointer = self.pointer.lock().await;
         if !pointer.down {
-            return;
+            return Ok(());
         }
         pointer.last = (x, y);
         pointer.deadline = Some(Instant::now() + CONTACT_MAX);
@@ -594,10 +626,10 @@ impl IosBackend {
             x: hid::to_hid(x),
             y: hid::to_hid(y),
         })
-        .await;
+        .await
     }
 
-    async fn pointer_up(&self, x: f64, y: f64) {
+    async fn pointer_up(&self, x: f64, y: f64) -> BackendResult<()> {
         let mut pointer = self.pointer.lock().await;
         // Prefer the coordinates that came with the release, falling back to
         // the last sample — releasing at a screen centre would turn every
@@ -615,7 +647,7 @@ impl IosBackend {
             x: hid::to_hid(x),
             y: hid::to_hid(y),
         })
-        .await;
+        .await
     }
 
     /// Auto-lift a contact held with no activity.
@@ -641,11 +673,15 @@ impl IosBackend {
             "contact held >{}s with no update — releasing",
             CONTACT_MAX.as_secs()
         );
-        self.send(Input::Release {
-            x: hid::to_hid(x),
-            y: hid::to_hid(y),
-        })
-        .await;
+        if let Err(err) = self
+            .send(Input::Release {
+                x: hid::to_hid(x),
+                y: hid::to_hid(y),
+            })
+            .await
+        {
+            warn!(%err, "could not lift a stale contact");
+        }
     }
 
     /// Display geometry.
@@ -891,11 +927,15 @@ impl DeviceBackend for IosBackend {
         self.video.clone()
     }
 
+    fn demand(&self) -> Demand {
+        self.demand.clone()
+    }
+
     async fn input(&self, event: InputEvent) -> BackendResult<()> {
         match event {
-            InputEvent::PointerDown { x, y, .. } => self.pointer_down(x, y).await,
-            InputEvent::PointerMove { x, y, .. } => self.pointer_move(x, y).await,
-            InputEvent::PointerUp { x, y, .. } => self.pointer_up(x, y).await,
+            InputEvent::PointerDown { x, y, .. } => self.pointer_down(x, y).await?,
+            InputEvent::PointerMove { x, y, .. } => self.pointer_move(x, y).await?,
+            InputEvent::PointerUp { x, y, .. } => self.pointer_up(x, y).await?,
 
             // Hardware buttons are edge-triggered on the device: it wants a
             // press-and-hold-and-release, not our down/up pair, so only the
@@ -909,11 +949,11 @@ impl DeviceBackend for IosBackend {
                             usage,
                             hold,
                         ))
-                        .await;
+                        .await?;
                     }
                 } else if let Some(usage) = hid::special_key(&key) {
                     if down {
-                        self.send(Input::KeyUsage(usage)).await;
+                        self.send(Input::KeyUsage(usage)).await?;
                     }
                 } else {
                     debug!(key, "no HID mapping for this key");
@@ -922,7 +962,7 @@ impl DeviceBackend for IosBackend {
 
             InputEvent::Text { text } => {
                 for character in text.chars() {
-                    self.send(Input::Character(character)).await;
+                    self.send(Input::Character(character)).await?;
                 }
             }
         }
@@ -1312,6 +1352,14 @@ impl DeviceBackend for IosBackend {
             None => 1,
         };
 
+        // Rotation is HID, so it is demand like any other input: hold the
+        // device up for the whole walk rather than for each step.
+        let _demand = self.demand.lease();
+        if !self.host.wait_media(MEDIA_WAIT).await {
+            return Err(BackendError::Unavailable(
+                "no HID — the device is not streaming and did not come up".into(),
+            ));
+        }
         let Some(input) = self.host.input().await else {
             return Err(BackendError::Unavailable("no device session".into()));
         };

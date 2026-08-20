@@ -32,6 +32,7 @@ use provider_core::backend::{
 use provider_core::ports::{PortLease, PortPool};
 
 use crate::bridge::{DeviceAuthorizer, DeviceServices};
+use provider_core::demand::{Demand, IDLE_GRACE};
 use provider_core::video::{channel, VideoGeometry, VideoHandle, VideoPublisher};
 use tokio::net::TcpStream;
 use tokio::sync::{watch, Mutex};
@@ -145,7 +146,12 @@ pub struct AndroidBackend {
     adb: Adb,
     video: VideoHandle,
     live: Arc<Mutex<Option<Arc<Live>>>>,
+    /// Whether a scrcpy session is up. Not the same as healthy: an idle phone
+    /// has no scrcpy session and is perfectly fine.
     ready: watch::Receiver<bool>,
+    /// Viewers, input and cleanup. scrcpy is gated on this, so a phone with
+    /// nobody watching stops encoding H.264 for no viewer.
+    demand: Demand,
     restart: Arc<tokio::sync::Notify>,
     pointer: Mutex<Pointer>,
     clipboard_sequence: std::sync::atomic::AtomicU64,
@@ -165,6 +171,7 @@ impl AndroidBackend {
         let (ready_tx, ready_rx) = watch::channel(false);
         let live = Arc::new(Mutex::new(None));
         let restart = Arc::new(tokio::sync::Notify::new());
+        let demand = Demand::new();
 
         let backend = Arc::new(Self {
             options: options.clone(),
@@ -173,6 +180,7 @@ impl AndroidBackend {
             video,
             live: live.clone(),
             ready: ready_rx,
+            demand: demand.clone(),
             restart: restart.clone(),
             pointer: Mutex::new(Pointer::default()),
             clipboard_sequence: std::sync::atomic::AtomicU64::new(1),
@@ -185,13 +193,20 @@ impl AndroidBackend {
             publisher,
             live,
             ready: ready_tx,
+            demand,
             restart,
         }));
 
         backend
     }
 
+    /// The live scrcpy session, starting one if the device is idle.
+    ///
+    /// Touching demand here rather than in `input` alone covers every caller
+    /// that needs the control socket — input, clipboard, key events — because
+    /// all of them reach it through this one place.
     async fn live(&self) -> BackendResult<Arc<Live>> {
+        self.demand.touch();
         if !*self.ready.borrow() {
             let mut ready = self.ready.clone();
             let arrived = tokio::time::timeout(SESSION_WAIT, async {
@@ -385,6 +400,10 @@ impl DeviceBackend for AndroidBackend {
 
     fn video(&self) -> VideoHandle {
         self.video.clone()
+    }
+
+    fn demand(&self) -> Demand {
+        self.demand.clone()
     }
 
     async fn input(&self, event: InputEvent) -> BackendResult<()> {
@@ -732,11 +751,23 @@ impl DeviceBackend for AndroidBackend {
             .map(|exposed| exposed.lease.port())
     }
 
+    /// Whether the phone is there — deliberately not whether it is streaming.
+    ///
+    /// scrcpy only runs while something needs it, so keying health off the
+    /// session would drop every idle device out of the pool. When there is no
+    /// session, adb's own device list is the answer.
     async fn is_healthy(&self) -> bool {
         // The health poll is also the only regular tick this backend gets, so
         // it is where a forgotten contact gets lifted.
         self.release_if_stale().await;
-        *self.ready.borrow()
+        if *self.ready.borrow() {
+            return true;
+        }
+        self.adb.devices().await.is_ok_and(|devices| {
+            devices
+                .iter()
+                .any(|device| device.serial == self.options.serial && device.is_usable())
+        })
     }
 
     /// Two adb round trips, or three when app patterns are configured.
@@ -798,37 +829,52 @@ struct Supervisor {
     publisher: VideoPublisher,
     live: Arc<Mutex<Option<Arc<Live>>>>,
     ready: watch::Sender<bool>,
+    demand: Demand,
     restart: Arc<tokio::sync::Notify>,
 }
 
-/// Rebuild the scrcpy session forever.
+/// Why a scrcpy session stopped.
+enum Ended {
+    /// Nothing needs the device any more. Not a fault, so no backoff — the
+    /// next viewer should not wait out a reconnect delay it did not cause.
+    Idle,
+    /// The stream broke, or a restart was asked for. Rebuild after a pause.
+    Broken(anyhow::Error),
+}
+
+/// Run a scrcpy session whenever something needs one.
 ///
 /// The video socket ending *is* the session ending: the server exits with it,
-/// and its control socket is then talking to nothing.
+/// and its control socket is then talking to nothing. Nothing *needing* the
+/// session ends it too, and that case is not a fault — a phone encoding H.264
+/// all day for no viewer is the problem this gate exists to fix.
 async fn supervise(supervisor: Supervisor) {
     close_legacy_tcp_listener(&supervisor.adb, &supervisor.options.serial).await;
 
     loop {
-        if let Err(err) = run_once(&supervisor).await {
+        supervisor.demand.wait_for_demand().await;
+
+        let ended = run_once(&supervisor).await.unwrap_or_else(Ended::Broken);
+
+        // Publish the teardown before anything else, so nothing reads a
+        // control socket that is on its way out.
+        let _ = supervisor.ready.send(false);
+        *supervisor.live.lock().await = None;
+        supervisor.publisher.mark_stopped();
+
+        if let Ended::Broken(err) = ended {
             warn!(
                 serial = %supervisor.options.serial,
                 error = %format!("{err:#}"),
                 "scrcpy session ended; retrying in {}s",
                 RECONNECT_DELAY.as_secs()
             );
+            tokio::time::sleep(RECONNECT_DELAY).await;
         }
-
-        // Publish the teardown before sleeping, so the device reads as
-        // unhealthy for the whole gap rather than only at its end.
-        let _ = supervisor.ready.send(false);
-        *supervisor.live.lock().await = None;
-        supervisor.publisher.mark_stopped();
-
-        tokio::time::sleep(RECONNECT_DELAY).await;
     }
 }
 
-async fn run_once(supervisor: &Supervisor) -> Result<()> {
+async fn run_once(supervisor: &Supervisor) -> Result<Ended> {
     let serial = &supervisor.options.serial;
     let session = ScrcpySession::start(&supervisor.adb, serial, &supervisor.options.scrcpy).await?;
 
@@ -899,13 +945,22 @@ async fn run_once(supervisor: &Supervisor) -> Result<()> {
     };
 
     let outcome = tokio::select! {
-        result = scrcpy::pump_video(video, supervisor.publisher.clone(), geometry) => result,
-        _ = supervisor.restart.notified() => Err(anyhow!("restart requested")),
+        result = scrcpy::pump_video(video, supervisor.publisher.clone(), geometry) => match result {
+            // The stream ending on its own is the server going away, even when
+            // it read cleanly to EOF — there is nothing left to pump.
+            Ok(()) => Ended::Broken(anyhow!("the scrcpy video stream ended")),
+            Err(err) => Ended::Broken(err),
+        },
+        _ = supervisor.restart.notified() => Ended::Broken(anyhow!("restart requested")),
+        _ = supervisor.demand.wait_for_idle(IDLE_GRACE) => {
+            info!(serial = %serial, "nothing needs this device — stopping scrcpy");
+            Ended::Idle
+        }
     };
 
     keyframes.abort();
     announce.abort();
-    outcome
+    Ok(outcome)
 }
 
 /// The display's current rotation, in degrees.

@@ -111,6 +111,7 @@ merely hands to the browser.
 | Coordinator dies mid-session | Streaming continues (provider holds the authorized reservation). Device list goes stale. Reconnect reconciles. |
 | Provider socket drops | Its devices flip to `absent`; its reservations release. |
 | Device unplugged mid-session | Backend reports unhealthy; the UI shows it rather than a frozen frame. |
+| Nobody watching a device | Capture stops after a grace period; the device stays `ready`. The next viewer pays bring-up inside the wait it already tolerates. See [PROVIDER.md](./PROVIDER.md). |
 | Two users reserve at once | Postgres partial unique index picks one winner; the loser gets `CONFLICT`. |
 | Cleanup fails, hangs, or its provider dies | The device lands on `ready` regardless — under the provider's own deadline, or the coordinator's sweep if the provider is gone. Cleanup can never strand a device. |
 

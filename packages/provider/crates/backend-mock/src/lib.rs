@@ -24,6 +24,7 @@ use provider_core::backend::{
     parent_of, AppFilter, AppMetrics, BackendError, CpuTimes, DeviceBackend, DeviceInfo,
     DeviceMetrics, InputEvent, MemoryBytes, ProgressSink, RemoteDebug, Result, ThermalZone,
 };
+use provider_core::demand::{Demand, IDLE_GRACE};
 use provider_core::video::{
     channel, AccessUnit, CodecDescription, VideoGeometry, VideoHandle, VideoPublisher,
 };
@@ -36,6 +37,15 @@ use tracing::{debug, info};
 const FRAME_INTERVAL: Duration = Duration::from_millis(100);
 /// One keyframe every 30 frames, as a real long-GOP encoder would.
 const GOP: u64 = 30;
+
+/// How long an input event waits for capture to come up before giving up.
+///
+/// The mock's HID rides the stream the way iOS's does, so an event that
+/// arrives at an idle device pays for bring-up rather than being dropped.
+const HID_WAIT: Duration = Duration::from_secs(30);
+/// How often the wait above re-checks. Poll rather than a watch so
+/// [`MockState`] stays a plain bag of observable atomics.
+const HID_POLL: Duration = Duration::from_millis(10);
 
 /// A real 1×1 PNG, so a browser that downloads it gets a valid image rather
 /// than a broken one. Serves as both the screenshot and the synthetic photo in
@@ -95,6 +105,10 @@ pub struct MockBackend {
     /// Kept so a rotation can publish the new geometry, the same way a real
     /// backend does when its encoder restarts.
     publisher: VideoPublisher,
+    /// What is asking this device to stream. The synthetic capture loop is
+    /// gated on it exactly as a real backend's is, which is what lets the
+    /// on-demand behaviour be tested with nothing plugged in.
+    demand: Demand,
     /// Everything a test or a UI click can observe.
     pub state: Arc<MockState>,
     /// Origin for every synthetic metric. Deriving them from elapsed time rather
@@ -126,6 +140,18 @@ pub struct MockState {
     pub screen_fault: Mutex<Option<ScreenFault>>,
     /// Answer `clear_app_data` with `Unsupported`, the way iOS does.
     pub no_clear_app_data: AtomicBool,
+    /// Refuse to bring capture up at all, so the HID-needs-a-stream failure is
+    /// reachable without hardware. Same idea as [`MockState::screen_fault`]:
+    /// the synthetic device is where faults are injected.
+    pub no_capture: AtomicBool,
+    /// True while the synthetic encoder is running. A test asserts on this
+    /// rather than on frames, because "stopped" is the absence of frames and
+    /// there is no waiting for something not to arrive.
+    pub streaming: AtomicBool,
+    /// How many times capture has been brought up. A reconnect inside the
+    /// grace window must not advance this — that is the whole point of the
+    /// window.
+    pub stream_starts: AtomicI64,
     adb_port: AtomicU16,
 }
 
@@ -159,13 +185,15 @@ impl MockBackend {
             ..Default::default()
         });
 
+        let demand = Demand::new();
         let backend = Arc::new(Self {
             id: id.into(),
             platform,
             name: name.into(),
             video,
             publisher: publisher.clone(),
-            state,
+            demand: demand.clone(),
+            state: state.clone(),
             started: Instant::now(),
         });
 
@@ -177,7 +205,7 @@ impl MockBackend {
             render_rotation: Some(0),
         });
 
-        tokio::spawn(synthesize(publisher, platform));
+        tokio::spawn(synthesize(publisher, platform, demand, state));
         backend
     }
 
@@ -188,6 +216,30 @@ impl MockBackend {
     /// The write side, so a test can drive a mid-session codec change.
     pub fn publisher(&self) -> VideoPublisher {
         self.publisher.clone()
+    }
+
+    /// The demand side, so a test can play the part of a viewer.
+    pub fn demand_handle(&self) -> Demand {
+        self.demand.clone()
+    }
+
+    /// Waits for capture, the way a real backend's HID surfaces do.
+    ///
+    /// iOS's HID authenticates against the live media stream and Android's
+    /// input goes down scrcpy's control socket, so on both of them "the device
+    /// is not streaming" means "there is nothing to press with". The mock
+    /// reproduces that, which is what makes the cleanup-with-no-viewer path
+    /// testable — and what makes a device that will not come up fail loudly
+    /// instead of swallowing the report.
+    async fn hid(&self) -> Result<()> {
+        self.demand.touch();
+        tokio::time::timeout(HID_WAIT, async {
+            while !self.state.streaming.load(Ordering::Relaxed) {
+                tokio::time::sleep(HID_POLL).await;
+            }
+        })
+        .await
+        .map_err(|_| BackendError::Unavailable("the device is not streaming".into()))
     }
 
     /// Unrotated panel dimensions.
@@ -252,12 +304,46 @@ impl MockBackend {
     }
 }
 
+/// Runs capture whenever something needs it, and stops when nothing does.
+///
+/// The same shape as both real backends: wait for the 0→1 edge, stream, and
+/// tear down once the count has been 0 for a whole [`IDLE_GRACE`]. A device
+/// that nobody is watching produces no frames at all.
+async fn synthesize(
+    publisher: VideoPublisher,
+    platform: Platform,
+    demand: Demand,
+    state: Arc<MockState>,
+) {
+    loop {
+        demand.wait_for_demand().await;
+
+        let refuses = state.no_capture.load(Ordering::Relaxed);
+        if !refuses {
+            state.stream_starts.fetch_add(1, Ordering::Relaxed);
+            state.streaming.store(true, Ordering::Relaxed);
+        }
+
+        tokio::select! {
+            // A device that refuses to capture still has to wait out the
+            // window, or the loop would spin on demand it never satisfies.
+            _ = stream(&publisher, platform), if !refuses => {}
+            _ = demand.wait_for_idle(IDLE_GRACE) => {}
+        }
+
+        state.streaming.store(false, Ordering::Relaxed);
+        // Clears the codec too, so a viewer arriving at a stopped device waits
+        // for bring-up rather than decoding against stale parameter sets.
+        publisher.mark_stopped();
+    }
+}
+
 /// Produces a stream-shaped sequence of access units.
 ///
 /// Emits a keyframe on request and at each GOP boundary, deltas in between.
 /// The bytes are filler; the cadence and the key/delta pattern are the parts
 /// the session server depends on.
-async fn synthesize(publisher: VideoPublisher, platform: Platform) {
+async fn stream(publisher: &VideoPublisher, platform: Platform) {
     let codec = match platform {
         Platform::Ios => CodecDescription {
             codec: "hev1.1.6.L93.B0".into(),
@@ -415,7 +501,15 @@ impl DeviceBackend for MockBackend {
         self.video.clone()
     }
 
+    fn demand(&self) -> Demand {
+        self.demand.clone()
+    }
+
     async fn input(&self, event: InputEvent) -> Result<()> {
+        // Input is demand: a headless caller driving a device nobody is
+        // watching still needs it up, and pays for bring-up rather than
+        // having the event dropped.
+        self.hid().await?;
         debug!(device = %self.id, ?event, "mock input");
         self.state.events.lock().await.push(event);
         Ok(())
@@ -498,6 +592,9 @@ impl DeviceBackend for MockBackend {
             Some(ScreenFault::Hangs) => std::future::pending::<()>().await,
             None => {}
         }
+        // Home is a HID press, so this is where a device that is not streaming
+        // fails — the case cleanup used to report as a success.
+        self.hid().await?;
         self.rotate(0).await?;
         *self.state.clipboard.lock().await = None;
         Ok(())

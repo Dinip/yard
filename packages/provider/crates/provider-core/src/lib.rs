@@ -16,6 +16,7 @@ pub mod backend;
 pub mod cleanup;
 pub mod config;
 pub mod control;
+pub mod demand;
 pub mod metrics;
 pub mod origins;
 pub mod ports;
@@ -30,6 +31,7 @@ pub use backend::{
 };
 pub use cleanup::CleanupReport;
 pub use config::{BackendKind, Config, DeviceConfig, MetricsConfig};
+pub use demand::{Demand, DemandLease, IDLE_GRACE};
 pub use metrics::{MetricsCache, MetricsState};
 pub use origins::WebOrigins;
 pub use session::{Authorization, SessionRegistry};

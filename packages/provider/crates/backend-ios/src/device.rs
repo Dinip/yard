@@ -1,23 +1,24 @@
 //! The device session: the root-free RSD tunnel, the media stream, and HID.
 //!
-//! Ported from `stf-ios-provider/src/device/mod.rs`. The supervision shape is
-//! unchanged — one task rebuilds tunnel, media and HID together, because they
-//! are not independent — but readiness now feeds `DeviceBackend::is_healthy`
-//! instead of STF's `TemporarilyUnavailable`.
+//! Ported from `stf-ios-provider/src/device/mod.rs`, with one departure: the
+//! tunnel and the capture session no longer live or die together.
 //!
 //! usbmuxd is normally the host's own socket. `USBMUXD_SOCKET_ADDRESS` exists
 //! for the one case where it cannot be: a provider container on macOS, where
 //! Docker passes neither USB nor unix sockets through.
 //!
-//! One supervisor task rebuilds the whole session forever. Everything below the
-//! tunnel is torn down and recreated together, because the pieces are not
-//! independent: the HID surfaces authenticate against the live media stream, so
-//! a media restart invalidates them, and a tunnel drop invalidates everything.
+//! One supervisor task rebuilds the tunnel forever, and inside it a second loop
+//! brings capture up and down as demand comes and goes. Media and HID stay
+//! together within that inner loop, because the HID surfaces authenticate
+//! against the live media stream; the tunnel outlives both, because health,
+//! identity, battery and the file and app services all ride on it.
 //!
-//! [`DeviceHost::is_ready`] tracks whether a session is up. The supervisor
-//! polls it through `is_healthy`, so a device that is rebooting or unplugged is
-//! reported `unhealthy` upstream rather than silently accepting input into a
-//! void.
+//! That split is the whole point: an unreserved iPhone would otherwise run its
+//! hardware encoder all day for nobody. [`DeviceHost::is_ready`] means *the
+//! tunnel is up* and nothing more, so a device that has stopped streaming
+//! because no one is watching stays `ready` in the pool. Whether capture is
+//! running is [`DeviceHost::wait_media`]'s question, and only the video and
+//! input paths ask it.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -31,6 +32,7 @@ use idevice::rsd::RsdHandshake;
 use idevice::tcp::handle::AdapterHandle;
 use idevice::usbmuxd::{Connection, UsbmuxdAddr, UsbmuxdDevice};
 use idevice::{IdeviceService as _, ReadWrite, RsdService};
+use provider_core::demand::{Demand, IDLE_GRACE};
 use provider_core::video::VideoPublisher;
 use tokio::sync::{watch, Mutex};
 use tokio::time::timeout;
@@ -74,6 +76,8 @@ pub struct Session {
 pub struct DeviceHost {
     options: IosOptions,
     ready: watch::Receiver<bool>,
+    /// Media and HID, which come and go with demand under a tunnel that stays.
+    media_ready: watch::Receiver<bool>,
     session: Arc<Mutex<Option<Session>>>,
     generation: Arc<AtomicU64>,
 
@@ -82,8 +86,14 @@ pub struct DeviceHost {
 
 impl DeviceHost {
     /// Start the supervisor. It runs until the process exits.
-    pub fn spawn(options: IosOptions, publisher: VideoPublisher, geometry: Geometry) -> Self {
+    pub fn spawn(
+        options: IosOptions,
+        publisher: VideoPublisher,
+        geometry: Geometry,
+        demand: Demand,
+    ) -> Self {
         let (ready_tx, ready_rx) = watch::channel(false);
+        let (media_ready_tx, media_ready_rx) = watch::channel(false);
         let session = Arc::new(Mutex::new(None));
         let input = Arc::new(Mutex::new(None));
         let generation = Arc::new(AtomicU64::new(0));
@@ -91,6 +101,7 @@ impl DeviceHost {
         let host = Self {
             options: options.clone(),
             ready: ready_rx,
+            media_ready: media_ready_rx,
             session: session.clone(),
             generation: generation.clone(),
             input: input.clone(),
@@ -100,16 +111,23 @@ impl DeviceHost {
             options,
             geometry,
             ready: ready_tx,
+            media_ready: media_ready_tx,
             session,
             generation,
             publisher,
             input,
+            demand,
             ddi_failed_at: None,
         }));
 
         host
     }
 
+    /// Whether the tunnel is up — *not* whether the device is streaming.
+    ///
+    /// This is what `is_healthy` reports upstream, and it deliberately says
+    /// nothing about capture: a device sitting idle with its encoder off is a
+    /// perfectly good device, and reporting otherwise would empty the pool.
     pub fn is_ready(&self) -> bool {
         *self.ready.borrow()
     }
@@ -144,22 +162,18 @@ impl DeviceHost {
         let _ = adapter.close().await;
     }
 
-    /// Wait for a session to come up, up to `wait`.
+    /// Wait for the tunnel to come up, up to `wait`.
     pub async fn wait_ready(&self, wait: Duration) -> bool {
-        let mut ready = self.ready.clone();
-        if *ready.borrow() {
-            return true;
-        }
-        timeout(wait, async {
-            while ready.changed().await.is_ok() {
-                if *ready.borrow() {
-                    return true;
-                }
-            }
-            false
-        })
-        .await
-        .unwrap_or(false)
+        wait_for(self.ready.clone(), wait).await
+    }
+
+    /// Wait for media and HID, up to `wait`.
+    ///
+    /// The caller is expected to have taken a [`Demand`] lease — or touched it
+    /// — first: capture only starts because something asked for it, and this
+    /// is the wait for that bring-up.
+    pub async fn wait_media(&self, wait: Duration) -> bool {
+        wait_for(self.media_ready.clone(), wait).await
     }
 
     /// Identity values, read over plain lockdown rather than the tunnel.
@@ -213,6 +227,22 @@ impl DeviceHost {
         }
         Ok(info)
     }
+}
+
+async fn wait_for(mut flag: watch::Receiver<bool>, wait: Duration) -> bool {
+    if *flag.borrow() {
+        return true;
+    }
+    timeout(wait, async {
+        while flag.changed().await.is_ok() {
+            if *flag.borrow() {
+                return true;
+            }
+        }
+        false
+    })
+    .await
+    .unwrap_or(false)
 }
 
 /// Where usbmuxd is, honouring `USBMUXD_SOCKET_ADDRESS`.
@@ -383,10 +413,13 @@ struct Supervisor {
     options: IosOptions,
     geometry: Geometry,
     ready: watch::Sender<bool>,
+    media_ready: watch::Sender<bool>,
     session: Arc<Mutex<Option<Session>>>,
     generation: Arc<AtomicU64>,
     publisher: VideoPublisher,
     input: Arc<Mutex<Option<hid::InputHandle>>>,
+    /// Viewers, input and cleanup. Capture follows this and nothing else.
+    demand: Demand,
     /// When the last DDI mount failed, so a device that cannot mount at all is
     /// not re-personalised against Apple's servers every `RECONNECT_DELAY`.
     /// Owned by the supervisor loop, hence `&mut` rather than a lock.
@@ -409,6 +442,7 @@ async fn supervise(mut supervisor: Supervisor) {
         // Publish the teardown before sleeping, so the provider marks the
         // device unavailable for the whole gap rather than only at its end.
         let _ = supervisor.ready.send(false);
+        let _ = supervisor.media_ready.send(false);
         *supervisor.session.lock().await = None;
         *supervisor.input.lock().await = None;
         supervisor.publisher.mark_stopped();
@@ -444,40 +478,92 @@ async fn run_once(supervisor: &mut Supervisor) -> Result<()> {
         .map_err(|err| anyhow!("RSD handshake: {err:?}"))?;
 
     let generation = supervisor.generation.fetch_add(1, Ordering::Relaxed) + 1;
+
+    *supervisor.session.lock().await = Some(Session {
+        adapter: adapter.clone(),
+        handshake: handshake.clone(),
+    });
+    let _ = supervisor.ready.send(true);
     info!(generation, "tunnel up");
 
+    // The tunnel alone is enough to be `ready`. Capture costs the device its
+    // hardware encoder, so it waits to be asked for and stops being paid for
+    // as soon as nothing is asking.
+    let outcome = loop {
+        supervisor.demand.wait_for_demand().await;
+        if let Err(err) = run_capture(supervisor, &mut adapter, &handshake, generation).await {
+            break Err(err);
+        }
+    };
+
+    // Dropping the adapter shuts the userspace stack down; the next iteration
+    // builds a fresh one.
+    let _ = adapter.close().await;
+    outcome
+}
+
+/// One capture session: media, HID, and the idle window that ends them.
+///
+/// `Ok(())` means nothing needs the device any more, which is not a fault and
+/// leaves the tunnel alone. An error means media or HID broke, which takes the
+/// whole session down — they authenticate against each other and cannot be
+/// rebuilt independently.
+async fn run_capture(
+    supervisor: &Supervisor,
+    adapter: &mut AdapterHandle,
+    handshake: &RsdHandshake,
+    generation: u64,
+) -> Result<()> {
+    info!(generation, "something needs this device — starting capture");
+
     // Media first: the HID surfaces authenticate against the live stream.
-    let media = tokio::spawn(media::run(
+    let mut media = tokio::spawn(media::run(
         adapter.clone(),
         handshake.clone(),
-        options.clone(),
+        supervisor.options.clone(),
         supervisor.publisher.clone(),
         supervisor.geometry.clone(),
     ));
 
     tokio::time::sleep(HID_SETTLE).await;
 
-    let clients = hid::HidClients::connect(&mut adapter, &handshake).await?;
+    let clients = match hid::HidClients::connect(adapter, handshake).await {
+        Ok(clients) => clients,
+        Err(err) => {
+            media.abort();
+            return Err(err);
+        }
+    };
     let (input_handle, inputs) = hid::channel();
-    let hid_task = tokio::spawn(clients.run(inputs));
+    let mut hid_task = tokio::spawn(clients.run(inputs));
 
-    *supervisor.session.lock().await = Some(Session {
-        adapter: adapter.clone(),
-        handshake: handshake.clone(),
-    });
     *supervisor.input.lock().await = Some(input_handle);
-    let _ = supervisor.ready.send(true);
-    info!(generation, "device session ready");
+    let _ = supervisor.media_ready.send(true);
+    info!(generation, "capture ready");
 
-    // Either half failing ends the session.
+    // Either half failing ends the session; nothing needing the device ends
+    // only the capture.
     let outcome = tokio::select! {
-        result = media => result.map_err(|err| anyhow!("media task panicked: {err}"))?,
-        result = hid_task => result.map_err(|err| anyhow!("HID task panicked: {err}"))?,
+        result = &mut media => result.map_err(|err| anyhow!("media task panicked: {err}"))?,
+        result = &mut hid_task => result.map_err(|err| anyhow!("HID task panicked: {err}"))?,
+        _ = supervisor.demand.wait_for_idle(IDLE_GRACE) => {
+            info!(generation, "nothing needs this device — stopping capture");
+            Ok(())
+        }
     };
 
-    // Dropping the adapter shuts the userspace stack down; the next iteration
-    // builds a fresh one.
-    let _ = adapter.close().await;
+    // Withdraw the input handle before tearing down, so a report queued now is
+    // refused rather than dropped into a HID task that is going away.
+    *supervisor.input.lock().await = None;
+    let _ = supervisor.media_ready.send(false);
+
+    // `media::run` has no shutdown signal — the whole file is a stream loop —
+    // so the abort *is* the stop: it drops the display-service connection and
+    // the RTP sockets, which is what ends the mirror session on the device.
+    media.abort();
+    hid_task.abort();
+    supervisor.publisher.mark_stopped();
+
     outcome
 }
 
@@ -555,6 +641,31 @@ fn assert_supported(product_version: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The branch behind "no HID — the device is not streaming": a wait that
+    /// runs out has to answer `false`, because the caller turns that into an
+    /// error rather than dropping the report.
+    #[tokio::test(start_paused = true)]
+    async fn a_readiness_wait_that_runs_out_says_so() {
+        let (tx, rx) = watch::channel(false);
+        assert!(!wait_for(rx.clone(), Duration::from_secs(30)).await);
+
+        let _ = tx.send(true);
+        assert!(wait_for(rx, Duration::from_secs(30)).await);
+    }
+
+    /// Bring-up arriving inside the wait is the ordinary case for the first
+    /// input event after an idle period.
+    #[tokio::test(start_paused = true)]
+    async fn a_readiness_wait_resolves_when_capture_comes_up() {
+        let (tx, rx) = watch::channel(false);
+        let waiting = tokio::spawn(wait_for(rx, Duration::from_secs(30)));
+
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let _ = tx.send(true);
+
+        assert!(waiting.await.unwrap());
+    }
 
     #[test]
     fn rejects_versions_below_the_tunnel_floor() {
