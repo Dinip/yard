@@ -512,6 +512,15 @@ nobody is asked anything. Otherwise we issue a fresh token, which makes the
 client try its next key and eventually offer a public key instead. We then ask
 the holder, through `adb.auth.request`, and park for 120 seconds.
 
+**A denied key is refused locally from then on.** The `AdbAuthority` remembers
+the fingerprints the holder said no to and answers the next attempt itself,
+without a second `adb.auth.request`. The client's adb server redials a transport
+it was told to connect to, so one *no* would otherwise become a prompt every few
+seconds for the rest of the session. The memory lives on the authority, which is
+built per exposure, so it lasts exactly as long as the reservation that made the
+decision — a new session asks again. A timeout is deliberately not a denial:
+nobody was looking, and the next connect should get to ask.
+
 **We keep every `(token, signature)` pair the connection produced** and accept
 an offered key only if one of them verifies against it. `adbd` skips this proof
 of possession because it has somebody standing at the phone to tap "allow"; we
