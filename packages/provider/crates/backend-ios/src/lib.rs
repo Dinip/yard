@@ -394,6 +394,43 @@ impl Geometry {
     }
 }
 
+/// `mobilegestalt` answered, and had no geometry in it.
+///
+/// A type rather than a string because it is the one display failure worth
+/// remembering: from iOS 26 the screen keys are deprecated and the answer can
+/// never change, while a relay that would not connect is a phone to ask again.
+#[derive(Debug)]
+struct GestaltDeprecated;
+
+impl std::fmt::Display for GestaltDeprecated {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("mobilegestalt reported no screen dimensions")
+    }
+}
+
+impl std::error::Error for GestaltDeprecated {}
+
+/// The gate on the `mobilegestalt` fallback.
+///
+/// Split out from [`IosBackend`] so "ask once, then stop" is testable without a
+/// phone on the other end.
+#[derive(Default)]
+struct GestaltProbe {
+    gave_up: AtomicBool,
+}
+
+impl GestaltProbe {
+    fn worth_asking(&self) -> bool {
+        !self.gave_up.load(Ordering::Relaxed)
+    }
+
+    fn record(&self, err: &anyhow::Error) {
+        if err.downcast_ref::<GestaltDeprecated>().is_some() {
+            self.gave_up.store(true, Ordering::Relaxed);
+        }
+    }
+}
+
 pub struct IosBackend {
     options: IosOptions,
     name: Option<String>,
@@ -415,6 +452,8 @@ pub struct IosBackend {
     /// Viewers, input and cleanup. Capture is gated on this, so an idle iPhone
     /// stops encoding instead of running hot on a desk.
     demand: Demand,
+    /// Whether the `mobilegestalt` display fallback is still worth a round trip.
+    gestalt: GestaltProbe,
 }
 
 /// What the gas gauge tells us about the battery.
@@ -448,6 +487,7 @@ impl IosBackend {
             pointer: Mutex::new(Pointer::default()),
             battery: Mutex::new(None),
             demand,
+            gestalt: GestaltProbe::default(),
         })
     }
 
@@ -709,9 +749,19 @@ impl IosBackend {
                 render_rotation: rotation.map(render_rotation_for),
             });
         }
+        // The stream's SPS is gone for as long as capture is down, which since
+        // capture became on-demand is most of a device's life — so without this
+        // gate a deprecated `mobilegestalt` is re-asked on every 15s poll,
+        // spending a lockdown session and a diagnostics-relay spawn on the
+        // phone each time for an answer that cannot change.
+        if !self.gestalt.worth_asking() {
+            return None;
+        }
+
         match self.try_display().await {
             Ok(display) => Some(display),
             Err(err) => {
+                self.gestalt.record(&err);
                 debug!(%err, "display geometry unavailable — reporting unknown");
                 None
             }
@@ -844,7 +894,7 @@ impl IosBackend {
 
         let (width, height) = (number("MainScreenWidth"), number("MainScreenHeight"));
         if width == 0.0 || height == 0.0 {
-            return Err(anyhow!("mobilegestalt reported no screen dimensions"));
+            return Err(GestaltDeprecated.into());
         }
         Ok(Display {
             width: width as i64,
@@ -1433,6 +1483,24 @@ impl DeviceBackend for IosBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// On iOS 26+ `mobilegestalt` answers `MobileGestaltDeprecated`, and since
+    /// capture became on-demand there is no SPS to fall back from while a
+    /// device sits idle — so this fallback runs on every 15s poll. Asking a
+    /// second time costs a lockdown session and a diagnostics-relay spawn on
+    /// the phone for an answer that cannot have changed.
+    #[test]
+    fn a_deprecated_mobilegestalt_is_only_asked_once() {
+        let probe = GestaltProbe::default();
+        assert!(probe.worth_asking());
+
+        // A phone that was merely unreachable must still be asked again.
+        probe.record(&anyhow!("diagnostics relay connect: connection refused"));
+        assert!(probe.worth_asking());
+
+        probe.record(&anyhow::Error::new(GestaltDeprecated));
+        assert!(!probe.worth_asking());
+    }
 
     #[test]
     fn the_two_file_trees_stay_apart_but_navigate_as_one() {

@@ -26,5 +26,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 tracing-subscriber.workspace = true
+# Paused time, for the readiness-wait tests.
+tokio = { workspace = true, features = ["test-util"] }
 # A throwaway mirror for the DDI cache tests.
 axum.workspace = true

@@ -1681,11 +1681,26 @@ provider protecting its own devices when the coordinator is unreachable.
 **Reservation as the trigger** is simplest and has no window to tune, but a
 device left reserved all afternoon keeps encoding — which is most of the heat.
 
-### Not yet verified on hardware
+### First run on hardware
 
-Everything above is tested against `backend-mock`. What a real device does when
-the media task is aborted — how promptly iOS ends the mirror session, and what
-bring-up costs the first viewer — has not been measured.
+An iPhone 14 on iOS 27 sat idle for nine minutes on the farm host: tunnel up,
+capture never started, device `ready` the whole time. The gating works.
+
+It surfaced one thing the mock could not. `IosBackend::display` reads the
+stream's SPS and falls back to `mobilegestalt` when there is none — and with
+capture down there is never one, so the fallback ran on every 15s poll. On iOS
+26+ `mobilegestalt` answers `MobileGestaltDeprecated`, so each poll spent a
+lockdown session and a diagnostics-relay spawn on the phone for an answer that
+cannot change. The probe is now asked once; a relay that would not connect
+still gets asked again, because that is a phone that might come back.
+
+Still unmeasured: how promptly iOS ends the mirror session once the media task
+is aborted, and what bring-up costs the first viewer — which is what
+[`IDLE_GRACE`](../packages/provider/crates/provider-core/src/demand.rs) is
+still guessing at.
+
+Also seen, and not caused by this work: the provider holds ~6.5% of a core with
+nothing happening, which is the idle tunnel's userspace TCP stack polling.
 
 ---
 
