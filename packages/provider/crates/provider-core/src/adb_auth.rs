@@ -344,7 +344,10 @@ mod tests {
         assert!(asking.await.unwrap().is_none(), "a denial refuses");
 
         assert!(
-            authority.approve("SHA256:abc", "QAAAA", None).await.is_none(),
+            authority
+                .approve("SHA256:abc", "QAAAA", None)
+                .await
+                .is_none(),
             "the retry is refused"
         );
         assert!(
