@@ -147,6 +147,34 @@ polls each device every 15s, pushing an update only when something actually
 changed. `busy` is the coordinator's word, not the provider's — a reserved
 device stays reserved across a poll.
 
+The poll is also where **idle screens are parked**. A device that is `ready`
+with no authorized session gets `set_screen_awake(false)` once; `session.authorize`
+wakes it again. Both halves are driven from state rather than hung off the end
+of a session, because a release is not the only way a device goes idle — a
+provider starting up, a device coming back healthy, and the cleanup run after a
+release, whose `reset_screen` presses Home and lights the panel straight back
+up, all have to end with a dark screen too. The wake is on `authorize` and not
+on the poll because it has to land before the holder's first frame, and it is
+gated on having parked the device ourselves, so a renew — which re-authorizes
+the same reservation every renewal interval — cannot yank a working user back
+to their home screen.
+
+Set `blank_idle_screens: false` in `provider.yaml` for a wall of devices meant
+to stay lit.
+
+**Android** is exact: scrcpy's `SET_DISPLAY_POWER` sets the display's power
+directly while the stream keeps running, and the server restores it on exit, so
+a provider that dies never leaves a phone looking dead. Waking adds
+`wm dismiss-keyguard` and a Home press.
+
+**iOS has no read of the display's power state**, so parking it is a side-button
+press against the provider's own belief about the screen — which the supervisor
+drops whenever anything else could have touched it. The gap that leaves is a
+human walking up and pressing the side button on a shelved device: the next park
+then wakes it instead, and it stays awake until that device is reserved and
+released again. That is the state every device is in today, so it degrades to
+the status quo rather than to something worse.
+
 ### Metrics
 
 Device CPU, memory, temperature and per-app usage, for Prometheus. Off unless
@@ -569,6 +597,7 @@ pub trait DeviceBackend: Send + Sync + 'static {
     async fn reboot(&self) -> Result<()>;
     async fn remote_debug(&self) -> Result<RemoteDebug>;      // android only
     async fn restart(&self) -> Result<()>;
+    async fn set_screen_awake(&self, on: bool) -> Result<()>;
     async fn is_healthy(&self) -> bool;
     async fn clear_app_data(&self, app_id: &str) -> Result<()>;   // cleanup
     async fn reset_screen(&self) -> Result<()>;                   // cleanup
@@ -590,6 +619,12 @@ the orchestrator treats as "not applicable here" rather than a failure — iOS h
 no `pm clear`. The paths `wipe_paths` acts on come from the device's own
 `cleanup_paths` in `provider.yaml`, guarded against `/system` and friends at
 config load. See [CLEANUP.md](CLEANUP.md).
+
+`set_screen_awake` is absolute rather than a toggle: callers ask for the state
+they want, and a backend that can only toggle is responsible for getting there.
+`true` means more than a lit panel — it must leave the device at a usable home
+screen, because a woken phone sitting on its lock screen is not a device anybody
+can test on, and what dismisses that differs per platform.
 
 `files_root` is what a backend says about its own reach, rather than the web app
 branching on a platform, and a backend that answers `None` makes `/files` a 501.

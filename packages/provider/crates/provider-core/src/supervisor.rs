@@ -6,7 +6,7 @@
 //! containers, N ZMQ connections and N config files collapse into one.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -88,6 +88,12 @@ pub struct Device {
     /// needs no knowledge of metrics at all.
     installs_ok: AtomicU64,
     installs_failed: AtomicU64,
+    /// True while we believe we have parked this device's screen.
+    ///
+    /// Belief, not fact: it is cleared whenever anything else could have
+    /// touched the display — a cleanup run presses Home, a reboot comes back
+    /// lit — so the next poll re-parks rather than trusting a stale read.
+    screen_blanked: AtomicBool,
 }
 
 impl Device {
@@ -190,6 +196,8 @@ pub struct Supervisor {
     control: RwLock<Option<ControlSender>>,
     /// `adb connect` attempts parked on an answer from the coordinator.
     adb_auth: AdbAuthWaiters,
+    /// Whether idle devices have their screens parked. See [`Supervisor::reconcile_screen`].
+    blank_idle_screens: bool,
 }
 
 impl Supervisor {
@@ -199,7 +207,13 @@ impl Supervisor {
             sessions,
             control: RwLock::new(None),
             adb_auth: AdbAuthWaiters::new(),
+            blank_idle_screens: true,
         }
+    }
+
+    /// Turns idle-screen parking off, for a wall of devices meant to stay lit.
+    pub fn set_blank_idle_screens(&mut self, on: bool) {
+        self.blank_idle_screens = on;
     }
 
     pub fn add(&mut self, id: String, backend: Arc<dyn DeviceBackend>) {
@@ -224,6 +238,7 @@ impl Supervisor {
                 baseline: RwLock::new(None),
                 installs_ok: AtomicU64::new(0),
                 installs_failed: AtomicU64::new(0),
+                screen_blanked: AtomicBool::new(false),
             }),
         );
     }
@@ -378,6 +393,75 @@ impl Supervisor {
                 device: device.snapshot().await,
             })
             .await;
+        }
+
+        self.reconcile_screen(device, next_status).await;
+    }
+
+    /// Parks the screen of a device nobody is using, and only that device.
+    ///
+    /// Driven from the poll loop rather than hung off `session.revoke`,
+    /// because the end of a session is not the only way a device goes idle: a
+    /// provider restart, a device coming back healthy, and the cleanup run
+    /// that follows a release — whose `reset_screen` presses Home and lights
+    /// the panel straight back up — all land here too. One rule that reads the
+    /// current state cannot leave a device lit the way four hooks that each
+    /// have to remember to would.
+    ///
+    /// The waking half is not here: it belongs to `session.authorize`, which
+    /// must take effect before the holder's first frame rather than up to a
+    /// poll interval later.
+    async fn reconcile_screen(&self, device: &Arc<Device>, status: DeviceStatus) {
+        if !self.blank_idle_screens {
+            return;
+        }
+
+        // `ready` and no session is the whole definition of idle. A reserved
+        // device is `ready` too — `busy` is the coordinator's word — so the
+        // session registry is what separates them.
+        let idle =
+            status == DeviceStatus::Ready && self.sessions.current(&device.id).await.is_none();
+        if !idle {
+            // Anything that is not a plain reserved device — cleaning,
+            // rebooting, unhealthy, absent — may have lit the screen behind
+            // our back, so stop claiming we parked it.
+            if status != DeviceStatus::Ready {
+                device.screen_blanked.store(false, Ordering::Relaxed);
+            }
+            return;
+        }
+
+        if device.screen_blanked.load(Ordering::Relaxed) {
+            return;
+        }
+
+        match device.backend.set_screen_awake(false).await {
+            Ok(()) => {
+                device.screen_blanked.store(true, Ordering::Relaxed);
+                info!(device = %device.id, "parked an idle screen");
+            }
+            // Latched rather than retried every fifteen seconds: a backend
+            // that cannot reach the display will not learn to.
+            Err(BackendError::Unsupported(_)) => {
+                device.screen_blanked.store(true, Ordering::Relaxed);
+            }
+            Err(err) => warn!(device = %device.id, %err, "could not park the screen"),
+        }
+    }
+
+    /// Brings a device back for the user who just reserved it.
+    ///
+    /// Gated on having parked it ourselves, which is also what makes a renew
+    /// safe: renewing re-authorizes the same reservation, and waking on every
+    /// authorize would yank a working user back to their home screen every
+    /// renewal interval.
+    async fn wake_screen(&self, device: &Arc<Device>) {
+        if !device.screen_blanked.swap(false, Ordering::Relaxed) {
+            return;
+        }
+        match device.backend.set_screen_awake(true).await {
+            Ok(()) | Err(BackendError::Unsupported(_)) => {}
+            Err(err) => warn!(device = %device.id, %err, "could not wake the screen"),
         }
     }
 
@@ -537,6 +621,7 @@ impl CommandHandler for Supervisor {
             } => {
                 let device = self.require(&device_id)?;
                 self.snapshot_baseline(&device, &reservation_id).await;
+                self.wake_screen(&device).await;
                 self.sessions
                     .authorize(
                         &device_id,

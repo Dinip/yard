@@ -53,6 +53,12 @@ ddi:
   cache_dir: /var/lib/farm/ddi
   base_url: https://raw.githubusercontent.com/doronz88/DeveloperDiskImage/main/PersonalizedImages/Xcode_iOS_DDI_Personalized
 
+# Turn an idle device's screen off until somebody reserves it, and wake it back
+# to a home screen when they do. On by default; a shelf of phones rendering
+# their lock screens all day is heat nobody asked for, and iOS gets warm enough
+# to matter. Set false for a wall meant to stay visibly lit.
+blank_idle_screens: true
+
 # Prometheus metrics. Optional — an absent block means off, but writing the block
 # and omitting `enabled` means on, because writing it at all is the intent.
 #

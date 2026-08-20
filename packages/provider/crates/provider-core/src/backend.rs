@@ -334,6 +334,17 @@ pub trait DeviceBackend: Send + Sync + 'static {
     /// Tears the device session down and brings it back up.
     async fn restart(&self) -> Result<()>;
 
+    /// Turns the display off or on without disturbing the session.
+    ///
+    /// Absolute, not a toggle: callers ask for the state they want and a
+    /// backend that can only toggle is responsible for getting there. This is
+    /// what lets an idle device sit dark — a phone nobody has reserved is
+    /// still a phone burning its panel and its GPU, and on iOS that is enough
+    /// to cook a device sat on a shelf.
+    async fn set_screen_awake(&self, _on: bool) -> Result<()> {
+        Err(BackendError::Unsupported("setting screen power"))
+    }
+
     // ── resetting a device between users ───────────────────────────────────
     //
     // Narrow primitives rather than one `cleanup()` per backend: the ordering,
