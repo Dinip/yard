@@ -1537,7 +1537,8 @@ identity rather than an enrollment.
 | `adb-bridge`: service demux | ✅ | `adb-bridge/src/bridge.rs` |
 | Android backend swaps the splice for the bridge | ✅ | `backend-android/src/{bridge,lib}.rs` |
 | Key management + approval in tRPC | ✅ | `coordinator/src/{lib/adb-*,trpc/routers}` |
-| Settings key list, holder approval card | ✅ | `web/.../settings.tsx`, `devices.$deviceId.tsx` |
+| Settings key list, holder approval dialog | ✅ | `web/.../settings.tsx`, `devices.$deviceId.tsx` |
+| A denied key is not asked about again this session | ✅ | `provider-core/src/adb_auth.rs` |
 | The bridge is withdrawn when the session ends | ✅ | `provider-core/src/supervisor.rs`, `coordinator/src/lib/reservations.ts` |
 
 **The fingerprint is derived twice**, in TypeScript and in Rust, and if the two

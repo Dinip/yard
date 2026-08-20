@@ -7,7 +7,7 @@
 //! that carried the question, so holding the connection open past that would
 //! keep a developer looking at a hung `adb connect` for two minutes.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -105,12 +105,18 @@ impl AdbAuthWaiters {
 /// reservation's authorization. It carries clones — the session registry, the
 /// waiter map, the upstream sender — so it needs no reference back to the
 /// supervisor.
+///
+/// Its one piece of own state is the set of denied fingerprints, and that
+/// lifetime is the point: an exposure belongs to a reservation, so a denial
+/// lasts exactly as long as the session that made it and the next holder
+/// decides for themselves.
 pub struct AdbAuthority {
     device_id: String,
     sessions: SessionRegistry,
     waiters: AdbAuthWaiters,
     control: ControlSender,
     activity: ActivityThrottle,
+    denied: std::sync::Mutex<HashSet<String>>,
 }
 
 impl AdbAuthority {
@@ -126,6 +132,7 @@ impl AdbAuthority {
             waiters,
             control,
             activity: ActivityThrottle::default(),
+            denied: std::sync::Mutex::new(HashSet::new()),
         }
     }
 
@@ -147,12 +154,23 @@ impl AdbAuthority {
     /// Returns the owning user id on approval. A refusal, a timeout and a lost
     /// control plane are all `None`: from the connection's point of view they
     /// are the same answer.
+    ///
+    /// A key the holder has already denied is refused here without asking
+    /// again. The client's adb server redials a transport it has been told to
+    /// connect to, so without this one *no* becomes a prompt every few seconds
+    /// until the reservation ends. Only an explicit denial counts: a timeout
+    /// means nobody was looking, and being asked again is what should happen.
     pub async fn approve(
         &self,
         fingerprint: &str,
         public_key: &str,
         comment: Option<&str>,
     ) -> Option<String> {
+        if self.is_denied(fingerprint) {
+            debug!(fingerprint, "refusing a key this session already denied");
+            return None;
+        }
+
         let request_id = uuid::Uuid::new_v4().to_string();
         let ticket = self.waiters.register(&request_id).await;
 
@@ -165,7 +183,25 @@ impl AdbAuthority {
         });
 
         let decision = ticket.answer().await?;
-        decision.allow.then_some(decision.user_id).flatten()
+        if !decision.allow {
+            self.deny(fingerprint);
+            return None;
+        }
+        decision.user_id
+    }
+
+    fn is_denied(&self, fingerprint: &str) -> bool {
+        self.denied
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .contains(fingerprint)
+    }
+
+    fn deny(&self, fingerprint: &str) {
+        self.denied
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+            .insert(fingerprint.to_owned());
     }
 
     /// Report that somebody is driving this device, at most once an interval.
@@ -270,6 +306,85 @@ mod tests {
             task.await.unwrap().is_none(),
             "dropping the sender must refuse, not wait out the full timeout"
         );
+    }
+
+    /// A denied key is refused locally, without a second question upstream.
+    ///
+    /// The retry is not hypothetical: the client's adb server redials on its
+    /// own, so a denial that is not remembered is a prompt every few seconds.
+    #[tokio::test]
+    async fn a_denied_key_is_not_asked_about_twice() {
+        let waiters = AdbAuthWaiters::new();
+        let (control, mut sent) = ControlSender::detached();
+        let authority = Arc::new(AdbAuthority::new(
+            "device-1",
+            SessionRegistry::new(),
+            waiters.clone(),
+            control,
+        ));
+
+        let asking = tokio::spawn({
+            let authority = Arc::clone(&authority);
+            async move { authority.approve("SHA256:abc", "QAAAA", None).await }
+        });
+
+        let ProviderMessage::AdbAuthRequest { request_id, .. } =
+            sent.recv().await.expect("the holder was asked")
+        else {
+            panic!("expected an adb auth request");
+        };
+        waiters
+            .resolve(AdbAuthDecision {
+                request_id,
+                allow: false,
+                user_id: None,
+                reason: None,
+            })
+            .await;
+        assert!(asking.await.unwrap().is_none(), "a denial refuses");
+
+        assert!(
+            authority.approve("SHA256:abc", "QAAAA", None).await.is_none(),
+            "the retry is refused"
+        );
+        assert!(
+            sent.try_recv().is_err(),
+            "and refused here, without asking the holder again"
+        );
+    }
+
+    /// A timeout is not an answer, so the next connect gets to ask again.
+    #[tokio::test]
+    async fn an_unanswered_request_does_not_deny_the_key() {
+        let waiters = AdbAuthWaiters::new();
+        let (control, mut sent) = ControlSender::detached();
+        let authority = Arc::new(AdbAuthority::new(
+            "device-1",
+            SessionRegistry::new(),
+            waiters.clone(),
+            control,
+        ));
+
+        let asking = tokio::spawn({
+            let authority = Arc::clone(&authority);
+            async move { authority.approve("SHA256:abc", "QAAAA", None).await }
+        });
+        sent.recv().await.expect("the holder was asked");
+
+        // Same shape as a lost control plane, which is how a wait ends when
+        // nobody answers it.
+        waiters.abandon_all().await;
+        assert!(asking.await.unwrap().is_none());
+
+        let retry = tokio::spawn({
+            let authority = Arc::clone(&authority);
+            async move { authority.approve("SHA256:abc", "QAAAA", None).await }
+        });
+        assert!(
+            sent.recv().await.is_some(),
+            "the holder is asked again rather than the key being denied"
+        );
+        retry.abort();
     }
 
     #[tokio::test]
