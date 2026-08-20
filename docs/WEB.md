@@ -58,15 +58,18 @@ places people go often. `/admin/settings` is the different, admin-only page.
 
 ### adb keys
 
-The settings page's one section today. Pasting `~/.android/adbkey.pub` here is
+The settings page's one section today. It lists the keys you have registered;
+adding one is a dialog behind an *Add key* button, so the page reads as what you
+already have rather than as a form. Pasting `~/.android/adbkey.pub` there is
 what makes `adb connect` silent — without a registered key the first connect
 parks and asks whoever holds the device. The instruction includes the `cat`
 command, because most people have never opened that file, and says plainly not
 to paste the private half.
 
-The device page carries the other end: an approval card for the holder when a
-key nobody recognises is at the door. Inline, not a dialog — the person waiting
-is at a terminal, and whatever is on the screen behind it should stay visible.
+The device page carries the other end: an approval prompt for the holder when a
+key nobody recognises is at the door. A dialog, like the join-request prompt and
+for the same reason — the connect stays parked until it is answered, and an
+inline card above the screen is easy to miss while the window runs out.
 It shows the fingerprint, the key's own comment, and a live countdown of the
 120-second window, so a request that has already lapsed does not sit there
 looking answerable. The copy says approving adds the key to *your* account,
