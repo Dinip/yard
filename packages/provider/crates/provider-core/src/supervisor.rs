@@ -15,11 +15,11 @@ use farm_protocol::{
     AppFilter, Battery, CleanupSteps, CommandData, CommandPayload, DeviceSnapshot, DeviceStatus,
     ProviderMessage,
 };
-use tokio::sync::RwLock;
+use tokio::sync::{broadcast, RwLock};
 use tracing::{info, warn};
 
 use crate::adb_auth::{AdbAuthWaiters, AdbAuthority};
-use crate::backend::{DeviceBackend, DeviceInfo};
+use crate::backend::{BackendError, DeviceBackend, DeviceInfo};
 use crate::control::{now_millis, AdbAuthDecision, CommandHandler, ControlSender};
 use crate::session::{Authorization, SessionRegistry};
 
@@ -280,6 +280,52 @@ impl Supervisor {
             for device in self.devices.values() {
                 self.refresh(device).await;
             }
+        }
+    }
+
+    /// Withdraws a device's `adb connect` bridge the moment its session ends.
+    ///
+    /// The exposure is the reservation's, not the device's: a listener that
+    /// outlived the session would hold an authenticated client that was
+    /// checked at its handshake and is never checked again. Driven off the
+    /// same revocation broadcast that drops live viewers, so every way a
+    /// session can end — released, force-released, swept, replaced by the next
+    /// reservation, or the control plane going away — closes adb too, without
+    /// each of them having to remember to.
+    ///
+    /// Not an `async fn`: the subscription is taken when this is *called*, so
+    /// a revocation between here and the task being scheduled is still seen.
+    pub fn run_revocation_loop(self: Arc<Self>) -> impl std::future::Future<Output = ()> {
+        let mut revocations = self.sessions.subscribe_revocations();
+        async move {
+            loop {
+                match revocations.recv().await {
+                    Ok(revocation) => self.withdraw_adb(&revocation.device_id).await,
+                    // Lagging means revocations were missed, and a missed one is
+                    // exactly the case that must not leave a bridge up. Withdraw
+                    // every device: an exposure is cheap to ask for again and this
+                    // cannot happen to a provider under any normal load.
+                    Err(broadcast::error::RecvError::Lagged(dropped)) => {
+                        warn!(dropped, "missed revocations; withdrawing every adb bridge");
+                        for device in self.devices.values() {
+                            self.withdraw_adb(&device.id).await;
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Closed) => return,
+                }
+            }
+        }
+    }
+
+    /// Best-effort teardown: a device with nothing exposed, or a backend with
+    /// no notion of one, is the ordinary case rather than a failure.
+    async fn withdraw_adb(&self, device_id: &str) {
+        let Some(device) = self.devices.get(device_id) else {
+            return;
+        };
+        match device.backend.remote_debug_stop().await {
+            Ok(()) | Err(BackendError::Unsupported(_)) => {}
+            Err(err) => warn!(device = %device_id, %err, "could not withdraw the adb bridge"),
         }
     }
 

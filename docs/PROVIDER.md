@@ -437,6 +437,15 @@ provider.
 so a poll that said nothing about the port would clear the one the user had
 just asked for.
 
+**An exposure lasts exactly as long as the session that asked for it.** The
+supervisor watches the same revocation broadcast that drops live viewers, so a
+release, a force-release, a swept reservation, the next reservation replacing
+this one, or the control plane dropping all withdraw the bridge. A renew — the
+same reservation authorized again — does not. Connections are served as children
+of the accept loop, so withdrawing it closes them: an authenticated client is
+checked at its handshake and never again, and detaching those tasks left the
+previous holder driving a phone somebody else had just been given.
+
 **Nothing touches `tcpip:` any more.** That port is served by the `adb-bridge`
 crate, below, which answers the client itself instead of splicing it to the
 device. The device never listens on the network and `adbd` is never restarted,

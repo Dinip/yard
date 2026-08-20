@@ -146,6 +146,10 @@ account** and admits that connection with `adb.auth.decision`; the
 `device.adb.keys` refresh that follows is what makes the *next* connection
 silent. Admission deliberately does not depend on the refresh arriving first.
 
+**Releasing clears `device.adbPort`.** The provider withdraws the bridge itself
+on `session.revoke`, so the column is the only place a dead connect string
+could survive — the UI would go on offering a port nobody is listening on.
+
 The durable trace is the `auditLog` row. `user.adbKeys.add` returns a 409 on a
 fingerprint already registered — the index is global, because a key identifies
 one person or "who ran this `adb shell`" has no answer.

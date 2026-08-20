@@ -119,7 +119,10 @@ See docs/DEVELOPMENT.md.
 - **The provider's adb key is the only one enrolled on a device.** A client key
   is an identity checked against the coordinator, never an enrollment. The
   provider terminates `adb connect` itself; the phone never authenticates
-  anyone, never enters `tcpip:` mode, and never listens on the network.
+  anyone, never enters `tcpip:` mode, and never listens on the network. **An
+  exposed adb port belongs to the reservation, not the device** — revoking the
+  session withdraws the listener and closes every connection under it, because
+  a client is authenticated at its handshake and never re-checked.
 - **Pointer coordinates are normalised 0..1, never pixels**, and down/move/up
   are never collapsed into a `tap` — the backend needs them to tell a drag from
   a tap.
