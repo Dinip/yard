@@ -1538,6 +1538,7 @@ identity rather than an enrollment.
 | Android backend swaps the splice for the bridge | ✅ | `backend-android/src/{bridge,lib}.rs` |
 | Key management + approval in tRPC | ✅ | `coordinator/src/{lib/adb-*,trpc/routers}` |
 | Settings key list, holder approval card | ✅ | `web/.../settings.tsx`, `devices.$deviceId.tsx` |
+| The bridge is withdrawn when the session ends | ✅ | `provider-core/src/supervisor.rs`, `coordinator/src/lib/reservations.ts` |
 
 **The fingerprint is derived twice**, in TypeScript and in Rust, and if the two
 ever disagree every connection asks the holder to approve a key they already
@@ -1578,6 +1579,22 @@ silently admitted — the common case. There is no wire message for "this key ju
 connected", and `device.activity` does not carry one, so the settings page shows
 "never used" for a key in daily use. Adding a fingerprint to `device.activity`
 would fix it; the design did not call for one and the column is not load-bearing.
+
+**Releasing a device closes the `adb connect` sessions on it.** Two things kept
+one alive after the reservation ended. Nothing tied the exposure to the session
+at all — `session.revoke` dropped viewers and left the listener up — and
+withdrawing it would not have been enough anyway: connection handlers were
+detached `tokio::spawn`s, so aborting the accept loop closed the port and left
+every established client running. They are children of the accept loop now, and
+the supervisor withdraws the bridge off the same revocation broadcast the
+session plane already watches. A client is authenticated at its handshake and
+never re-checked, so hanging up is the only thing that ends its access.
+
+**The revocation loop subscribes when it is called, not when it is first
+polled.** It is a plain `fn` returning a future for that reason: an `async fn`
+takes its subscription on the first poll, and a revocation between the spawn and
+the scheduler getting to it would be missed — which is precisely the case that
+must not leave a bridge up.
 
 **The parked-connection registry lives in `provider-core`, not the bridge.** A
 decision can only arrive over the control socket, so losing that socket has to

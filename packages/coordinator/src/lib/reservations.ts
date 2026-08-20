@@ -211,6 +211,12 @@ async function markFreed(db: Database, ids: string[], cleaning: string[]) {
   const ready = ids.filter((id) => !cleaningSet.has(id));
   const now = new Date();
 
+  // The exposure belonged to the session. Its provider withdraws the bridge on
+  // `session.revoke` — and has nothing left to withdraw if it is the one that
+  // went away — so a port surviving here is only a connect string the UI would
+  // keep offering for a listener nobody is running.
+  await db.update(device).set({ adbPort: null }).where(inArray(device.id, ids));
+
   if (ready.length) {
     await db
       .update(device)

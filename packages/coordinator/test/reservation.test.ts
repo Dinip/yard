@@ -111,6 +111,19 @@ describe("reservations", () => {
     expect(taken.userId).toBe(USERS[1]);
   });
 
+  test("release takes the adb port down with the session", async () => {
+    await resetDevice();
+    await callerFor(USERS[0]!).device.reserve({ deviceId: DEVICE_ID });
+    await db.update(device).set({ adbPort: 7200 }).where(eq(device.id, DEVICE_ID));
+
+    await callerFor(USERS[0]!).device.release({ deviceId: DEVICE_ID });
+
+    // The provider withdraws the bridge on `session.revoke`, so a port left in
+    // the row is a connect string the UI offers for a listener that is gone.
+    const row = await db.query.device.findFirst({ where: eq(device.id, DEVICE_ID) });
+    expect(row?.adbPort).toBeNull();
+  });
+
   test("a non-owner cannot release, an admin can", async () => {
     await resetDevice();
     await callerFor(USERS[0]!).device.reserve({ deviceId: DEVICE_ID });

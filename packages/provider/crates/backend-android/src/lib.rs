@@ -1098,6 +1098,12 @@ async fn bind_from_pool(pool: &Arc<PortPool>) -> Result<(PortLease, tokio::net::
 /// One task per connection, and a refused or broken client closes only itself:
 /// the listener outlives it, because a phone that drops mid-debug otherwise
 /// takes the port with it until the session ends.
+///
+/// Those tasks are children of this one, in a `JoinSet`, rather than free
+/// `tokio::spawn`s. That is what makes withdrawing the bridge close the
+/// connections under it: a detached task holds its socket for as long as the
+/// client keeps it open, so a developer went on driving a device after the
+/// reservation that granted it had ended.
 async fn serve_adb_bridge(
     listener: tokio::net::TcpListener,
     adb: Adb,
@@ -1108,15 +1114,23 @@ async fn serve_adb_bridge(
     // one instance stays current, and the banner is cached behind it.
     let authorizer = Arc::new(DeviceAuthorizer::new(authority.clone()));
     let services = Arc::new(DeviceServices::new(adb, serial.clone(), authority));
+    let mut clients = tokio::task::JoinSet::new();
 
     loop {
-        let Ok((client, peer)) = listener.accept().await else {
+        let client = tokio::select! {
+            accepted = listener.accept() => accepted,
+            // Reaping finished clients is the only reason to wake for them; a
+            // set never drained grows one entry per `adb connect` for as long
+            // as the device stays exposed.
+            Some(_) = clients.join_next() => continue,
+        };
+        let Ok((client, peer)) = client else {
             return;
         };
 
         let bridge = Bridge::new(authorizer.clone(), services.clone());
         let serial = serial.clone();
-        tokio::spawn(async move {
+        clients.spawn(async move {
             if let Err(err) = bridge.serve(client, &peer.to_string()).await {
                 // Refusals are ordinary — an unregistered key, a holder who
                 // said no — so this is not a device fault.
@@ -1421,5 +1435,54 @@ mod tests {
         assert!(second.write_all(b"CNXN").await.is_ok());
 
         task.abort();
+    }
+
+    #[tokio::test]
+    async fn withdrawing_the_bridge_drops_a_client_already_connected() {
+        use tokio::io::AsyncReadExt as _;
+
+        // Releasing a device withdraws the bridge, and a developer must lose
+        // the connection there and then. Aborting the accept loop only closes
+        // the listener, so a client mid-session survived it and kept driving
+        // the phone the next user had just been given.
+        let server = fake_transport().await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let task = tokio::spawn(serve_adb_bridge(
+            listener,
+            Adb::new(server),
+            "R5CY82FT35T".to_owned(),
+            lonely_authority(),
+        ));
+
+        let mut client = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        adb_bridge::Message::new(
+            adb_bridge::Command::Cnxn,
+            adb_bridge::VERSION,
+            adb_bridge::MAX_PAYLOAD,
+            &b"host::\0"[..],
+        )
+        .write(&mut client)
+        .await
+        .unwrap();
+        // Connected and served: the challenge proves a task is holding this
+        // socket, which is the thing the abort has to take with it.
+        assert_eq!(
+            adb_bridge::Message::read(&mut client)
+                .await
+                .unwrap()
+                .command,
+            adb_bridge::Command::Auth
+        );
+
+        task.abort();
+
+        let mut buffer = [0u8; 1];
+        let read = tokio::time::timeout(Duration::from_secs(5), client.read(&mut buffer)).await;
+        assert_eq!(
+            read.expect("the connection must close, not hang").unwrap(),
+            0,
+            "an established adb client outlived the bridge being withdrawn"
+        );
     }
 }

@@ -152,6 +152,7 @@ async fn main() -> Result<()> {
     let mut session_plane = tokio::spawn(server::serve(state));
     let mut control_plane = tokio::spawn(control.run());
     let mut poll_loop = tokio::spawn(supervisor.clone().run_poll_loop());
+    let mut revocation_loop = tokio::spawn(supervisor.clone().run_revocation_loop());
     // Always spawned, even with metrics disabled — both park in that case, which
     // keeps this to one code path rather than an `Option<JoinHandle>` that every
     // `select!` arm below would have to special-case.
@@ -178,6 +179,10 @@ async fn main() -> Result<()> {
             error!(?result, "device poll loop ended");
             bail!("device poll loop ended")
         }
+        result = &mut revocation_loop => {
+            error!(?result, "revocation loop ended");
+            bail!("revocation loop ended")
+        }
         result = &mut metrics_plane => {
             match result {
                 Ok(Ok(())) => bail!("metrics listener exited unexpectedly"),
@@ -194,6 +199,7 @@ async fn main() -> Result<()> {
             session_plane.abort();
             control_plane.abort();
             poll_loop.abort();
+            revocation_loop.abort();
             metrics_plane.abort();
             metrics_sampler.abort();
             Ok(())

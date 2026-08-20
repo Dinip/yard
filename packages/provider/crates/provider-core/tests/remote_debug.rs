@@ -66,3 +66,95 @@ async fn an_exposed_port_survives_the_next_poll() {
         .expect("unexpose");
     assert_eq!(snapshot_port(&supervisor).await, None);
 }
+
+/// Waits for the exposure to go away, so the test does not depend on how
+/// quickly the revocation task is scheduled.
+async fn await_withdrawn(supervisor: &Arc<Supervisor>) {
+    let deadline = std::time::Duration::from_secs(5);
+    let withdrawn = tokio::time::timeout(deadline, async {
+        while snapshot_port(supervisor).await.is_some() {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    assert!(
+        withdrawn.is_ok(),
+        "the adb port outlived the session that granted it"
+    );
+}
+
+async fn expose(supervisor: &Arc<Supervisor>) {
+    supervisor
+        .handle(CommandPayload::DeviceAdbExpose {
+            device_id: DEVICE.into(),
+        })
+        .await
+        .expect("expose");
+    assert!(snapshot_port(supervisor).await.is_some());
+}
+
+async fn authorize(supervisor: &Arc<Supervisor>, reservation: &str) {
+    supervisor
+        .handle(CommandPayload::SessionAuthorize {
+            device_id: DEVICE.into(),
+            reservation_id: reservation.into(),
+            user_id: "user-1".into(),
+            adb_keys: Vec::new(),
+        })
+        .await
+        .expect("authorize");
+}
+
+#[tokio::test]
+async fn releasing_a_device_withdraws_its_adb_bridge() {
+    let backend = backend_mock::MockBackend::new(DEVICE, Platform::Android, "Mock Pixel");
+    let (supervisor, _rx) = harness(backend).await;
+    tokio::spawn(supervisor.clone().run_revocation_loop());
+
+    authorize(&supervisor, "res-1").await;
+    expose(&supervisor).await;
+
+    supervisor
+        .handle(CommandPayload::SessionRevoke {
+            device_id: DEVICE.into(),
+            reason: Some("released".into()),
+        })
+        .await
+        .expect("revoke");
+
+    // The listener going with the session is what closes the connections under
+    // it: an authenticated `adb connect` is checked at the handshake and never
+    // again, so nothing else would ever hang up on the previous holder.
+    await_withdrawn(&supervisor).await;
+}
+
+#[tokio::test]
+async fn a_new_reservation_withdraws_the_previous_holders_bridge() {
+    let backend = backend_mock::MockBackend::new(DEVICE, Platform::Android, "Mock Pixel");
+    let (supervisor, _rx) = harness(backend).await;
+    tokio::spawn(supervisor.clone().run_revocation_loop());
+
+    authorize(&supervisor, "res-1").await;
+    expose(&supervisor).await;
+
+    // An admin taking a device back hands it straight to somebody else without
+    // a `session.revoke` in between.
+    authorize(&supervisor, "res-2").await;
+    await_withdrawn(&supervisor).await;
+}
+
+#[tokio::test]
+async fn renewing_the_same_reservation_leaves_the_bridge_alone() {
+    let backend = backend_mock::MockBackend::new(DEVICE, Platform::Android, "Mock Pixel");
+    let (supervisor, _rx) = harness(backend).await;
+    tokio::spawn(supervisor.clone().run_revocation_loop());
+
+    authorize(&supervisor, "res-1").await;
+    expose(&supervisor).await;
+
+    // A renew, and the coordinator re-pushing on reconnect, are both this. An
+    // `adb connect` must survive them.
+    authorize(&supervisor, "res-1").await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert!(snapshot_port(&supervisor).await.is_some());
+}
