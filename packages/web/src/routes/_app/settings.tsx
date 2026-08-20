@@ -1,9 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { Trash2 } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -36,22 +44,9 @@ function SettingsPage() {
 function AdbKeys() {
   const qc = useQueryClient();
   const { data: keys } = useQuery(trpc.user.adbKeys.list.queryOptions());
-  const [publicKey, setPublicKey] = useState("");
-  const [title, setTitle] = useState("");
+  const [adding, setAdding] = useState(false);
 
   const refresh = () => qc.invalidateQueries({ queryKey: trpc.user.adbKeys.list.queryKey() });
-
-  const add = useMutation(
-    trpc.user.adbKeys.add.mutationOptions({
-      onSuccess: () => {
-        toast.success("Key added");
-        setPublicKey("");
-        setTitle("");
-        refresh();
-      },
-      onError: (e) => toast.error(e.message),
-    }),
-  );
 
   const remove = useMutation(
     trpc.user.adbKeys.remove.mutationOptions({
@@ -65,16 +60,23 @@ function AdbKeys() {
 
   return (
     <section className="grid gap-4 rounded-lg border p-4">
-      <div>
-        <h2 className="font-medium">adb keys</h2>
-        <p className="text-muted-foreground text-sm">
-          Registering your key lets you <code className="font-mono">adb connect</code> to any device
-          you have reserved without asking anyone. It identifies you: commands run through it are
-          recorded against your account.
-        </p>
+      <div className="flex items-start gap-3">
+        <div>
+          <h2 className="font-medium">adb keys</h2>
+          <p className="text-muted-foreground text-sm">
+            Registering your key lets you <code className="font-mono">adb connect</code> to any
+            device you have reserved without asking anyone. It identifies you: commands run through
+            it are recorded against your account.
+          </p>
+        </div>
+        <div className="flex-1" />
+        <Button onClick={() => setAdding(true)}>
+          <Plus className="size-4" />
+          Add key
+        </Button>
       </div>
 
-      {keys && keys.length > 0 && (
+      {keys && keys.length > 0 ? (
         <ul className="grid gap-2">
           {keys.map((key) => (
             <li
@@ -104,52 +106,96 @@ function AdbKeys() {
             </li>
           ))}
         </ul>
+      ) : (
+        <p className="rounded border border-dashed px-3 py-6 text-center text-muted-foreground text-sm">
+          No keys yet. Until you add one, an <code className="font-mono">adb connect</code> waits
+          for the device holder to approve it.
+        </p>
       )}
 
-      <form
-        className="grid gap-3"
-        onSubmit={(event) => {
-          event.preventDefault();
-          add.mutate({ publicKey, title });
-        }}
-      >
-        <div className="grid gap-1.5">
-          <Label htmlFor="adb-key">Public key</Label>
+      <AddAdbKeyDialog open={adding} onOpenChange={setAdding} onAdded={refresh} />
+    </section>
+  );
+}
+
+function AddAdbKeyDialog({
+  open,
+  onOpenChange,
+  onAdded,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  onAdded: () => void;
+}) {
+  const [publicKey, setPublicKey] = useState("");
+  const [title, setTitle] = useState("");
+
+  const add = useMutation(
+    trpc.user.adbKeys.add.mutationOptions({
+      onSuccess: () => {
+        toast.success("Key added");
+        setPublicKey("");
+        setTitle("");
+        onAdded();
+        onOpenChange(false);
+      },
+      onError: (e) => toast.error(e.message),
+    }),
+  );
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Add an adb key</DialogTitle>
           {/* Most people have never opened this file, so the command to print
               it is part of the instruction rather than something to look up. */}
-          <p className="text-muted-foreground text-xs">
+          <DialogDescription>
             Run <code className="font-mono">cat ~/.android/adbkey.pub</code> and paste the whole
             line. That is the public half — never paste <code className="font-mono">adbkey</code>{" "}
             itself.
-          </p>
-          <Textarea
-            id="adb-key"
-            required
-            rows={3}
-            spellCheck={false}
-            className="font-mono text-xs"
-            placeholder="QAAAA… user@host"
-            value={publicKey}
-            onChange={(event) => setPublicKey(event.target.value)}
-          />
-        </div>
-        <div className="grid gap-1.5">
-          <Label htmlFor="adb-key-title">Name</Label>
-          <Input
-            id="adb-key-title"
-            required
-            maxLength={100}
-            placeholder="Work laptop"
-            value={title}
-            onChange={(event) => setTitle(event.target.value)}
-          />
-        </div>
-        <div>
-          <Button type="submit" disabled={add.isPending || !publicKey.trim() || !title.trim()}>
-            Add key
-          </Button>
-        </div>
-      </form>
-    </section>
+          </DialogDescription>
+        </DialogHeader>
+
+        <form
+          className="grid gap-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            add.mutate({ publicKey, title });
+          }}
+        >
+          <div className="grid gap-1.5">
+            <Label htmlFor="adb-key">Public key</Label>
+            <Textarea
+              id="adb-key"
+              required
+              rows={3}
+              spellCheck={false}
+              className="font-mono text-xs"
+              placeholder="QAAAA… user@host"
+              value={publicKey}
+              onChange={(event) => setPublicKey(event.target.value)}
+            />
+          </div>
+          <div className="grid gap-1.5">
+            <Label htmlFor="adb-key-title">Name</Label>
+            <Input
+              id="adb-key-title"
+              required
+              maxLength={100}
+              placeholder="Work laptop"
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+            />
+          </div>
+
+          <DialogFooter>
+            <Button type="submit" disabled={add.isPending || !publicKey.trim() || !title.trim()}>
+              Add key
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }

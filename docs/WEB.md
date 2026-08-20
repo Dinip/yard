@@ -58,7 +58,9 @@ places people go often. `/admin/settings` is the different, admin-only page.
 
 ### adb keys
 
-The settings page's one section today. Pasting `~/.android/adbkey.pub` here is
+The settings page's one section today. It lists the keys you have registered;
+adding one is a dialog behind an *Add key* button, so the page reads as what you
+already have rather than as a form. Pasting `~/.android/adbkey.pub` there is
 what makes `adb connect` silent — without a registered key the first connect
 parks and asks whoever holds the device. The instruction includes the `cat`
 command, because most people have never opened that file, and says plainly not
