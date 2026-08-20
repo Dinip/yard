@@ -21,64 +21,71 @@ export function DeviceCard({ device }: { device: DeviceListItem }) {
   const unavailable = device.status === "absent" || device.status === "unhealthy";
 
   return (
-    <Card
-      className={cn("gap-3 py-4 transition-colors hover:border-ring", unavailable && "opacity-60")}
+    <Link
+      to="/devices/$deviceId"
+      params={{ deviceId: device.id }}
+      className="block h-full rounded-xl focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
     >
-      <CardHeader className="px-4">
-        <div className="flex min-w-0 items-start justify-between gap-2">
-          <div className="min-w-0">
-            <Link
-              to="/devices/$deviceId"
-              params={{ deviceId: device.id }}
-              title={device.name ?? device.model ?? device.id}
-              className="block truncate font-medium hover:underline"
-            >
-              {device.name ?? device.model ?? device.id}
-            </Link>
-            <p className="truncate text-muted-foreground text-xs">
-              {device.model ?? "unknown model"}
-            </p>
+      <Card
+        className={cn(
+          "h-full gap-3 py-4 transition-colors hover:border-ring",
+          unavailable && "opacity-60",
+        )}
+      >
+        <CardHeader className="px-4">
+          <div className="flex min-w-0 items-start justify-between gap-2">
+            <div className="min-w-0">
+              <span
+                title={device.name ?? device.model ?? device.id}
+                className="block truncate font-medium"
+              >
+                {device.name ?? device.model ?? device.id}
+              </span>
+              <p className="truncate text-muted-foreground text-xs">
+                {device.model ?? "unknown model"}
+              </p>
+            </div>
+            <Badge variant="outline" className={cn("shrink-0", STATUS_STYLES[device.status])}>
+              {device.status}
+            </Badge>
           </div>
-          <Badge variant="outline" className={cn("shrink-0", STATUS_STYLES[device.status])}>
-            {device.status}
-          </Badge>
-        </div>
-      </CardHeader>
+        </CardHeader>
 
-      <CardContent className="grid gap-1 px-4 text-muted-foreground text-xs">
-        <Row label="Platform">
-          <span className="inline-flex items-center gap-1">
-            <Smartphone className="size-3" />
-            {platformLabel(device.platform)} {device.osVersion}
-          </span>
-        </Row>
-        {device.displayWidth && device.displayHeight ? (
-          <Row label="Display">
-            {device.displayWidth}×{device.displayHeight}
-            {device.displayScale ? ` @${device.displayScale}x` : ""}
-          </Row>
-        ) : null}
-        {device.batteryLevel != null ? (
-          <Row label="Battery">
+        <CardContent className="grid gap-1 px-4 text-muted-foreground text-xs">
+          <Row label="Platform">
             <span className="inline-flex items-center gap-1">
-              <Battery className="size-3" />
-              {Math.round(device.batteryLevel * 100)}%
+              <Smartphone className="size-3" />
+              {platformLabel(device.platform)} {device.osVersion}
             </span>
           </Row>
-        ) : null}
-        <Row label="Provider">{device.provider.name}</Row>
-      </CardContent>
+          {device.displayWidth && device.displayHeight ? (
+            <Row label="Display">
+              {device.displayWidth}×{device.displayHeight}
+              {device.displayScale ? ` @${device.displayScale}x` : ""}
+            </Row>
+          ) : null}
+          {device.batteryLevel != null ? (
+            <Row label="Battery">
+              <span className="inline-flex items-center gap-1">
+                <Battery className="size-3" />
+                {Math.round(device.batteryLevel * 100)}%
+              </span>
+            </Row>
+          ) : null}
+          <Row label="Provider">{device.provider.name}</Row>
+        </CardContent>
 
-      <CardFooter className="px-4">
-        {device.reservation ? (
-          <p className="truncate text-muted-foreground text-xs">
-            In use by <span className="text-foreground">{device.reservation.ownerName}</span>
-          </p>
-        ) : (
-          <p className="text-muted-foreground text-xs">Available</p>
-        )}
-      </CardFooter>
-    </Card>
+        <CardFooter className="px-4">
+          {device.reservation ? (
+            <p className="truncate text-muted-foreground text-xs">
+              In use by <span className="text-foreground">{device.reservation.ownerName}</span>
+            </p>
+          ) : (
+            <p className="text-muted-foreground text-xs">Available</p>
+          )}
+        </CardFooter>
+      </Card>
+    </Link>
   );
 }
 
