@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./registry": "./src/registry.ts",
-    "./test/fake-provider": "./test/fake-provider.ts"
+    "./test/fake-provider": "./test/fake-provider.ts",
+    "./adbkey": "./src/adbkey.ts"
   },
   "scripts": {
     "gen": "bun scripts/gen-rust.ts",

@@ -18,8 +18,9 @@ use farm_protocol::{
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
+use crate::adb_auth::{AdbAuthWaiters, AdbAuthority};
 use crate::backend::{DeviceBackend, DeviceInfo};
-use crate::control::{now_millis, CommandHandler, ControlSender};
+use crate::control::{now_millis, AdbAuthDecision, CommandHandler, ControlSender};
 use crate::session::{Authorization, SessionRegistry};
 
 /// How often each device's info is re-read and pushed up if it changed.
@@ -187,6 +188,8 @@ pub struct Supervisor {
     devices: HashMap<String, Arc<Device>>,
     sessions: SessionRegistry,
     control: RwLock<Option<ControlSender>>,
+    /// `adb connect` attempts parked on an answer from the coordinator.
+    adb_auth: AdbAuthWaiters,
 }
 
 impl Supervisor {
@@ -195,6 +198,7 @@ impl Supervisor {
             devices: HashMap::new(),
             sessions,
             control: RwLock::new(None),
+            adb_auth: AdbAuthWaiters::new(),
         }
     }
 
@@ -470,6 +474,11 @@ impl CommandHandler for Supervisor {
     /// It re-pushes on reconnect.
     async fn on_disconnected(&self) {
         self.sessions.revoke_all("control plane disconnected").await;
+        self.adb_auth.abandon_all().await;
+    }
+
+    async fn on_adb_auth_decision(&self, decision: AdbAuthDecision) {
+        self.adb_auth.resolve(decision).await;
     }
 
     async fn handle(&self, payload: CommandPayload) -> Result<Option<CommandData>> {
@@ -478,6 +487,7 @@ impl CommandHandler for Supervisor {
                 device_id,
                 reservation_id,
                 user_id,
+                adb_keys,
             } => {
                 let device = self.require(&device_id)?;
                 self.snapshot_baseline(&device, &reservation_id).await;
@@ -487,9 +497,15 @@ impl CommandHandler for Supervisor {
                         Authorization {
                             reservation_id,
                             user_id,
+                            adb_keys,
                         },
                     )
                     .await;
+                Ok(None)
+            }
+
+            CommandPayload::DeviceAdbKeys { device_id, keys } => {
+                self.sessions.set_adb_keys(&device_id, keys).await;
                 Ok(None)
             }
 
@@ -575,7 +591,21 @@ impl CommandHandler for Supervisor {
             }
 
             CommandPayload::DeviceAdbExpose { device_id } => {
-                let debug = self.require(&device_id)?.backend.remote_debug().await?;
+                let authority = Arc::new(AdbAuthority::new(
+                    device_id.clone(),
+                    self.sessions.clone(),
+                    self.adb_auth.clone(),
+                    self.control
+                        .read()
+                        .await
+                        .clone()
+                        .ok_or_else(|| anyhow!("not connected to the coordinator"))?,
+                ));
+                let debug = self
+                    .require(&device_id)?
+                    .backend
+                    .remote_debug(authority)
+                    .await?;
                 Ok(Some(CommandData {
                     apps: None,
                     adb_port: Some(debug.port as i64),

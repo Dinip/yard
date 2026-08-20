@@ -13,13 +13,17 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use farm_protocol::AdbKey;
 use tokio::sync::{broadcast, RwLock};
 use tracing::info;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Authorization {
     pub reservation_id: String,
     pub user_id: String,
+    /// Every ADB key entitled to this session. An `adb connect` is admitted by
+    /// matching a signature against these, without asking the coordinator.
+    pub adb_keys: Vec<AdbKey>,
 }
 
 /// Broadcast when a device's authorization is withdrawn, so live viewers can be
@@ -86,6 +90,16 @@ impl SessionRegistry {
         );
     }
 
+    /// Replace the keys allowed to `adb connect` this device.
+    ///
+    /// A no-op on an unauthorized device: there is no session for the keys to
+    /// belong to, and `session.authorize` carries its own set anyway.
+    pub async fn set_adb_keys(&self, device_id: &str, keys: Vec<AdbKey>) {
+        if let Some(auth) = self.inner.authorized.write().await.get_mut(device_id) {
+            auth.adb_keys = keys;
+        }
+    }
+
     pub async fn revoke(&self, device_id: &str, reason: &str) {
         self.inner.authorized.write().await.remove(device_id);
         let _ = self.inner.revocations.send(Revocation {
@@ -139,6 +153,7 @@ mod tests {
         Authorization {
             reservation_id: reservation.into(),
             user_id: "user-1".into(),
+            adb_keys: Vec::new(),
         }
     }
 

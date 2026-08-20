@@ -260,6 +260,7 @@ async fn a_reserved_device_reports_busy_rather_than_ready() {
             Authorization {
                 reservation_id: "res-1".into(),
                 user_id: "user-1".into(),
+                adb_keys: Vec::new(),
             },
         )
         .await;
@@ -293,6 +294,7 @@ async fn a_reservation_does_not_mask_an_unhealthy_device() {
             Authorization {
                 reservation_id: "res-2".into(),
                 user_id: "user-1".into(),
+                adb_keys: Vec::new(),
             },
         )
         .await;
@@ -327,6 +329,7 @@ async fn an_authorized_reservation_shows_as_an_active_session() {
             Authorization {
                 reservation_id: "res-1".into(),
                 user_id: "user-1".into(),
+                adb_keys: Vec::new(),
             },
         )
         .await;

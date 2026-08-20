@@ -52,6 +52,26 @@ buttons; `/providers` is now a redirect, kept only so an old bookmark still
 works. A non-admin following it hits the admin guard and lands on `/devices` —
 a provider's name reaches them on the device page anyway.
 
+`/settings` is per-user, and reached from the account menu rather than the nav
+rail: it holds things about *you*, not about the farm, and the rail is for
+places people go often. `/admin/settings` is the different, admin-only page.
+
+### adb keys
+
+The settings page's one section today. Pasting `~/.android/adbkey.pub` here is
+what makes `adb connect` silent — without a registered key the first connect
+parks and asks whoever holds the device. The instruction includes the `cat`
+command, because most people have never opened that file, and says plainly not
+to paste the private half.
+
+The device page carries the other end: an approval card for the holder when a
+key nobody recognises is at the door. Inline, not a dialog — the person waiting
+is at a terminal, and whatever is on the screen behind it should stay visible.
+It shows the fingerprint, the key's own comment, and a live countdown of the
+120-second window, so a request that has already lapsed does not sit there
+looking answerable. The copy says approving adds the key to *your* account,
+because that is the only thing a holder can honestly assert.
+
 ## Types flow from the server
 
 `packages/web` depends on `@farm/coordinator` for its **types only**:

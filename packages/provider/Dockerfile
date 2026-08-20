@@ -15,6 +15,7 @@ RUN apt-get update \
 COPY Cargo.toml Cargo.lock ./
 COPY packages/provider/crates/farm-protocol/Cargo.toml packages/provider/crates/farm-protocol/
 COPY packages/provider/crates/provider-core/Cargo.toml packages/provider/crates/provider-core/
+COPY packages/provider/crates/adb-bridge/Cargo.toml    packages/provider/crates/adb-bridge/
 COPY packages/provider/crates/backend-mock/Cargo.toml  packages/provider/crates/backend-mock/
 COPY packages/provider/crates/backend-ios/Cargo.toml   packages/provider/crates/backend-ios/
 COPY packages/provider/crates/backend-android/Cargo.toml packages/provider/crates/backend-android/
@@ -24,12 +25,14 @@ COPY packages/provider/crates/farm-provider/Cargo.toml packages/provider/crates/
 COPY packages/provider/vendor ./packages/provider/vendor
 RUN mkdir -p packages/provider/crates/farm-protocol/src \
              packages/provider/crates/provider-core/src \
+             packages/provider/crates/adb-bridge/src \
              packages/provider/crates/backend-mock/src \
              packages/provider/crates/backend-ios/src \
              packages/provider/crates/backend-android/src \
              packages/provider/crates/farm-provider/src \
  && echo "" > packages/provider/crates/farm-protocol/src/lib.rs \
  && echo "" > packages/provider/crates/provider-core/src/lib.rs \
+ && echo "" > packages/provider/crates/adb-bridge/src/lib.rs \
  && echo "" > packages/provider/crates/backend-mock/src/lib.rs \
  && echo "" > packages/provider/crates/backend-ios/src/lib.rs \
  && echo "" > packages/provider/crates/backend-android/src/lib.rs \

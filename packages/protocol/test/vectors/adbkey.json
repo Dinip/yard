@@ -1,0 +1,5 @@
+{
+  "note": "A throwaway public key from 'adb keygen', shared by every implementation that has to agree about ADB keys. The fingerprint was computed independently with openssl (SPKI DER -> sha256 -> base64, unpadded) so that neither the TypeScript parser nor the Rust one in adb-bridge can define it into being correct. There is no private half here on purpose: the only thing that needs a fixed key is this fingerprint, and that needs the public half alone. Tests that must produce real signatures generate their own keypair at run time rather than keep a private key in the history forever.",
+  "fingerprint": "SHA256:OFQy61uY9HJQ50q30NKcoxdOpr9VTeOwdra+ONvolM0",
+  "comment": "dev@example.test"
+}

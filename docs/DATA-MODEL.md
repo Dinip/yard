@@ -122,6 +122,27 @@ leave the holder two identical questions to answer. `state` distinguishes
 within `JOIN_REQUEST_TTL`, swept by the reaper) — three different answers that
 an audit log should not have to guess between.
 
+### `userAdbKey`
+
+`user_id`, `fingerprint`, `public_key`, `comment`, `title`, `created_at`,
+`last_used_at`.
+
+What makes `adb connect` work without enrolling anyone's key on a phone. The
+provider authenticates the ADB connection itself and matches the offered key
+against these rows; the only key a device ever trusts is the provider's own.
+
+```sql
+CREATE UNIQUE INDEX user_adb_key_fingerprint_idx ON user_adb_key (fingerprint);
+```
+
+Unique across the table, not per user: a key identifies one person. Two accounts
+claiming the same key would make "who ran this `adb shell`" unanswerable, which
+is the question the mechanism exists to answer.
+
+`public_key` is the whole base64 blob from `~/.android/adbkey.pub`, not just the
+fingerprint, because ADB authentication is challenge-response — the provider
+issues a token and verifies a signature over it.
+
 ### `auditLog`
 
 `actorUserId`, `action`, `targetType`/`targetId`, `metadata` (jsonb), `at`.
@@ -136,6 +157,14 @@ the row is written.
 is a *request against a device*, not a row that outlives it. This removes object
 storage, artifact GC, quota management, and a whole class of "which build is
 this?" confusion from the system.
+
+**No table of pending ADB approvals.** A holder being asked to approve an
+unknown key is answering about a TCP connection parked on a provider right now.
+If the coordinator restarts, the provider has already refused it, so a row could
+only ever describe something nobody can approve. It is held in memory for its
+120 seconds; the durable trace is the `auditLog` row on the decision. This is
+the opposite call from `joinRequest`, which is a table because what waits there
+is a browser, not a socket.
 
 **No device-owned ownership state.** See ARCHITECTURE.md — the provider holds
 only the currently authorized `reservationId`, pushed to it.

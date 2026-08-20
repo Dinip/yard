@@ -9,6 +9,7 @@ import {
 import { and, eq, inArray, lt, notInArray } from "drizzle-orm";
 import { db } from "../db.ts";
 import { env } from "../env.ts";
+import { adbAuthRequests } from "../lib/adb-auth.ts";
 import { audit } from "../lib/audit.ts";
 import { deviceEvents } from "../lib/events.ts";
 import { hashProviderToken } from "../lib/provider-token.ts";
@@ -172,6 +173,20 @@ export class GatewaySession {
           );
         break;
       }
+
+      case "adb.auth.request":
+        // Held here rather than answered here: only the person whose session
+        // it is can say whose key this is. The provider has already proved the
+        // client holds the private half.
+        adbAuthRequests.add({
+          requestId: msg.requestId,
+          deviceId: msg.deviceId,
+          providerId: this.auth.providerId,
+          fingerprint: msg.fingerprint,
+          publicKey: msg.publicKey,
+          ...(msg.comment ? { comment: msg.comment } : {}),
+        });
+        break;
 
       case "command.result":
         this.conn?.settle(msg.id, msg.ok, msg.data, msg.error);
@@ -369,6 +384,9 @@ export class GatewaySession {
     if (this.heartbeatTimer) clearTimeout(this.heartbeatTimer);
     if (this.conn) providers.remove(this.conn);
     this.conn = null;
+    // Every parked connection went with the socket, so nothing here is still
+    // answerable.
+    adbAuthRequests.dropProvider(this.auth.providerId);
 
     await db
       .update(provider)

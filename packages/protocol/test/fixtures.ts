@@ -113,6 +113,14 @@ export const controlFixtures = {
     size: 2489301,
     sha256: "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
   },
+  adbAuthRequest: {
+    type: "adb.auth.request",
+    deviceId: "R5CT10ABCDE",
+    requestId: "adbauth-1",
+    fingerprint: "SHA256:HZ7j4M3gY4CTMHIxwdhDZrXE0HtvXx2mhi4zyfPU7l4",
+    publicKey: "QAAAAO0l96Y=",
+    comment: "dev@example.test",
+  },
 } as const;
 
 export const fileFixtures = {
@@ -160,6 +168,14 @@ export const coordinatorFixtures = {
       deviceId: "R5CT10ABCDE",
       reservationId: "res-1",
       userId: "user-1",
+      adbKeys: [
+        {
+          userId: "user-1",
+          fingerprint: "SHA256:HZ7j4M3gY4CTMHIxwdhDZrXE0HtvXx2mhi4zyfPU7l4",
+          publicKey: "QAAAAO0l96Y=",
+          comment: "dev@example.test",
+        },
+      ],
     },
   },
   revoke: {
@@ -171,6 +187,39 @@ export const coordinatorFixtures = {
     type: "command",
     id: "cmd-3",
     payload: { kind: "device.adb.expose", deviceId: "R5CT10ABCDE" },
+  },
+  adbKeys: {
+    type: "command",
+    id: "cmd-4",
+    payload: {
+      kind: "device.adb.keys",
+      deviceId: "R5CT10ABCDE",
+      keys: [
+        {
+          userId: "user-2",
+          fingerprint: "SHA256:HZ7j4M3gY4CTMHIxwdhDZrXE0HtvXx2mhi4zyfPU7l4",
+          publicKey: "QAAAAO0l96Y=",
+        },
+      ],
+    },
+  },
+  // The whole set is the message, so an empty one is meaningful: it revokes.
+  adbKeysEmpty: {
+    type: "command",
+    id: "cmd-5",
+    payload: { kind: "device.adb.keys", deviceId: "R5CT10ABCDE", keys: [] },
+  },
+  adbAuthAllow: {
+    type: "adb.auth.decision",
+    requestId: "adbauth-1",
+    allow: true,
+    userId: "user-1",
+  },
+  adbAuthDeny: {
+    type: "adb.auth.decision",
+    requestId: "adbauth-1",
+    allow: false,
+    reason: "The holder declined this key",
   },
 } as const;
 

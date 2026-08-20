@@ -37,6 +37,21 @@ pub trait CommandHandler: Send + Sync + 'static {
     /// Called whenever the socket drops, so per-device state that the
     /// coordinator is the source of truth for can be cleared.
     async fn on_disconnected(&self) {}
+
+    /// The coordinator's answer to an `adb.auth.request`.
+    ///
+    /// Not a command: there is a parked TCP connection waiting on it, and
+    /// nothing upstream wants a result back.
+    async fn on_adb_auth_decision(&self, decision: AdbAuthDecision);
+}
+
+/// Whether a parked `adb connect` may proceed, and as whom.
+#[derive(Debug, Clone)]
+pub struct AdbAuthDecision {
+    pub request_id: String,
+    pub allow: bool,
+    pub user_id: Option<String>,
+    pub reason: Option<String>,
 }
 
 /// Send handle for pushing events up to the coordinator.
@@ -302,6 +317,23 @@ impl ControlClient {
                     }
                 };
                 Ok(Some(reply))
+            }
+
+            CoordinatorMessage::AdbAuthDecision {
+                request_id,
+                allow,
+                user_id,
+                reason,
+            } => {
+                self.handler
+                    .on_adb_auth_decision(AdbAuthDecision {
+                        request_id,
+                        allow,
+                        user_id,
+                        reason,
+                    })
+                    .await;
+                Ok(None)
             }
 
             CoordinatorMessage::Ping { .. } => Ok(None),

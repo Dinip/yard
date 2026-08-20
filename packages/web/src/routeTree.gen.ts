@@ -14,6 +14,7 @@ import { Route as AppRouteImport } from './routes/_app'
 import { Route as SessionRouteImport } from './routes/_session'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as AppProvidersRouteImport } from './routes/_app/providers'
+import { Route as AppSettingsRouteImport } from './routes/_app/settings'
 import { Route as AppAdminAuditRouteImport } from './routes/_app/admin.audit'
 import { Route as AppAdminProvidersRouteImport } from './routes/_app/admin.providers'
 import { Route as AppAdminSettingsRouteImport } from './routes/_app/admin.settings'
@@ -43,6 +44,11 @@ const LoginRoute = LoginRouteImport.update({
 const AppProvidersRoute = AppProvidersRouteImport.update({
   id: '/providers',
   path: '/providers',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppSettingsRoute = AppSettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
   getParentRoute: () => AppRoute,
 } as any)
 const AppAdminAuditRoute = AppAdminAuditRouteImport.update({
@@ -86,6 +92,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/providers': typeof AppProvidersRoute
+  '/settings': typeof AppSettingsRoute
   '/admin/audit': typeof AppAdminAuditRoute
   '/admin/providers': typeof AppAdminProvidersRoute
   '/admin/settings': typeof AppAdminSettingsRoute
@@ -98,6 +105,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/providers': typeof AppProvidersRoute
+  '/settings': typeof AppSettingsRoute
   '/admin/audit': typeof AppAdminAuditRoute
   '/admin/providers': typeof AppAdminProvidersRoute
   '/admin/settings': typeof AppAdminSettingsRoute
@@ -113,6 +121,7 @@ export interface FileRoutesById {
   '/_session': typeof SessionRouteWithChildren
   '/login': typeof LoginRoute
   '/_app/providers': typeof AppProvidersRoute
+  '/_app/settings': typeof AppSettingsRoute
   '/_app/admin/audit': typeof AppAdminAuditRoute
   '/_app/admin/providers': typeof AppAdminProvidersRoute
   '/_app/admin/settings': typeof AppAdminSettingsRoute
@@ -127,6 +136,7 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/providers'
+    | '/settings'
     | '/admin/audit'
     | '/admin/providers'
     | '/admin/settings'
@@ -139,6 +149,7 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/providers'
+    | '/settings'
     | '/admin/audit'
     | '/admin/providers'
     | '/admin/settings'
@@ -153,6 +164,7 @@ export interface FileRouteTypes {
     | '/_session'
     | '/login'
     | '/_app/providers'
+    | '/_app/settings'
     | '/_app/admin/audit'
     | '/_app/admin/providers'
     | '/_app/admin/settings'
@@ -204,6 +216,13 @@ declare module '@tanstack/react-router' {
       path: '/providers'
       fullPath: '/providers'
       preLoaderRoute: typeof AppProvidersRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/settings': {
+      id: '/_app/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof AppSettingsRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/admin/audit': {
@@ -260,6 +279,7 @@ declare module '@tanstack/react-router' {
 
 interface AppRouteChildren {
   AppProvidersRoute: typeof AppProvidersRoute
+  AppSettingsRoute: typeof AppSettingsRoute
   AppAdminAuditRoute: typeof AppAdminAuditRoute
   AppAdminProvidersRoute: typeof AppAdminProvidersRoute
   AppAdminSettingsRoute: typeof AppAdminSettingsRoute
@@ -270,6 +290,7 @@ interface AppRouteChildren {
 
 const AppRouteChildren: AppRouteChildren = {
   AppProvidersRoute: AppProvidersRoute,
+  AppSettingsRoute: AppSettingsRoute,
   AppAdminAuditRoute: AppAdminAuditRoute,
   AppAdminProvidersRoute: AppAdminProvidersRoute,
   AppAdminSettingsRoute: AppAdminSettingsRoute,

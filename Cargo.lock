@@ -3,6 +3,24 @@
 version = 4
 
 [[package]]
+name = "adb-bridge"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.23.1",
+ "bytes",
+ "rand 0.10.2",
+ "rsa",
+ "sha1 0.10.7",
+ "sha2 0.11.0",
+ "thiserror 2.0.19",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -270,6 +288,7 @@ dependencies = [
 name = "backend-android"
 version = "0.1.0"
 dependencies = [
+ "adb-bridge",
  "anyhow",
  "async-trait",
  "farm-protocol",

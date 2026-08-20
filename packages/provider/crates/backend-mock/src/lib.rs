@@ -19,6 +19,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use farm_protocol::{AppInfo, Display, FileEntry, FileKind, FileListing, Platform};
+use provider_core::adb_auth::AdbAuthority;
 use provider_core::backend::{
     parent_of, AppFilter, AppMetrics, BackendError, CpuTimes, DeviceBackend, DeviceInfo,
     DeviceMetrics, InputEvent, MemoryBytes, ProgressSink, RemoteDebug, Result, ThermalZone,
@@ -588,7 +589,9 @@ impl DeviceBackend for MockBackend {
         Ok(())
     }
 
-    async fn remote_debug(&self) -> Result<RemoteDebug> {
+    /// The authority is ignored: there is no ADB protocol here to authenticate,
+    /// and a mock device has nothing to get a shell on.
+    async fn remote_debug(&self, _authority: Arc<AdbAuthority>) -> Result<RemoteDebug> {
         if self.platform != Platform::Android {
             return Err(BackendError::Unsupported("remote debugging"));
         }

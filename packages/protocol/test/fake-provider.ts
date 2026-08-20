@@ -44,6 +44,12 @@ export class FakeProvider {
 
   /** Every command the coordinator has sent, in order. Assertions read this. */
   readonly received: CommandPayload[] = [];
+  /** Answers to `askAboutAdbKey`, in arrival order. */
+  readonly adbDecisions: Extract<CoordinatorMessage, { type: "adb.auth.decision" }>[] = [];
+  private readonly adbWaiters = new Map<
+    string,
+    (decision: Extract<CoordinatorMessage, { type: "adb.auth.decision" }>) => void
+  >();
   /** Resolves once `hello.ack` arrives. */
   readonly ready: Promise<void>;
   private markReady!: () => void;
@@ -130,6 +136,13 @@ export class FakeProvider {
         break;
       }
 
+      case "adb.auth.decision": {
+        this.adbDecisions.push(msg);
+        this.adbWaiters.get(msg.requestId)?.(msg);
+        this.adbWaiters.delete(msg.requestId);
+        break;
+      }
+
       case "ping":
         break;
     }
@@ -182,6 +195,35 @@ export class FakeProvider {
   /** Reports that someone drove a device, as the real provider does on input. */
   noteActivity(deviceId: string, at = Date.now()) {
     this.send({ type: "device.activity", deviceId, at });
+  }
+
+  /**
+   * An `adb connect` arrived with a key we have not been told about.
+   *
+   * Returns the decision, so a test reads the answer the way the real provider
+   * does — as the thing that admits or refuses the parked connection, rather
+   * than by watching for the `device.adb.keys` that follows an approval.
+   */
+  askAboutAdbKey(args: {
+    deviceId: string;
+    fingerprint: string;
+    publicKey: string;
+    comment?: string;
+    requestId?: string;
+  }) {
+    const requestId = args.requestId ?? crypto.randomUUID();
+    const answered = new Promise<Extract<CoordinatorMessage, { type: "adb.auth.decision" }>>(
+      (resolve) => this.adbWaiters.set(requestId, resolve),
+    );
+    this.send({
+      type: "adb.auth.request",
+      deviceId: args.deviceId,
+      requestId,
+      fingerprint: args.fingerprint,
+      publicKey: args.publicKey,
+      ...(args.comment ? { comment: args.comment } : {}),
+    });
+    return { requestId, answered };
   }
 
   removeDevice(deviceId: string) {

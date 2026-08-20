@@ -1512,6 +1512,78 @@ the session to come back. Bounded on purpose: a device that really did go away
 still has to reach `unhealthy` on its own, so this cannot mask an unplugged
 phone. Disabling remote debugging restarts `adbd` too and takes the same path.
 
+## Phase 21 — provider-terminated ADB authentication ✅
+
+Until now `adb connect` required *your* key to be enrolled on the phone: the
+provider put the device in `tcpip:` mode and spliced raw TCP to its `adbd`, so
+the phone did the authenticating. That does not scale past a handful of devices,
+leaves the coordinator with no idea who ran `adb shell`, and needs an `adbd`
+restart to set up.
+
+The provider becomes the ADB daemon instead. It terminates the client's
+connection, verifies the key itself against a set the coordinator pushed, and
+translates each opened service onto the USB transport it already holds. The
+provider's key stays the only one any device trusts, and a client key becomes an
+identity rather than an enrollment.
+
+| Item | State | Where |
+|---|---|---|
+| `AdbKey`, `adbKeys` on `session.authorize`, `device.adb.keys`, `adb.auth.request`/`.decision` | ✅ | `protocol/src/control.ts` |
+| `adbkey.pub` parsing + `SHA256:` fingerprint, vectors shared with Rust | ✅ | `protocol/src/adbkey.ts`, `protocol/test/vectors/` |
+| Parked-connection registry, bounded and refused on control-plane loss | ✅ | `provider-core/src/adb_auth.rs` |
+| `user_adb_key` table | ✅ | `db/src/schema/farm.ts`, `drizzle/0008_*.sql` |
+| `adb-bridge` crate: framing | ✅ | `adb-bridge/src/message.rs` |
+| `adb-bridge`: authentication | ✅ | `adb-bridge/src/{auth,key}.rs` |
+| `adb-bridge`: service demux | ✅ | `adb-bridge/src/bridge.rs` |
+| Android backend swaps the splice for the bridge | ✅ | `backend-android/src/{bridge,lib}.rs` |
+| Key management + approval in tRPC | ✅ | `coordinator/src/{lib/adb-*,trpc/routers}` |
+| Settings key list, holder approval card | ✅ | `web/.../settings.tsx`, `devices.$deviceId.tsx` |
+
+**The fingerprint is derived twice**, in TypeScript and in Rust, and if the two
+ever disagree every connection asks the holder to approve a key they already
+registered. The vector in `protocol/test/vectors/` is a real key from
+`adb keygen` whose expected fingerprint was computed with `openssl`, so neither
+implementation can define itself into being correct; both assert against it.
+
+**We check proof of possession where `adbd` does not.** A client only reveals
+its public key *after* its signatures have been refused, so admitting an
+offered key means going back over the challenges it already answered. `adbd`
+skips that and trusts whoever taps "allow" on the phone — there is nobody
+standing next to a farm device, so a key that never signed anything is refused
+before the holder is even shown it.
+
+**A stream is acknowledged before it says anything.** The first cut spawned the
+copy task before writing the `OKAY` that tells the client the stream exists, so
+a service that speaks the instant it opens — `logcat`, a shell printing its
+prompt — could get its first `WRTE` out in front of it, carrying an id the
+client had never been given. The writer lock is now held across both. Found by a
+test, not by a phone.
+
+**`adb connect` prints "failed to authenticate" on a first-time key**, and that
+is not a failure. It reports whatever state the transport is in when it returns,
+and on the prompt path the holder has not answered yet. The device comes online
+the moment they do — `adb wait-for-device` blocks until then. A key already
+registered never takes this path. The UI copy has to say so, or every new user
+will file a bug.
+
+**The banner is read after a client authenticates, never before.** The first
+cut fetched it at the top of `serve()`, which meant an unauthenticated
+connection caused a `getprop` on the device — and against an adb server that
+never answered, the client sat there having never been challenged. A test that
+asserted the client gets *our* challenge caught it by hanging. The auth machine
+now takes a `BannerSource` it resolves only at the point of admitting somebody.
+
+**`lastUsedAt` is only written when a key is approved**, never when one is
+silently admitted — the common case. There is no wire message for "this key just
+connected", and `device.activity` does not carry one, so the settings page shows
+"never used" for a key in daily use. Adding a fingerprint to `device.activity`
+would fix it; the design did not call for one and the column is not load-bearing.
+
+**The parked-connection registry lives in `provider-core`, not the bridge.** A
+decision can only arrive over the control socket, so losing that socket has to
+refuse everything waiting — a bridge that owned its own waiters would have no
+way to know.
+
 ---
 
 ## Open decisions

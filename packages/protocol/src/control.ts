@@ -55,6 +55,25 @@ export const AppFilter = named(
   }),
 );
 
+/**
+ * A developer's ADB public key, as the coordinator knows it.
+ *
+ * `publicKey` is the base64 blob out of `~/.android/adbkey.pub`, carried
+ * verbatim: it is what the provider verifies a challenge signature against, and
+ * carrying a fingerprint alone would not be enough — ADB authentication is
+ * challenge-response, so a signature cannot be checked without the key itself.
+ */
+export const AdbKey = named(
+  "AdbKey",
+  z.object({
+    userId: z.string(),
+    fingerprint: z.string(),
+    publicKey: z.string(),
+    /** The trailing comment in the key file, typically `user@host`. */
+    comment: z.string().optional(),
+  }),
+);
+
 export const CommandPayload = named(
   "CommandPayload",
   z.discriminatedUnion("kind", [
@@ -68,6 +87,13 @@ export const CommandPayload = named(
       deviceId: z.string(),
       reservationId: z.string(),
       userId: z.string(),
+      /**
+       * Every ADB key entitled to this session — the holder's, plus those of
+       * anyone the holder has approved into it. The provider admits an
+       * `adb connect` locally against this set, so the common case never needs
+       * the coordinator and survives a coordinator restart.
+       */
+      adbKeys: z.array(AdbKey),
     }),
     /** Drop live viewers and refuse further connects for this device. */
     z.object({
@@ -107,6 +133,14 @@ export const CommandPayload = named(
     /** Android only. Binds a provider-host TCP port proxying an adb transport. */
     z.object({ kind: z.literal("device.adb.expose"), deviceId: z.string() }),
     z.object({ kind: z.literal("device.adb.unexpose"), deviceId: z.string() }),
+    /**
+     * Replace the set of keys allowed to `adb connect` this device.
+     *
+     * The whole set, never a delta — a key deleted in settings has to reach the
+     * provider, and a dropped patch would leave it trusting a revoked key
+     * forever. Same reason `hello` carries a whole inventory.
+     */
+    z.object({ kind: z.literal("device.adb.keys"), deviceId: z.string(), keys: z.array(AdbKey) }),
     /** Tear down and re-establish the device's backend session. */
     z.object({ kind: z.literal("device.restart"), deviceId: z.string() }),
   ]),
@@ -170,6 +204,24 @@ export const ProviderMessage = named(
       ok: z.boolean(),
       error: z.string().optional(),
       data: CommandData.optional(),
+    }),
+    /**
+     * An `adb connect` arrived carrying a key the provider has never been told
+     * about, and its connection is parked waiting for an answer.
+     *
+     * Provider-initiated, so it cannot ride `command.result`. The provider has
+     * already proved the client holds the private half — it verified a
+     * signature over a token it issued — so the only open question is whose key
+     * this is, and that is the coordinator's to answer.
+     */
+    z.object({
+      type: z.literal("adb.auth.request"),
+      deviceId: z.string(),
+      /** Correlates with the coordinator's `adb.auth.decision`. */
+      requestId: z.string(),
+      fingerprint: z.string(),
+      publicKey: z.string(),
+      comment: z.string().optional(),
     }),
     /** Recorded in the audit log; there is no artifact table to write to. */
     z.object({
@@ -267,10 +319,29 @@ export const CoordinatorMessage = named(
       id: z.string(),
       payload: CommandPayload,
     }),
+    /**
+     * The answer to an `adb.auth.request`: admit the parked connection or close
+     * it.
+     *
+     * An approval is also written to the key's owner and followed by a
+     * `device.adb.keys` refresh, but *this* is what admits *this* connection.
+     * Waiting for the refreshed set instead would make admission depend on the
+     * order two messages happen to arrive in.
+     */
+    z.object({
+      type: z.literal("adb.auth.decision"),
+      requestId: z.string(),
+      allow: z.boolean(),
+      /** Who the key belongs to. Present when `allow`. */
+      userId: z.string().optional(),
+      /** Shown to the developer on the refusal. */
+      reason: z.string().optional(),
+    }),
     z.object({ type: z.literal("ping"), at: Timestamp }),
   ]),
 );
 
+export type AdbKey = z.infer<typeof AdbKey>;
 export type CommandPayload = z.infer<typeof CommandPayload>;
 export type CommandData = z.infer<typeof CommandData>;
 export type ProviderMessage = z.infer<typeof ProviderMessage>;

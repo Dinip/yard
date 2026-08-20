@@ -137,6 +137,16 @@ pub struct AppFilter {
     pub deny: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdbKey {
+    pub user_id: String,
+    pub fingerprint: String,
+    pub public_key: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub comment: Option<String>,
+}
+
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -146,6 +156,7 @@ pub enum CommandPayload {
         device_id: String,
         reservation_id: String,
         user_id: String,
+        adb_keys: Vec<AdbKey>,
     },
     #[serde(rename = "session.revoke", rename_all = "camelCase")]
     SessionRevoke {
@@ -179,6 +190,11 @@ pub enum CommandPayload {
     DeviceAdbExpose { device_id: String },
     #[serde(rename = "device.adb.unexpose", rename_all = "camelCase")]
     DeviceAdbUnexpose { device_id: String },
+    #[serde(rename = "device.adb.keys", rename_all = "camelCase")]
+    DeviceAdbKeys {
+        device_id: String,
+        keys: Vec<AdbKey>,
+    },
     #[serde(rename = "device.restart", rename_all = "camelCase")]
     DeviceRestart { device_id: String },
 }
@@ -235,6 +251,15 @@ pub enum ProviderMessage {
         #[serde(skip_serializing_if = "Option::is_none", default)]
         data: Option<CommandData>,
     },
+    #[serde(rename = "adb.auth.request", rename_all = "camelCase")]
+    AdbAuthRequest {
+        device_id: String,
+        request_id: String,
+        fingerprint: String,
+        public_key: String,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        comment: Option<String>,
+    },
     #[serde(rename = "install.finished", rename_all = "camelCase")]
     InstallFinished {
         device_id: String,
@@ -281,6 +306,15 @@ pub enum CoordinatorMessage {
     HelloReject { reason: String },
     #[serde(rename = "command", rename_all = "camelCase")]
     Command { id: String, payload: CommandPayload },
+    #[serde(rename = "adb.auth.decision", rename_all = "camelCase")]
+    AdbAuthDecision {
+        request_id: String,
+        allow: bool,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        user_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        reason: Option<String>,
+    },
     #[serde(rename = "ping", rename_all = "camelCase")]
     Ping { at: i64 },
 }
