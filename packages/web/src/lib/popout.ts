@@ -28,7 +28,7 @@ export function openPopout(
   const height = Math.round(logicalHeight * factor) + CHROME;
   window.open(
     `/devices/${deviceId}/popout`,
-    `farm-${deviceId}`,
+    `yard-${deviceId}`,
     `width=${width},height=${height},menubar=no,toolbar=no,location=no,status=no`,
   );
 }

@@ -10,22 +10,22 @@
 #
 # then Grafana on :3001 (anonymous admin), scraping a provider on the host at
 # :9100 — which needs `metrics:` enabled in provider.yaml.
-name: device-farm-dev
+name: yard-dev
 
 services:
   postgres:
     image: postgres:18-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: farm
-      POSTGRES_PASSWORD: farm
-      POSTGRES_DB: farm
+      POSTGRES_USER: yard
+      POSTGRES_PASSWORD: yard
+      POSTGRES_DB: yard
     ports:
       - "5432:5432"
     volumes:
       - postgres-dev-data:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U farm -d farm"]
+      test: ["CMD-SHELL", "pg_isready -U yard -d yard"]
       interval: 5s
       timeout: 5s
       retries: 20

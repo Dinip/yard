@@ -18,7 +18,7 @@ export type Axis = "vertical" | "horizontal";
 /** Top-right by default: the bottom edge belongs to the home indicator. */
 export const DEFAULT_CORNER: Corner = "tr";
 
-const STORAGE_KEY = "farm.console.controlsCorner";
+const STORAGE_KEY = "yard.console.controlsCorner";
 
 const CORNERS: readonly Corner[] = ["tl", "tr", "bl", "br"];
 

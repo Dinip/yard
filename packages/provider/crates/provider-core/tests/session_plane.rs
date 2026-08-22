@@ -550,7 +550,7 @@ async fn upload_installs_then_deletes_the_staged_file() {
             h.base,
             h.token()
         ))
-        .header("x-farm-filename", "app-release.apk")
+        .header("x-yard-filename", "app-release.apk")
         .body(payload)
         .send()
         .await
@@ -582,7 +582,7 @@ async fn a_hostile_upload_filename_cannot_escape_the_scratch_directory() {
             h.base,
             h.token()
         ))
-        .header("x-farm-filename", "../../../../tmp/pwned.apk")
+        .header("x-yard-filename", "../../../../tmp/pwned.apk")
         .body(vec![0u8; 1024])
         .send()
         .await
@@ -942,7 +942,7 @@ async fn the_allowed_origin_may_use_the_artifact_plane() {
         )
         .header("origin", ALLOWED_ORIGIN)
         .header("access-control-request-method", "POST")
-        .header("access-control-request-headers", "x-farm-filename")
+        .header("access-control-request-headers", "x-yard-filename")
         .send()
         .await
         .unwrap();

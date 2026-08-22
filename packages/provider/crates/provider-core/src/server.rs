@@ -104,7 +104,7 @@ fn cors(origins: WebOrigins) -> CorsLayer {
         .allow_methods([Method::GET, Method::POST])
         .allow_headers([
             header::CONTENT_TYPE,
-            HeaderName::from_static("x-farm-filename"),
+            HeaderName::from_static("x-yard-filename"),
         ])
 }
 
@@ -618,7 +618,7 @@ async fn install(
     };
 
     let filename = headers
-        .get("x-farm-filename")
+        .get("x-yard-filename")
         .and_then(|v| v.to_str().ok())
         .map(sanitize_filename)
         .unwrap_or_else(|| "upload.bin".to_owned());

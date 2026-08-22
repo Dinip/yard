@@ -54,7 +54,7 @@ binary with `backend: mock` devices:
 ```bash
 cargo build --release -p yard-provider
 cp packages/provider/provider.example.yaml /tmp/provider.yaml   # then edit
-FARM_PROVIDER_TOKEN=pft_… ./target/release/yard-provider --config /tmp/provider.yaml
+YARD_PROVIDER_TOKEN=pft_… ./target/release/yard-provider --config /tmp/provider.yaml
 ```
 
 `--check` validates the config and exits. Still no hardware required: mock
@@ -135,8 +135,8 @@ before the first start, and keep that key:
 
 ```bash
 docker compose --profile provider create provider
-docker cp ~/.android/adbkey     device-yard-provider-1:/root/.android/
-docker cp ~/.android/adbkey.pub device-yard-provider-1:/root/.android/
+docker cp ~/.android/adbkey     yard-provider-1:/root/.android/
+docker cp ~/.android/adbkey.pub yard-provider-1:/root/.android/
 ```
 
 On **macOS** Docker cannot pass USB through at all, so the container talks to
@@ -297,5 +297,4 @@ rather than a broken one.
 | Frontend internals | [WEB.md](./WEB.md) |
 | The Rust provider design | [PROVIDER.md](./PROVIDER.md) |
 | Wire contract | [PROTOCOL.md](./PROTOCOL.md) |
-| What to read in the old STF sources | [REFERENCES.md](./REFERENCES.md) |
-| Renaming the project | [RENAMING.md](./RENAMING.md) |
+| What to read in the old STF sources | [REFERENCES.local.md](./REFERENCES.local.md) (local only, not committed) |

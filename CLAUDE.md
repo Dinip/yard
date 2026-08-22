@@ -12,8 +12,7 @@ Then, depending on what you're touching:
 [ARCHITECTURE.md](docs/ARCHITECTURE.md) · [DATA-MODEL.md](docs/DATA-MODEL.md) ·
 [COORDINATOR.md](docs/COORDINATOR.md) · [WEB.md](docs/WEB.md) ·
 [PROVIDER.md](docs/PROVIDER.md) · [PROTOCOL.md](docs/PROTOCOL.md) ·
-[CLEANUP.md](docs/CLEANUP.md) · [REFERENCES.md](docs/REFERENCES.md) ·
-[DEVELOPMENT.md](docs/DEVELOPMENT.md)
+[CLEANUP.md](docs/CLEANUP.md) · [DEVELOPMENT.md](docs/DEVELOPMENT.md)
 
 ## What this is
 
@@ -39,7 +38,7 @@ packages/provider/     cargo workspace: yard-protocol, provider-core,
 
 Reference sources live **outside** this repo as siblings: `../stf`,
 `../stf-ios-provider`, `../idevice`. They are read-only reference material — port
-from them, never import from them. See [REFERENCES.md](docs/REFERENCES.md).
+from them, never import from them. See `docs/REFERENCES.local.md`.
 
 ## Commands
 
@@ -76,8 +75,9 @@ See docs/DEVELOPMENT.md.
 - **Never hand-edit `generated.rs`.** Edit the zod schema and run
   `protocol:gen`. Every nested object needs `named("Foo", …)` or the generator
   errors rather than guessing a type name.
-- **The product name lives in `APP_NAME`.** Never hardcode "Device Farm" in a
-  user-visible string. See [RENAMING.md](docs/RENAMING.md).
+- **The product name lives in `packages/coordinator/src/app-name.ts`.** It
+  reaches the browser through `user.capabilities`; don't hardcode it a second
+  time in `packages/web`.
 - **Keep the docs in step with the code.** Before finishing a change, check
   whether the docs above describe what you just changed — an invariant, a wire
   message, a schema, a command — and update them in the same commit. PROGRESS.md

@@ -2,13 +2,14 @@ import { schema } from "@yard/db";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { admin } from "better-auth/plugins";
+import { APP_NAME } from "./app-name.ts";
 import { db } from "./db.ts";
 import { env } from "./env.ts";
 
 const microsoftConfigured = !!(env.MICROSOFT_CLIENT_ID && env.MICROSOFT_CLIENT_SECRET);
 
 export const auth = betterAuth({
-  appName: env.APP_NAME,
+  appName: APP_NAME,
   baseURL: env.PUBLIC_URL,
   basePath: "/api/auth",
   secret: env.AUTH_SECRET,

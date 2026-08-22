@@ -232,8 +232,10 @@ taller than the viewport still overflow that column and scroll `main`.
 
 `AppShell` puts navigation in a 56px icon rail down the left edge: brand mark,
 then the pages, then the account menu at the bottom. Labels are tooltips, and
-the brand's tooltip is the only place `APP_NAME` appears in the chrome — it
-still comes from `user.capabilities`, never a literal.
+the brand's tooltip is the only place the product name appears in the chrome —
+it comes from `user.capabilities`, never a literal, even though the
+coordinator's own source of it is now a hardcoded constant rather than an env
+var.
 
 A top bar spent a whole row of *every* page on, for a non-admin, a product name
 and one link, and the device page then stacked its own header underneath it. The
@@ -254,9 +256,8 @@ the image build passes in because the Docker context carries no `.git`, falling
 back to `git rev-parse HEAD` locally. A build with neither still ships — the
 stamp drops the sha, not the version.
 
-Unlike the product name, the repo URL is not `APP_NAME`-style configuration:
-where a deployment's source lives is a property of the build, not of the
-operator. It is a rename site — see [RENAMING.md](./RENAMING.md).
+Unlike the product name, the repo URL is not configuration: where a
+deployment's source lives is a property of the build, not of the operator.
 
 **Everything on this path goes to the provider's origin.** The coordinator is
 asked for one thing — a session token, from `device.sessionToken` — and is then

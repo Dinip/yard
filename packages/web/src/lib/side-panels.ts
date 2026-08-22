@@ -12,7 +12,7 @@
 
 export type SidePanel = "controls" | "details";
 
-const STORAGE_KEY = "farm.device.panels";
+const STORAGE_KEY = "yard.device.panels";
 
 export function loadPanelOpen(panel: SidePanel): boolean {
   try {

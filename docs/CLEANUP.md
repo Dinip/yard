@@ -13,7 +13,7 @@ preinstalled test harness on every phone does not.
 
 Worth reading first, because the shape of the problem is unchanged and STF's
 version has been in production for years. Both checkouts described in
-[REFERENCES.md](REFERENCES.md) were read; the file is
+`REFERENCES.local.md` were read; the file is
 `lib/units/device/plugins/cleanup.js`, 50 lines in our 3.7.1 fork and 163 in
 upstream 3.7.9.
 

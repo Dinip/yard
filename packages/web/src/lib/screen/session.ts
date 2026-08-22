@@ -227,7 +227,7 @@ export function installApp(
           "POST",
           `${grant.providerBaseUrl}/s/${deviceId}/install?token=${encodeURIComponent(grant.token)}`,
         );
-        xhr.setRequestHeader("x-farm-filename", file.name);
+        xhr.setRequestHeader("x-yard-filename", file.name);
         xhr.setRequestHeader("content-type", "application/octet-stream");
         xhr.upload.onprogress = (event) => {
           if (event.lengthComputable) onProgress(event.loaded / event.total);

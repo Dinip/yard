@@ -15,7 +15,7 @@ fn default_bind() -> String {
     "0.0.0.0:7100".into()
 }
 fn default_scratch() -> PathBuf {
-    PathBuf::from("/var/lib/farm/scratch")
+    PathBuf::from("/var/lib/yard/scratch")
 }
 fn default_max_upload_mb() -> u64 {
     2048
@@ -36,7 +36,7 @@ fn default_ddi_enabled() -> bool {
     true
 }
 fn default_ddi_cache() -> PathBuf {
-    PathBuf::from("/var/lib/farm/ddi")
+    PathBuf::from("/var/lib/yard/ddi")
 }
 /// doronz88's mirror of Xcode's personalized DDI — the same one pymobiledevice3
 /// auto-mounts from. One image serves every iOS 17+ device; it is Apple's, and
@@ -60,7 +60,7 @@ pub struct Config {
     pub coordinator_url: String,
 
     /// Bearer credential from `/admin/providers`. Prefer `token_file` or the
-    /// `FARM_PROVIDER_TOKEN` env var so a secret is not sitting in the YAML.
+    /// `YARD_PROVIDER_TOKEN` env var so a secret is not sitting in the YAML.
     #[serde(default)]
     pub token: Option<String>,
     #[serde(default)]
@@ -283,7 +283,7 @@ pub enum BackendKind {
 
 impl Config {
     pub fn load(path: &Path) -> Result<Self> {
-        Self::load_with_env(path, std::env::var("FARM_PROVIDER_TOKEN").ok())
+        Self::load_with_env(path, std::env::var("YARD_PROVIDER_TOKEN").ok())
     }
 
     /// The env override is a parameter rather than read in here so tests can
@@ -328,7 +328,7 @@ impl Config {
     fn validate(&self) -> Result<()> {
         if self.token.as_deref().unwrap_or("").is_empty() {
             bail!(
-                "no provider token: set FARM_PROVIDER_TOKEN, `token_file`, or `token`. \
+                "no provider token: set YARD_PROVIDER_TOKEN, `token_file`, or `token`. \
                  Issue one under /admin/providers in the coordinator."
             );
         }
@@ -733,7 +733,7 @@ devices:
         let config = Config::load_with_env(&path, None).unwrap();
 
         assert!(config.ddi.enabled);
-        assert_eq!(config.ddi.cache_dir, PathBuf::from("/var/lib/farm/ddi"));
+        assert_eq!(config.ddi.cache_dir, PathBuf::from("/var/lib/yard/ddi"));
         assert!(config.ddi.base().ends_with("Xcode_iOS_DDI_Personalized"));
     }
 

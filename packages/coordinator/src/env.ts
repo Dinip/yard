@@ -44,9 +44,6 @@ export const env = createEnv({
      * keeps the lifetime it was configured with until an admin changes it.
      */
     RESERVATION_TTL: z.coerce.number().int().default(900),
-
-    /** Display name of the product. Centralised here so a rename is one variable. */
-    APP_NAME: z.string().default("Device Farm"),
   },
   runtimeEnv: process.env,
   emptyStringAsUndefined: true,

@@ -133,4 +133,4 @@ the JWT in each session connect against it. No arbitration, no timers on-device.
 - [PROVIDER.md](./PROVIDER.md) — the Rust provider (phases 3–4)
 - [PROTOCOL.md](./PROTOCOL.md) — wire contract (phase 2)
 - [CLEANUP.md](./CLEANUP.md) — resetting a device between users
-- [REFERENCES.md](./REFERENCES.md) — what to read in the STF / stf-ios-provider sources
+- [REFERENCES.local.md](./REFERENCES.local.md) — what to read in the STF / stf-ios-provider sources (local only, not committed)

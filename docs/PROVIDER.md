@@ -33,7 +33,7 @@ packages/provider/
 cargo build --release -p yard-provider
 
 # Register a provider and issue a token under /admin/providers first.
-FARM_PROVIDER_TOKEN=pft_… \
+YARD_PROVIDER_TOKEN=pft_… \
   ./target/release/yard-provider --config packages/provider/provider.example.yaml
 ```
 
@@ -63,7 +63,7 @@ src/
 
 ### Config
 
-One real YAML file. Token precedence is `FARM_PROVIDER_TOKEN` > `token_file` >
+One real YAML file. Token precedence is `YARD_PROVIDER_TOKEN` > `token_file` >
 inline `token`, so a secret need never sit in the file. Unknown keys are
 rejected rather than ignored — a typo in a device stanza should not silently
 mean "no devices".
@@ -403,7 +403,7 @@ downloaded once per host, into `ddi.cache_dir`, and shared by every device on it
 ```yaml
 ddi:
   enabled: true                    # absent block = on, unlike `metrics:`
-  cache_dir: /var/lib/farm/ddi     # Image.dmg, BuildManifest.plist, Image.dmg.trustcache
+  cache_dir: /var/lib/yard/ddi     # Image.dmg, BuildManifest.plist, Image.dmg.trustcache
   base_url: https://raw.githubusercontent.com/doronz88/DeveloperDiskImage/main/PersonalizedImages/Xcode_iOS_DDI_Personalized
 ```
 

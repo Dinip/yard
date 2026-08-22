@@ -360,9 +360,9 @@ Fronting a provider at `/p` needs `uri strip_prefix /p` — the provider serves
 sits on "Session closed". Caddy's healthcheck probes the admin API now; the old
 one probed `127.0.0.1`, which matches no site once `SITE_ADDRESS` is a hostname.
 
-Also fixed: the app shell hardcoded "Device Farm" in its header, which
-[RENAMING.md](./RENAMING.md) exists to prevent. It reads `APP_NAME` through
-`user.capabilities` now, like the sign-in page always did.
+Also fixed: the app shell hardcoded "Device Farm" in its header instead of
+reading the product name. It reads it through `user.capabilities` now, like
+the sign-in page always did.
 
 **The fallback stream** is `multipart/x-mixed-replace` at ~3fps, served from the
 same screenshot primitive both backends already have, for browsers with no
@@ -1276,8 +1276,8 @@ icon rail down the left edge, labels in tooltips, account menu at the bottom. It
 costs width, which is the axis a portrait device leaves spare, and it took the
 canvas from 648px tall to 721px on the same screen.
 
-`APP_NAME` still never appears as a literal: the rail's brand mark carries it as
-a tooltip, from `user.capabilities`. See RENAMING.md.
+The product name still never appears as a literal in `packages/web`: the
+rail's brand mark carries it as a tooltip, from `user.capabilities`.
 
 ### `min-h-full` is not a height
 
@@ -1333,7 +1333,7 @@ what `cleanup.js` does and the four bugs not to inherit.
 
 | Item | State | Where |
 |---|---|---|
-| STF analysis + design written up | ✅ | `docs/CLEANUP.md`, `docs/REFERENCES.md` |
+| STF analysis + design written up | ✅ | `docs/CLEANUP.md`, `docs/REFERENCES.local.md` |
 | `cleaning` device status, `device.cleanup`, `cleanup.finished` | ✅ | `packages/protocol`, `packages/db` |
 | Backend primitives + cleanup orchestrator, under a deadline | ✅ | `provider-core/src/cleanup.rs`, all three backends |
 | Per-reservation app baseline, taken on `session.authorize` | ✅ | `.../supervisor.rs` |
@@ -1467,9 +1467,8 @@ values are vite `define` literals rather than another field on
 the Docker context has no `.git`, so `images.yml` passes `github.sha` as a
 build arg and a local build asks git itself.
 
-Unlike `APP_NAME`, the repo URL is a constant. Where a deployment's source
-lives is a property of the build, not something an operator sets — it is listed
-in [RENAMING.md](./RENAMING.md) instead.
+Unlike the product name, the repo URL is a constant: where a deployment's
+source lives is a property of the build, not something an operator sets.
 
 ---
 
@@ -1646,11 +1645,45 @@ encode. If heat is still a problem, that is the next thing to look at.
 
 ---
 
+## Renaming to YARD ✅
+
+The placeholder name is gone. The product is now **YARD - Device Farm**
+(**Y**our **A**ccess (to) **R**eal **D**evices).
+
+| Item | State | Where |
+|---|---|---|
+| `@farm/*` npm scope → `@yard/*` | ✅ | every `package.json`, every import |
+| `farm-protocol`/`farm-provider` Rust crates → `yard-protocol`/`yard-provider` | ✅ | `packages/provider/crates/` |
+| `farm_*` Prometheus metric namespace → `yard_*` | ✅ | `provider-core/src/metrics.rs`, Grafana dashboards |
+| `/.well-known/farm-jwks.json` → `/.well-known/yard-jwks.json` | ✅ | `packages/protocol/src/token.ts`, `Caddyfile` |
+| `FARM_CONFIG`/`FARM_PROVIDER_TOKEN`/`FARM_LOG` env vars → `YARD_*` | ✅ | `docker-compose.yml`, `provider.example.yaml`, `yard-provider/src/main.rs` |
+| `APP_NAME` env var removed; product name hardcoded | ✅ | `packages/coordinator/src/app-name.ts` |
+| `docs/RENAMING.md` removed | ✅ | it described a rename that is now done |
+| `docs/REFERENCES.md` → `docs/REFERENCES.local.md`, gitignored | ✅ | `.gitignore` (`*.local.md`) |
+
+**`APP_NAME` is gone, not renamed.** There was never going to be a second
+rename, so the env-var indirection stopped earning its keep — the name is now
+a plain constant in `packages/coordinator/src/app-name.ts`, still surfaced to
+`packages/web` through `user.capabilities` rather than duplicated as a
+literal there.
+
+**The JWKS path and the custom `x-*-filename` upload header both moved.**
+Both are wire contracts between coordinator/web and the provider, not just
+source-level identifiers, so the client and server sides were changed in the
+same commit. Safe to do now because nothing is deployed yet — an already-live
+farm would need to serve both JWKS paths for one release, per the coordination
+note the old RENAMING.md carried.
+
+**What deliberately did not move:** database table/column names (already
+generic), the GitHub repository name and `REPO_URL` in `build-info.ts`
+(renaming the repo is an infra action, not a code change), and the word
+"farm" wherever it is used as an ordinary noun in comments and docs — a
+device farm is still what this is, whatever it is called.
+
+---
+
 ## Open decisions
 
-- **Name.** The project is "Device Farm" as a placeholder. See
-  [RENAMING.md](./RENAMING.md) for the exact rename procedure — everything
-  user-visible already routes through the `APP_NAME` env var.
 - **Entra ID app registration.** Not yet created. Until `MICROSOFT_CLIENT_ID`
   and `MICROSOFT_CLIENT_SECRET` are set, sign-in falls back to email/password,
   which `ENABLE_EMAIL_PASSWORD` gates. Turn it off once Microsoft works.

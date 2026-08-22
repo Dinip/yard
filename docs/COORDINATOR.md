@@ -35,7 +35,6 @@ start on a bad config rather than failing on the first request. See
 | `AUTH_SECRET` | ≥32 chars. Rotating it invalidates every session |
 | `SESSION_TOKEN_PRIVATE_KEY` | Ed25519 PKCS#8 PEM. **Generated in memory if unset**, which invalidates live device sessions on every restart. Set it in production |
 | `ENABLE_EMAIL_PASSWORD` | Bootstrap path. Turn off once Microsoft sign-in works |
-| `APP_NAME` | The one place the product name lives — see RENAMING.md |
 
 ## Authentication
 

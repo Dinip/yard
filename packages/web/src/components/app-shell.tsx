@@ -39,8 +39,8 @@ import { trpc } from "@/lib/trpc";
 export function AppShell({ children }: { children: ReactNode }) {
   const router = useRouter();
   const { data: me } = useQuery(trpc.user.me.queryOptions());
-  // The product name lives in APP_NAME and reaches the browser through
-  // `user.capabilities`; hardcoding it here would survive a rename.
+  // The product name is hardcoded on the coordinator and reaches the browser
+  // through `user.capabilities`, so it has one source instead of two.
   const { data: caps } = useQuery(trpc.user.capabilities.queryOptions());
 
   return (

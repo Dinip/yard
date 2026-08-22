@@ -1,7 +1,7 @@
-# farm-provider configuration.
+# yard-provider configuration.
 #
-#   farm-provider --config provider.yaml
-#   farm-provider --config provider.yaml --check   # validate and exit
+#   yard-provider --config provider.yaml
+#   yard-provider --config provider.yaml --check   # validate and exit
 #
 # One process supervises every device on this host. Replaces
 # stf-ios-provider's one-container-per-device model.
@@ -10,7 +10,7 @@
 id: lab-1
 name: Lab 1
 
-coordinator_url: https://farm.example.com
+coordinator_url: https://yard.example.com
 
 # The URL the BROWSER uses to reach this provider directly, for video and
 # uploads. The coordinator never connects to it — providers dial out.
@@ -24,7 +24,7 @@ bind: 0.0.0.0:7100
 
 # Staged uploads land here and are deleted after every install, successful or
 # not. A tmpfs is a good choice — nothing here is meant to survive.
-scratch_dir: /var/lib/farm/scratch
+scratch_dir: /var/lib/yard/scratch
 max_upload_mb: 2048
 
 # Ports `adb connect` reaches an exposed device on. A device claims one while it
@@ -50,7 +50,7 @@ ddi:
   enabled: true
   # Holds Image.dmg, BuildManifest.plist and Image.dmg.trustcache. Not under
   # scratch_dir on purpose: that is meant to be a tmpfs, this is meant to last.
-  cache_dir: /var/lib/farm/ddi
+  cache_dir: /var/lib/yard/ddi
   base_url: https://raw.githubusercontent.com/doronz88/DeveloperDiskImage/main/PersonalizedImages/Xcode_iOS_DDI_Personalized
 
 # Turn an idle device's screen off until somebody reserves it, and wake it back
@@ -79,10 +79,10 @@ metrics:
   app_patterns:
     - "*.demo.*"
 
-# Prefer FARM_PROVIDER_TOKEN or token_file over an inline token.
+# Prefer YARD_PROVIDER_TOKEN or token_file over an inline token.
 # Precedence: env var > token_file > token.
 #   token: pft_...
-#   token_file: /run/secrets/farm-provider-token
+#   token_file: /run/secrets/yard-provider-token
 
 devices:
   # Synthetic devices. No hardware required — this is how the provider is
