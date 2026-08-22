@@ -1,3 +1,9 @@
+# Runs the published images from GHCR. `VERSION_TAG` pins the version — `latest`
+# tracks releases, `edge` the tip of main, or a `1.2.3` for a fixed one.
+#
+# To build the images from this checkout instead:
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up --build
+
 name: yard
 
 services:
@@ -19,9 +25,7 @@ services:
       - "${POSTGRES_PORT:-5432}:5432"
 
   coordinator:
-    build:
-      context: .
-      dockerfile: packages/coordinator/Dockerfile
+    image: ghcr.io/dinip/yard/coordinator:${VERSION_TAG:-latest}
     restart: unless-stopped
     depends_on:
       postgres:
@@ -46,9 +50,7 @@ services:
       start_period: 20s
 
   web:
-    build:
-      context: .
-      dockerfile: packages/web/Dockerfile
+    image: ghcr.io/dinip/yard/web:${VERSION_TAG:-latest}
     restart: unless-stopped
 
   caddy:
@@ -93,9 +95,7 @@ services:
   # testing uses.
   provider:
     profiles: ["provider"]
-    build:
-      context: .
-      dockerfile: packages/provider/Dockerfile
+    image: ghcr.io/dinip/yard/provider:${VERSION_TAG:-latest}
     restart: unless-stopped
     ports:
       - "${PROVIDER_PORT:-7100}:7100"

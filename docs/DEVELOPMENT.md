@@ -88,7 +88,8 @@ provider running on the host. The default `up -d` still brings up Postgres alone
 ## Running the whole thing in Docker
 
 The production shape — Caddy in front, coordinator and web in containers,
-migrations applied by the entrypoint, a real signing key:
+migrations applied by the entrypoint, a real signing key. The images are pulled
+from GHCR, so nothing is built here:
 
 ```bash
 cp .env.example .env.docker      # then fill in, or see below
@@ -191,11 +192,23 @@ silent no-op.
 
 ```bash
 cp .env.example .env    # set PUBLIC_URL, AUTH_SECRET, SITE_ADDRESS
-docker compose up --build
+docker compose up -d
 ```
 
 Migrations run automatically from the coordinator's entrypoint, so this is a
 one-command deploy on a single node.
+
+`docker-compose.yml` pulls `ghcr.io/dinip/yard/{coordinator,web,provider}`.
+`VERSION_TAG` picks which build — `latest` for releases, `edge` for the tip of
+`main`, or a pinned `1.2.3`. To build from the checkout instead, add the build
+overlay:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.build.yml up --build
+```
+
+It only adds the `build:` stanzas; the tags still come from `VERSION_TAG`, so set
+that to something like `dev` if a pulled `latest` is also on the host.
 
 The `provider` service is behind a profile because it needs host device access:
 
