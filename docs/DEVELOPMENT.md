@@ -210,15 +210,26 @@ docker compose --profile provider up
 | `pr.yml` | pull requests | lint, typecheck, tests, drift guard, amd64 build of all three images |
 | `edge.yml` | push to `main` | publishes `edge` and `sha-<commit>` |
 | `release.yml` | push to `main` | grooms the release PR; on merge, publishes `1.2.3`, `1.2` and `latest` |
+| `rust-cache.yml` | push to `main` | rebuilds the Rust cache that pull requests restore |
 
-All three call `images.yml`, which builds each architecture on its own native
-runner (`ubuntu-24.04` and `ubuntu-24.04-arm`) and merges the digests into one
-manifest list. Nothing is cross-built under QEMU — emulating a Rust compile is
-slow enough to dominate the pipeline. Tags are decided by the caller and passed
-in, never derived from the ref, because a release build does not run from a tag.
+`pr.yml`, `edge.yml` and `release.yml` call `images.yml`, which builds each
+architecture on its own native runner (`ubuntu-24.04` and `ubuntu-24.04-arm`)
+and merges the digests into one manifest list. Nothing is cross-built under
+QEMU, because emulating a Rust compile is slow enough to dominate the pipeline.
+Tags are decided by the caller and passed in, never derived from the ref,
+because a release build does not run from a tag.
 
 Neither publishing path re-runs the test suite: the commit passed CI as a pull
 request, and the only thing left to prove is that the images build.
+
+`rust-cache.yml` is there because a cache belongs to the ref that wrote it. A
+pull request restores its own or the base branch's, never another pull
+request's. So main builds the workspace and saves it, and `pr.yml` restores with
+`save-if: false`. Before that, every pull request compiled from cold and then
+saved 400 MB no other run could read, crowding the repository's 10 GB budget and
+evicting shared image layers. Both jobs pin `CARGO_PROFILE_DEV_DEBUG=0`. Keep it
+identical in the two files: a differing profile changes every fingerprint, and
+the restore turns into a full rebuild.
 
 `images.yml` passes `GIT_SHA=${{ github.sha }}` as a build arg. The web image
 bakes it into the bundle so the UI can name the commit it is running; see
