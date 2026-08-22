@@ -221,9 +221,9 @@ docker compose --profile provider up
 | Workflow | Runs on | Does |
 |---|---|---|
 | `pr.yml` | pull requests | lint, typecheck, tests, drift guard, amd64 build of all three images |
-| `edge.yml` | push to `main` | publishes `edge` and `sha-<commit>` |
+| `edge.yml` | push to `main` touching build inputs | publishes `edge` and `sha-<commit>` |
 | `release.yml` | push to `main` | grooms the release PR; on merge, publishes `1.2.3`, `1.2` and `latest` |
-| `rust-cache.yml` | push to `main` | rebuilds the Rust cache that pull requests restore |
+| `rust-cache.yml` | push to `main` touching Rust | rebuilds the Rust cache that pull requests restore |
 
 `pr.yml`, `edge.yml` and `release.yml` call `images.yml`, which builds each
 architecture on its own native runner (`ubuntu-24.04` and `ubuntu-24.04-arm`)

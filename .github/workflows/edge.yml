@@ -6,6 +6,17 @@ name: Edge
 on:
   push:
     branches: [main]
+    paths:
+      - .github/workflows/edge.yml
+      - .github/workflows/images.yml
+      - .release-please-manifest.json
+      - packages/**
+      - package.json
+      - bun.lock
+      - bunfig.toml
+      - tsconfig.base.json
+      - Cargo.toml
+      - Cargo.lock
 
 permissions:
   contents: read

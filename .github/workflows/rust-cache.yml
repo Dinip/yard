@@ -7,6 +7,11 @@ name: Rust cache
 on:
   push:
     branches: [main]
+    paths:
+      - .github/workflows/rust-cache.yml
+      - Cargo.toml
+      - Cargo.lock
+      - packages/provider/**
 
 permissions:
   contents: read
