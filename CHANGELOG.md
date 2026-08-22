@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/Dinip/yard/compare/v0.1.0...v0.1.1) (2026-08-22)
+
+
+### Bug Fixes
+
+* **provider:** exec the correct binary name in the entrypoint ([#36](https://github.com/Dinip/yard/issues/36)) ([f5a1ca9](https://github.com/Dinip/yard/commit/f5a1ca98c40ce11ba2af075cadedcf2a34365180))
+
 ## 0.1.0 (2026-08-22)
 
 
