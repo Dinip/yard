@@ -17,7 +17,7 @@ declare const __GIT_SHA__: string | null;
  * Not configuration: the source of a deployment is the repo it was built
  * from, not something an operator sets.
  */
-export const REPO_URL = "https://github.com/Dinip/device-farm";
+export const REPO_URL = "https://github.com/Dinip/yard";
 
 export const VERSION = typeof __APP_VERSION__ === "string" ? __APP_VERSION__ : "0.0.0";
 
