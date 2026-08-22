@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use anyhow::{bail, Context as _, Result};
 use base64::Engine as _;
-use farm_protocol::SESSION_TOKEN_AUDIENCE;
+use yard_protocol::SESSION_TOKEN_AUDIENCE;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation};
 use serde::Deserialize;
 use tokio::sync::RwLock;

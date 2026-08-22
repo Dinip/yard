@@ -1,7 +1,7 @@
-import type { AppRouter } from "@farm/coordinator/router";
 import { QueryClient } from "@tanstack/react-query";
 import { createTRPCClient, httpBatchLink, httpSubscriptionLink, splitLink } from "@trpc/client";
 import { createTRPCOptionsProxy } from "@trpc/tanstack-react-query";
+import type { AppRouter } from "@yard/coordinator/router";
 
 export const queryClient = new QueryClient({
   defaultOptions: {

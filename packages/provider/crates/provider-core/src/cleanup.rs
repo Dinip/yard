@@ -24,7 +24,7 @@
 
 use std::collections::HashSet;
 
-use farm_protocol::{AppFilter, CleanupSteps};
+use yard_protocol::{AppFilter, CleanupSteps};
 
 use crate::backend::{BackendError, DeviceBackend};
 

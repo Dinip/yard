@@ -159,10 +159,10 @@
       "type": "hello.ack",
       "protocolVersion": 1,
       "heartbeatIntervalMs": 15000,
-      "jwksUrl": "https://farm.example.com/.well-known/farm-jwks.json",
-      "issuer": "https://farm.example.com",
+      "jwksUrl": "https://yard.example.com/.well-known/yard-jwks.json",
+      "issuer": "https://yard.example.com",
       "webOrigins": [
-        "https://farm.example.com"
+        "https://yard.example.com"
       ]
     },
     "helloReject": {

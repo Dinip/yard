@@ -1,6 +1,6 @@
-import type { Database } from "@farm/db";
-import { device, joinRequest, reservation, reservationObserver } from "@farm/db";
-import type { AuditAction } from "@farm/protocol";
+import type { Database } from "@yard/db";
+import { device, joinRequest, reservation, reservationObserver } from "@yard/db";
+import type { AuditAction } from "@yard/protocol";
 import { and, eq, inArray, isNull, lt } from "drizzle-orm";
 import { providers } from "../gateway/registry.ts";
 import { adbAuthRequests } from "./adb-auth.ts";

@@ -56,7 +56,7 @@ pub struct Config {
     pub id: String,
     pub name: String,
 
-    /// Coordinator base URL, e.g. `https://farm.example.com`.
+    /// Coordinator base URL, e.g. `https://yard.example.com`.
     pub coordinator_url: String,
 
     /// Bearer credential from `/admin/providers`. Prefer `token_file` or the
@@ -478,7 +478,7 @@ impl Config {
     }
 
     pub fn jwks_url(&self) -> String {
-        format!("{}{}", self.coordinator_base(), farm_protocol::JWKS_PATH)
+        format!("{}{}", self.coordinator_base(), yard_protocol::JWKS_PATH)
     }
 
     pub fn max_upload_bytes(&self) -> u64 {
@@ -510,7 +510,7 @@ mod tests {
     const MINIMAL: &str = r#"
 id: lab-1
 name: Lab 1
-coordinator_url: https://farm.example.com/
+coordinator_url: https://yard.example.com/
 public_base_url: https://lab-1.example.com/
 token: pft_secret
 devices:
@@ -583,11 +583,11 @@ devices:
 
         assert_eq!(
             config.control_url(),
-            "wss://farm.example.com/api/providers/connect"
+            "wss://yard.example.com/api/providers/connect"
         );
         assert_eq!(
             config.jwks_url(),
-            "https://farm.example.com/.well-known/farm-jwks.json"
+            "https://yard.example.com/.well-known/yard-jwks.json"
         );
         assert_eq!(config.public_base(), "https://lab-1.example.com");
     }
@@ -595,7 +595,7 @@ devices:
     #[test]
     fn http_coordinator_yields_ws_not_wss() {
         let (_dir, path) =
-            write(&MINIMAL.replace("https://farm.example.com/", "http://localhost:3000"));
+            write(&MINIMAL.replace("https://yard.example.com/", "http://localhost:3000"));
         let config = Config::load_with_env(&path, None).unwrap();
         assert_eq!(
             config.control_url(),

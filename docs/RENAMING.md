@@ -44,13 +44,13 @@ free; on a live one it is a migration.
 
 ### 4. Rust crate names — moderate
 
-`farm-protocol`, `provider-core`, `backend-ios`, `backend-android` and the
+`yard-protocol`, `provider-core`, `backend-ios`, `backend-android` and the
 workspace `Cargo.toml`. Once phase 3 exists this is a `sed` plus a
 `cargo build` to confirm.
 
 ### 5. Wire-protocol constants — check before changing
 
-`/.well-known/farm-jwks.json` is a public URL that **providers fetch and cache**.
+`/.well-known/yard-jwks.json` is a public URL that **providers fetch and cache**.
 Changing it requires deploying coordinator and providers together, or serving
 both paths for one release. Not hard, but it is the one rename with a
 coordination cost.

@@ -33,8 +33,8 @@ packages/db/           drizzle schema, migrations, client
 packages/coordinator/  Hono + tRPC + better-auth + provider gateway
 packages/web/          TanStack Router SPA + shadcn
 packages/protocol/     zod schemas + Rust codegen + fake provider
-packages/provider/     cargo workspace: farm-protocol, provider-core,
-                       backend-mock, farm-provider (ios: 3b, android: 4)
+packages/provider/     cargo workspace: yard-protocol, provider-core,
+                       backend-mock, yard-provider (ios: 3b, android: 4)
 ```
 
 Reference sources live **outside** this repo as siblings: `../stf`,

@@ -21,7 +21,7 @@
  * but that is the degraded path, not the intended one.
  */
 
-import { AU_DELTA, AU_KEY, AU_KEY_RESET } from "@farm/protocol";
+import { AU_DELTA, AU_KEY, AU_KEY_RESET } from "@yard/protocol";
 import { normalizeRotation } from "@/lib/screen/rotation";
 
 export interface RendererOptions {

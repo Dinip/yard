@@ -1,5 +1,5 @@
 {
-  "name": "@farm/web",
+  "name": "@yard/web",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -10,8 +10,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@farm/coordinator": "workspace:*",
-    "@farm/protocol": "workspace:*",
+    "@yard/coordinator": "workspace:*",
+    "@yard/protocol": "workspace:*",
     "@tanstack/react-query": "^5.101.4",
     "@tanstack/react-router": "^1.170.19",
     "@trpc/client": "^11.18.0",

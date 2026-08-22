@@ -1,6 +1,6 @@
-import { AUDIT_ACTION_VALUES, auditActionLabel, auditActionsByGroup } from "@farm/protocol";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, redirect } from "@tanstack/react-router";
+import { AUDIT_ACTION_VALUES, auditActionLabel, auditActionsByGroup } from "@yard/protocol";
 import { X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { z } from "zod";

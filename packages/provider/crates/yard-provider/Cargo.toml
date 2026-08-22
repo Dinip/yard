@@ -1,5 +1,5 @@
 [package]
-name = "farm-provider"
+name = "yard-provider"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -7,11 +7,11 @@ license.workspace = true
 description = "Device provider: one process per host, supervising every attached device"
 
 [[bin]]
-name = "farm-provider"
+name = "yard-provider"
 path = "src/main.rs"
 
 [dependencies]
-farm-protocol.workspace = true
+yard-protocol.workspace = true
 provider-core.workspace = true
 backend-mock.workspace = true
 backend-ios.workspace = true

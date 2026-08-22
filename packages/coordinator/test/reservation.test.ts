@@ -12,7 +12,7 @@ import {
   reservationObserver,
   setting,
   user,
-} from "@farm/db";
+} from "@yard/db";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { db } from "../src/db.ts";
 import { startReservationReaper } from "../src/lib/reservations.ts";

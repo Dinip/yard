@@ -9,7 +9,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use farm_protocol::{
+use yard_protocol::{
     AppFilter, AppInfo, CleanupSteps, CommandPayload, DeviceStatus, Platform, ProviderMessage,
 };
 use provider_core::backend::DeviceBackend;

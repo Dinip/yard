@@ -1,6 +1,6 @@
-import { userAdbKey } from "@farm/db";
-import { AdbKeyParseError, parseAdbPublicKey } from "@farm/protocol/adbkey";
 import { TRPCError } from "@trpc/server";
+import { userAdbKey } from "@yard/db";
+import { AdbKeyParseError, parseAdbPublicKey } from "@yard/protocol/adbkey";
 import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { authCapabilities } from "../../auth.ts";

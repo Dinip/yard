@@ -8,8 +8,8 @@
  * (docker compose -f docker-compose.dev.yml up -d).
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { auditLog, device, provider, reservation, setting, user } from "@farm/db";
-import type { CommandPayload } from "@farm/protocol";
+import { auditLog, device, provider, reservation, setting, user } from "@yard/db";
+import type { CommandPayload } from "@yard/protocol";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { db } from "../src/db.ts";
 import { ProviderConnection, providers } from "../src/gateway/registry.ts";

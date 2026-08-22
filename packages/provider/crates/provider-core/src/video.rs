@@ -42,7 +42,7 @@ pub struct AccessUnit {
 
 /// What the stream currently looks like, geometrically.
 ///
-/// Deliberately a plain struct rather than `farm_protocol::Display`: this module
+/// Deliberately a plain struct rather than `yard_protocol::Display`: this module
 /// is protocol-free so that a backend can publish geometry without depending on
 /// the wire format. `server.rs` does the mapping.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]

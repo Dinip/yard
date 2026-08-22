@@ -7,7 +7,7 @@
 //!
 //! If this file is missing, run `bun test packages/protocol` first.
 
-use farm_protocol::{
+use yard_protocol::{
     ClientMessage, CoordinatorMessage, FileListing, ProviderMessage, ServerMessage,
 };
 use serde::{de::DeserializeOwned, Serialize};

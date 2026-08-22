@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use farm_protocol::{CommandPayload, Platform, ProviderMessage};
+use yard_protocol::{CommandPayload, Platform, ProviderMessage};
 use provider_core::backend::DeviceBackend;
 use provider_core::control::{CommandHandler, ControlSender};
 use provider_core::session::SessionRegistry;

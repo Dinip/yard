@@ -14,7 +14,7 @@ use std::time::Duration;
 use tokio::sync::{oneshot, Mutex};
 use tracing::{debug, warn};
 
-use farm_protocol::{AdbKey, ProviderMessage};
+use yard_protocol::{AdbKey, ProviderMessage};
 
 use crate::control::{now_millis, AdbAuthDecision, ControlSender};
 use crate::session::SessionRegistry;

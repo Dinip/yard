@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use anyhow::{bail, Context as _, Result};
 use clap::Parser;
-use farm_protocol::Platform;
+use yard_protocol::Platform;
 use provider_core::auth::TokenVerifier;
 use provider_core::config::{BackendKind, Config};
 use provider_core::control::ControlClient;
@@ -24,7 +24,7 @@ use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser, Debug)]
-#[command(name = "farm-provider", version, about = "Device provider")]
+#[command(name = "yard-provider", version, about = "Device provider")]
 struct Args {
     /// Path to provider.yaml.
     #[arg(
@@ -56,7 +56,7 @@ async fn main() -> Result<()> {
         devices = config.devices.len(),
         coordinator = %config.coordinator_base(),
         public = %config.public_base(),
-        "farm-provider {}",
+        "yard-provider {}",
         env!("CARGO_PKG_VERSION")
     );
 

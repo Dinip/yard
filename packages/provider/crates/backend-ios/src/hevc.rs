@@ -1,7 +1,7 @@
 //! HEVC depacketisation and the browser-facing access-unit format.
 //!
 //! Ported from `stf-ios-provider/src/device/hevc.rs`. Only the framing byte and
-//! the `AccessUnit` shape were dropped: `farm-protocol` owns the wire framing
+//! the `AccessUnit` shape were dropped: `yard-protocol` owns the wire framing
 //! now, and `provider-core::video` owns the access-unit type, because both are
 //! shared with the Android backend.
 //!

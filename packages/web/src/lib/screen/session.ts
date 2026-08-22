@@ -10,7 +10,7 @@
  * not as an expiry. Each artifact-plane request mints a fresh one.
  */
 
-import type { ClientMessage, FileListing, ServerMessage } from "@farm/protocol";
+import type { ClientMessage, FileListing, ServerMessage } from "@yard/protocol";
 import { trpcClient } from "@/lib/trpc";
 
 export type SessionState = "idle" | "connecting" | "open" | "closed";

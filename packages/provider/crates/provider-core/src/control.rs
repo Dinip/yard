@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{bail, Context as _, Result};
-use farm_protocol::{
+use yard_protocol::{
     CommandData, CommandPayload, CoordinatorMessage, DeviceSnapshot, ProviderMessage,
     PROTOCOL_VERSION,
 };

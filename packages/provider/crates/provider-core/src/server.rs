@@ -20,7 +20,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::Router;
 use base64::Engine as _;
-use farm_protocol::{frame_au, AuKind, ClientMessage, Display, ServerMessage};
+use yard_protocol::{frame_au, AuKind, ClientMessage, Display, ServerMessage};
 use futures::{SinkExt as _, StreamExt as _};
 use serde::Deserialize;
 use tokio::io::AsyncWriteExt as _;

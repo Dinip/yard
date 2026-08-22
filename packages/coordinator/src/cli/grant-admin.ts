@@ -4,7 +4,7 @@
  *
  *   bun packages/coordinator/src/cli/grant-admin.ts someone@example.com
  */
-import { user } from "@farm/db";
+import { user } from "@yard/db";
 import { eq } from "drizzle-orm";
 import { db, pool } from "../db.ts";
 

@@ -10,7 +10,7 @@ while collapsing N containers, N ZMQ connections and N config files into one.
 
 | Crate | State |
 |---|---|
-| `farm-protocol` | ✅ generated wire types + framing helpers |
+| `yard-protocol` | ✅ generated wire types + framing helpers |
 | `provider-core` | ✅ config, control plane, session plane, supervision, JWT auth |
 | `backend-mock` | ✅ synthetic device — the whole provider runs with no hardware |
 | `backend-ios` | ✅ CoreDevice over a root-free RSD tunnel, iOS 17.4+ |
@@ -21,20 +21,20 @@ packages/provider/
 ├── Dockerfile
 ├── provider.example.yaml
 └── crates/
-    ├── farm-protocol/    generated mirror of packages/protocol
+    ├── yard-protocol/    generated mirror of packages/protocol
     ├── provider-core/    everything that is not device-specific
     ├── backend-mock/     synthetic device
-    └── farm-provider/    the binary
+    └── yard-provider/    the binary
 ```
 
 ## Running it
 
 ```bash
-cargo build --release -p farm-provider
+cargo build --release -p yard-provider
 
 # Register a provider and issue a token under /admin/providers first.
 FARM_PROVIDER_TOKEN=pft_… \
-  ./target/release/farm-provider --config packages/provider/provider.example.yaml
+  ./target/release/yard-provider --config packages/provider/provider.example.yaml
 ```
 
 `--check` validates the config and exits, which is also the container's
@@ -191,7 +191,7 @@ metrics:
 ```yaml
 # prometheus.yml
 scrape_configs:
-  - job_name: farm-provider
+  - job_name: yard-provider
     static_configs:
       - targets: ["lab-1.example.com:9100"]
 ```
@@ -203,7 +203,7 @@ inherit the CORS layer. There is deliberately **no auth** on the metrics port �
 bind it to an interface only your monitoring reaches. It is not a fifth plane;
 see [ARCHITECTURE.md](./ARCHITECTURE.md).
 
-**`farm_device_status` is reconstructed, not reported.** A provider's own status
+**`yard_device_status` is reconstructed, not reported.** A provider's own status
 is only ever `preparing`, `ready` or `unhealthy` — `busy` is the coordinator's
 word, set when a reservation goes active, and the supervisor deliberately never
 writes it. Exporting the raw value made `busy` a permanently dead series and made
@@ -233,7 +233,7 @@ double-count under `sum without(mode)`.
 how Prometheus spells "no data" — `rate()` and `avg_over_time` handle a gap, and
 `absent()` alerts on it. Re-serving the last known value would be a lie: an
 unplugged phone would show a flat, healthy 40 °C forever. The operational
-metrics (`farm_device_status`, viewers, install counts, error counts) are read
+metrics (`yard_device_status`, viewers, install counts, error counts) are read
 live and are never suppressed, which is what keeps *the device is gone* — status
 still reported, no CPU series — distinguishable from *the exporter is broken*,
 where there is nothing at all. A backend that answers `Unsupported` is a success
@@ -345,7 +345,7 @@ the gas gauge's reply is non-empty and useless, so an emptiness check takes it a
 never falls through. That was a real bug, caught only on hardware.
 
 The temperature parsing is kept anyway, since it costs nothing and another iOS
-version may populate it; `farm_device_battery_temperature_celsius` is simply
+version may populate it; `yard_device_battery_temperature_celsius` is simply
 absent for an iPhone, which is what an absent series is for. `metrics()` answers
 `Ok` with mostly `None` rather than `Unsupported`, so a healthy iPhone does not
 advance the exporter's error counter.

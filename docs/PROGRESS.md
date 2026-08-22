@@ -46,13 +46,13 @@ appear and disappear live.* — **met**
 | Item | State | Where |
 |---|---|---|
 | zod schemas for control, session and artifact planes | ✅ | `packages/protocol/src/` |
-| `bun run protocol:gen` → `crates/farm-protocol/src/generated.rs` | ✅ | `packages/protocol/scripts/` |
-| Cross-language fixture round-trip (zod ↔ serde) | ✅ | `test/fixtures.ts`, `crates/farm-protocol/tests/` |
+| `bun run protocol:gen` → `crates/yard-protocol/src/generated.rs` | ✅ | `packages/protocol/scripts/` |
+| Cross-language fixture round-trip (zod ↔ serde) | ✅ | `test/fixtures.ts`, `crates/yard-protocol/tests/` |
 | Provider CRUD + token issuance/revocation | ✅ | `.../routers/provider.ts` |
 | `/api/providers/connect` gateway + control-plane state machine | ✅ | `.../gateway/` |
 | Inventory reconciliation; devices → `absent` on drop | ✅ | `.../gateway/handler.ts` |
 | Command correlation with per-command timeouts | ✅ | `.../gateway/registry.ts` |
-| Ed25519 session tokens + `/.well-known/farm-jwks.json` | ✅ | `.../lib/session-token.ts` |
+| Ed25519 session tokens + `/.well-known/yard-jwks.json` | ✅ | `.../lib/session-token.ts` |
 | `stream.devices` SSE subscription + live device list | ✅ | `.../routers/stream.ts`, `web/src/hooks/` |
 | Device commands (apps, launch, uninstall, reboot, rotate, adb) | ✅ | `.../routers/device.ts` |
 | Admin providers + tokens UI | ✅ | `web/src/routes/_app/admin.providers.tsx` |
@@ -81,7 +81,7 @@ reserves, and serves a session-plane connection with a valid token.* — **met**
 
 | Item | State | Where |
 |---|---|---|
-| Cargo workspace + `farm-provider` binary | ✅ | `packages/provider/crates/` |
+| Cargo workspace + `yard-provider` binary | ✅ | `packages/provider/crates/` |
 | One YAML config, multi-device, token precedence | ✅ | `provider-core/src/config.rs` |
 | `DeviceBackend` trait — the seam for iOS/Android | ✅ | `provider-core/src/backend.rs` |
 | Codec-agnostic access-unit fan-out | ✅ | `provider-core/src/video.rs` |
@@ -1129,12 +1129,12 @@ provider-local, in the spirit of Phase 13's recorder.
 ### Verified with no hardware
 
 `--profile observability` up, the real binary running two mock devices: Prometheus
-reports the target `up`, `farm_device_cpu_seconds_total` advances between scrapes,
+reports the target `up`, `yard_device_cpu_seconds_total` advances between scrapes,
 `sum by (device) (rate(...{mode!="idle"}[2m])) / sum by (device) (rate(...[2m]))`
-reads ~0.18 against the mock's ~0.15 ± wobble, `farm_app_memory_pss_bytes` exists
+reads ~0.18 against the mock's ~0.15 ± wobble, `yard_app_memory_pss_bytes` exists
 for `com.example.demo.player` and not for `com.example.mock.app`, the iOS mock has
 no CPU series at all, and Grafana provisions the dashboard. With a deliberately
-bad provider token, `farm_provider_control_connected` reads 0 while every device
+bad provider token, `yard_provider_control_connected` reads 0 while every device
 metric keeps being served — the exporter does not depend on the coordinator.
 
 **A real bug the tests caught.** The encoder wrote each sample as it went, which
@@ -1174,7 +1174,7 @@ out of it. Both real shapes are now test fixtures.
 
 ### A second bug the hardware caught
 
-A reserved device reported `farm_device_status{status="ready"}`. The provider's
+A reserved device reported `yard_device_status{status="ready"}`. The provider's
 own status can never be `busy` — that is the coordinator's word — so the raw
 export made the `busy` series permanently dead *and* made every in-use device
 advertise itself as available. The exporter now combines the provider status with

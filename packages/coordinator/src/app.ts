@@ -1,5 +1,5 @@
-import { JWKS_PATH } from "@farm/protocol";
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
+import { JWKS_PATH } from "@yard/protocol";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";

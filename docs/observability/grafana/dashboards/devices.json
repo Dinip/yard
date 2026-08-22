@@ -16,7 +16,7 @@
           "type": "prometheus",
           "uid": "farm-prometheus"
         },
-        "query": "label_values(farm_device_status, device)",
+        "query": "label_values(yard_device_status, device)",
         "includeAll": true,
         "multi": true,
         "current": {
@@ -25,7 +25,7 @@
         },
         "refresh": 1,
         "sort": 1,
-        "definition": "label_values(farm_device_status, device)",
+        "definition": "label_values(yard_device_status, device)",
         "label": "Device"
       }
     ]
@@ -52,7 +52,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (device) (rate(farm_device_cpu_seconds_total{device=~\"$device\",mode!=\"idle\"}[5m])) / sum by (device) (rate(farm_device_cpu_seconds_total{device=~\"$device\"}[5m]))",
+          "expr": "sum by (device) (rate(yard_device_cpu_seconds_total{device=~\"$device\",mode!=\"idle\"}[5m])) / sum by (device) (rate(yard_device_cpu_seconds_total{device=~\"$device\"}[5m]))",
           "legendFormat": "{{device}}",
           "datasource": {
             "type": "prometheus",
@@ -87,7 +87,7 @@
       },
       "targets": [
         {
-          "expr": "farm_device_memory_used_bytes{device=~\"$device\"}",
+          "expr": "yard_device_memory_used_bytes{device=~\"$device\"}",
           "legendFormat": "{{device}}",
           "datasource": {
             "type": "prometheus",
@@ -122,7 +122,7 @@
       },
       "targets": [
         {
-          "expr": "farm_device_battery_temperature_celsius{device=~\"$device\"}",
+          "expr": "yard_device_battery_temperature_celsius{device=~\"$device\"}",
           "legendFormat": "{{device}} battery",
           "datasource": {
             "type": "prometheus",
@@ -133,7 +133,7 @@
           "editorMode": "code"
         },
         {
-          "expr": "farm_device_thermal_zone_celsius{device=~\"$device\"}",
+          "expr": "yard_device_thermal_zone_celsius{device=~\"$device\"}",
           "legendFormat": "{{device}} {{zone}}",
           "datasource": {
             "type": "prometheus",
@@ -169,7 +169,7 @@
       },
       "targets": [
         {
-          "expr": "farm_device_battery_level_ratio{device=~\"$device\"}",
+          "expr": "yard_device_battery_level_ratio{device=~\"$device\"}",
           "legendFormat": "{{device}}",
           "datasource": {
             "type": "prometheus",
@@ -205,7 +205,7 @@
       },
       "targets": [
         {
-          "expr": "farm_app_memory_pss_bytes{device=~\"$device\"}",
+          "expr": "yard_app_memory_pss_bytes{device=~\"$device\"}",
           "legendFormat": "{{device}} {{app}}",
           "datasource": {
             "type": "prometheus",
@@ -284,7 +284,7 @@
             "type": "prometheus",
             "uid": "farm-prometheus"
           },
-          "expr": "1 * sum by (device) (farm_device_status{device=~\"$device\",status=\"absent\"}) + 2 * sum by (device) (farm_device_status{device=~\"$device\",status=\"present\"}) + 3 * sum by (device) (farm_device_status{device=~\"$device\",status=\"preparing\"}) + 4 * sum by (device) (farm_device_status{device=~\"$device\",status=\"ready\"}) + 5 * sum by (device) (farm_device_status{device=~\"$device\",status=\"busy\"}) + 6 * sum by (device) (farm_device_status{device=~\"$device\",status=\"unhealthy\"})",
+          "expr": "1 * sum by (device) (yard_device_status{device=~\"$device\",status=\"absent\"}) + 2 * sum by (device) (yard_device_status{device=~\"$device\",status=\"present\"}) + 3 * sum by (device) (yard_device_status{device=~\"$device\",status=\"preparing\"}) + 4 * sum by (device) (yard_device_status{device=~\"$device\",status=\"ready\"}) + 5 * sum by (device) (yard_device_status{device=~\"$device\",status=\"busy\"}) + 6 * sum by (device) (yard_device_status{device=~\"$device\",status=\"unhealthy\"})",
           "legendFormat": "{{device}}",
           "refId": "A",
           "range": true,

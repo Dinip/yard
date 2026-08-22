@@ -1,5 +1,5 @@
-import { device, provider, providerToken, user } from "@farm/db";
 import { TRPCError } from "@trpc/server";
+import { device, provider, providerToken, user } from "@yard/db";
 import { count, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { providers } from "../../gateway/registry.ts";

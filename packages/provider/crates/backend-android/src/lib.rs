@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 use adb_bridge::Bridge;
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
-use farm_protocol::{AppInfo, Display, FileEntry, FileKind, FileListing, Platform};
+use yard_protocol::{AppInfo, Display, FileEntry, FileKind, FileListing, Platform};
 use provider_core::adb_auth::AdbAuthority;
 use provider_core::backend::{
     join_path, parent_of, AppFilter, BackendError, DeviceBackend, DeviceInfo, DeviceMetrics,

@@ -8,9 +8,9 @@
  * admitted by the decision rather than by the key push that follows it.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
-import { device, provider, providerToken, reservation, user, userAdbKey } from "@farm/db";
-import { parseAdbPublicKey } from "@farm/protocol/adbkey";
-import { FakeProvider } from "@farm/protocol/test/fake-provider";
+import { device, provider, providerToken, reservation, user, userAdbKey } from "@yard/db";
+import { parseAdbPublicKey } from "@yard/protocol/adbkey";
+import { FakeProvider } from "@yard/protocol/test/fake-provider";
 import { eq, inArray } from "drizzle-orm";
 import { app } from "../src/app.ts";
 import { db } from "../src/db.ts";

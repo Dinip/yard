@@ -1,6 +1,6 @@
-import type { Database } from "@farm/db";
-import { auditLog } from "@farm/db";
-import type { AuditAction } from "@farm/protocol";
+import type { Database } from "@yard/db";
+import { auditLog } from "@yard/db";
+import type { AuditAction } from "@yard/protocol";
 
 /** Fire-and-shape an audit row. Never throws into the caller's happy path. */
 export async function audit(

@@ -26,7 +26,7 @@ import {
 } from "../src/index.ts"; // also populates the registry as a side effect
 import { registry } from "../src/registry.ts";
 
-const OUT = resolve(import.meta.dirname, "../../provider/crates/farm-protocol/src/generated.rs");
+const OUT = resolve(import.meta.dirname, "../../provider/crates/yard-protocol/src/generated.rs");
 
 // ── zod introspection ──────────────────────────────────────────────────────
 

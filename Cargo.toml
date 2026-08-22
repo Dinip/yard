@@ -9,7 +9,7 @@ rust-version = "1.85"
 license = "MIT"
 
 [workspace.dependencies]
-farm-protocol = { path = "packages/provider/crates/farm-protocol" }
+yard-protocol = { path = "packages/provider/crates/yard-protocol" }
 adb-bridge = { path = "packages/provider/crates/adb-bridge" }
 provider-core = { path = "packages/provider/crates/provider-core" }
 backend-ios = { path = "packages/provider/crates/backend-ios" }

@@ -1,5 +1,5 @@
-import type { FileEntry } from "@farm/protocol";
 import { useQuery } from "@tanstack/react-query";
+import type { FileEntry } from "@yard/protocol";
 import { CornerLeftUp, Download, File, FileQuestion, Folder, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";

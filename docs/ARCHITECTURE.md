@@ -87,7 +87,7 @@ expected to bind it where only their monitoring can reach it. See
 Ed25519 JWTs carrying `deviceId`, `userId`, `reservationId`, `exp ≈ 60s`,
 refreshed by the client while the tab is open.
 
-The coordinator publishes a JWKS at `/.well-known/farm-jwks.json`; each provider
+The coordinator publishes a JWKS at `/.well-known/yard-jwks.json`; each provider
 fetches it at startup and caches it. Consequences worth stating:
 
 - No shared secret is distributed to providers.

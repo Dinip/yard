@@ -270,7 +270,7 @@ pub async fn usbmux_provider(udid: &str) -> Result<Box<dyn IdeviceProvider>> {
         .map_err(|err| anyhow!("list usbmuxd devices: {err:?}"))?;
     let device = pick_usb(devices, udid)?;
 
-    Ok(Box::new(device.to_provider(address, "farm-provider")))
+    Ok(Box::new(device.to_provider(address, "yard-provider")))
 }
 
 /// Choose the USB entry for a udid, and refuse anything else.

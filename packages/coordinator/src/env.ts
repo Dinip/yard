@@ -8,7 +8,7 @@ export const env = createEnv({
 
     DATABASE_URL: z.string().url(),
 
-    /** Public origin of the coordinator itself, e.g. https://farm.example.com */
+    /** Public origin of the coordinator itself, e.g. https://yard.example.com */
     PUBLIC_URL: z.string().url(),
     /** Origin(s) allowed to call the API with credentials — the web SPA. */
     WEB_ORIGIN: z

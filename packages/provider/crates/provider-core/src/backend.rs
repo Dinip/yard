@@ -9,7 +9,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use farm_protocol::{AppInfo, Display, FileListing, Platform};
+use yard_protocol::{AppInfo, Display, FileListing, Platform};
 use wildmatch::WildMatch;
 
 use crate::adb_auth::AdbAuthority;

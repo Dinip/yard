@@ -1,6 +1,6 @@
-import type { Database } from "@farm/db";
-import { device, reservation, reservationObserver, userAdbKey } from "@farm/db";
-import type { AdbKey } from "@farm/protocol";
+import type { Database } from "@yard/db";
+import { device, reservation, reservationObserver, userAdbKey } from "@yard/db";
+import type { AdbKey } from "@yard/protocol";
 import { and, eq, inArray, isNull, or } from "drizzle-orm";
 import { providers } from "../gateway/registry.ts";
 

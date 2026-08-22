@@ -1,4 +1,4 @@
-import type { ClientMessage, Display } from "@farm/protocol";
+import type { ClientMessage, Display } from "@yard/protocol";
 import { type RefObject, useCallback, useEffect, useRef, useState } from "react";
 import { isStreamSupported, ScreenRenderer } from "@/lib/screen/renderer";
 import { DeviceSession, fallbackStreamUrl, type SessionState } from "@/lib/screen/session";
