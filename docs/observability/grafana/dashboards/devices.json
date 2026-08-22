@@ -1,5 +1,5 @@
 {
-  "title": "YARD \u2014 devices",
+  "title": "YARD - devices",
   "uid": "yard-devices",
   "schemaVersion": 39,
   "refresh": "30s",
@@ -188,7 +188,7 @@
     {
       "id": 5,
       "type": "timeseries",
-      "title": "Watched apps \u2014 PSS",
+      "title": "Watched apps - PSS",
       "description": "Only processes matching metrics.app_patterns in provider.yaml.",
       "gridPos": {
         "h": 8,
@@ -225,7 +225,7 @@
       "id": 6,
       "type": "state-timeline",
       "title": "Device status",
-      "description": "Each device's status over time. `busy` is reconstructed by the provider from its own status plus an authorized reservation \u2014 the provider itself never reports that word. A gap means the exporter stopped answering; a device that is merely gone still reports a status.",
+      "description": "Each device's status over time. `busy` is reconstructed by the provider from its own status plus an authorized reservation - the provider itself never reports that word. A gap means the exporter stopped answering; a device that is merely gone still reports a status.",
       "gridPos": {
         "h": 8,
         "w": 12,
