@@ -10,7 +10,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { AU_DELTA, AU_KEY, AU_KEY_RESET } from "@farm/protocol";
+import { AU_DELTA, AU_KEY, AU_KEY_RESET } from "@yard/protocol";
 
 interface DecodedChunk {
   type: "key" | "delta";

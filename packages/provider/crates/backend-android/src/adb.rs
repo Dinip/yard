@@ -6,7 +6,7 @@
 //! means `track-devices` gives us hotplug as a stream rather than a poll.
 //!
 //! ```text
-//!   farm-provider ──TCP :5037──> adb server ──USB──> device
+//!   yard-provider ──TCP :5037──> adb server ──USB──> device
 //! ```
 //!
 //! The server's address is configuration, not a constant, because the two

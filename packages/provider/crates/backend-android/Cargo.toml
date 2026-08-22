@@ -8,7 +8,7 @@ description = "Android device backend: the adb host protocol and scrcpy, spoken 
 
 [dependencies]
 provider-core.workspace = true
-farm-protocol.workspace = true
+yard-protocol.workspace = true
 adb-bridge.workspace = true
 
 tokio.workspace = true

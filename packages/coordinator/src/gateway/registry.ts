@@ -1,5 +1,5 @@
-import type { CommandData, CommandPayload, CoordinatorMessage } from "@farm/protocol";
 import { TRPCError } from "@trpc/server";
+import type { CommandData, CommandPayload, CoordinatorMessage } from "@yard/protocol";
 
 export const COMMAND_TIMEOUT_MS = 15_000;
 

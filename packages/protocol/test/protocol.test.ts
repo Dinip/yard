@@ -53,7 +53,7 @@ describe("wire fixtures", () => {
   test("exports fixtures for the Rust side", () => {
     const out = resolve(
       import.meta.dirname,
-      "../../provider/crates/farm-protocol/tests/fixtures.json",
+      "../../provider/crates/yard-protocol/tests/fixtures.json",
     );
     writeFileSync(
       out,

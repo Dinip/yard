@@ -9,14 +9,14 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use farm_protocol::{
-    AppFilter, AppInfo, CleanupSteps, CommandPayload, DeviceStatus, Platform, ProviderMessage,
-};
 use provider_core::backend::DeviceBackend;
 use provider_core::control::{CommandHandler, ControlSender};
 use provider_core::session::SessionRegistry;
 use provider_core::supervisor::Supervisor;
 use tokio::sync::mpsc::UnboundedReceiver;
+use yard_protocol::{
+    AppFilter, AppInfo, CleanupSteps, CommandPayload, DeviceStatus, Platform, ProviderMessage,
+};
 
 const DEVICE: &str = "mock-1";
 const RESERVATION: &str = "res-1";

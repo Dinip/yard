@@ -23,5 +23,5 @@ export const SessionTokenClaims = z.object({
 
 export type SessionTokenClaims = z.infer<typeof SessionTokenClaims>;
 
-export const JWKS_PATH = "/.well-known/farm-jwks.json";
-export const SESSION_TOKEN_AUDIENCE = "farm-provider";
+export const JWKS_PATH = "/.well-known/yard-jwks.json";
+export const SESSION_TOKEN_AUDIENCE = "yard-provider";

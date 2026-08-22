@@ -11,12 +11,12 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
-use farm_protocol::{
+use tokio::sync::{broadcast, RwLock};
+use tracing::{info, warn};
+use yard_protocol::{
     AppFilter, Battery, CleanupSteps, CommandData, CommandPayload, DeviceSnapshot, DeviceStatus,
     ProviderMessage,
 };
-use tokio::sync::{broadcast, RwLock};
-use tracing::{info, warn};
 
 use crate::adb_auth::{AdbAuthWaiters, AdbAuthority};
 use crate::backend::{BackendError, DeviceBackend, DeviceInfo};
@@ -168,7 +168,7 @@ fn snapshot_from(
         // than omitting it, which the coordinator would reconcile as absent.
         None => DeviceSnapshot {
             id: id.to_owned(),
-            platform: farm_protocol::Platform::Ios,
+            platform: yard_protocol::Platform::Ios,
             status,
             name: None,
             model: None,

@@ -4,16 +4,11 @@ Guidance for Claude Code when working in this repository.
 
 ## Read first
 
-**[docs/PROGRESS.md](docs/PROGRESS.md)** — the live status board. The project is
-built in six phases and work is expected to stop and resume; PROGRESS.md is the
-resumption point. **Update it in the same commit as the work it describes.**
-
-Then, depending on what you're touching:
+Depending on what you're touching:
 [ARCHITECTURE.md](docs/ARCHITECTURE.md) · [DATA-MODEL.md](docs/DATA-MODEL.md) ·
 [COORDINATOR.md](docs/COORDINATOR.md) · [WEB.md](docs/WEB.md) ·
 [PROVIDER.md](docs/PROVIDER.md) · [PROTOCOL.md](docs/PROTOCOL.md) ·
-[CLEANUP.md](docs/CLEANUP.md) · [REFERENCES.md](docs/REFERENCES.md) ·
-[DEVELOPMENT.md](docs/DEVELOPMENT.md)
+[CLEANUP.md](docs/CLEANUP.md) · [DEVELOPMENT.md](docs/DEVELOPMENT.md)
 
 ## What this is
 
@@ -33,13 +28,13 @@ packages/db/           drizzle schema, migrations, client
 packages/coordinator/  Hono + tRPC + better-auth + provider gateway
 packages/web/          TanStack Router SPA + shadcn
 packages/protocol/     zod schemas + Rust codegen + fake provider
-packages/provider/     cargo workspace: farm-protocol, provider-core,
-                       backend-mock, farm-provider (ios: 3b, android: 4)
+packages/provider/     cargo workspace: yard-protocol, provider-core,
+                       backend-mock, yard-provider (ios: 3b, android: 4)
 ```
 
 Reference sources live **outside** this repo as siblings: `../stf`,
 `../stf-ios-provider`, `../idevice`. They are read-only reference material — port
-from them, never import from them. See [REFERENCES.md](docs/REFERENCES.md).
+from them, never import from them. See `docs/REFERENCES.local.md`.
 
 ## Commands
 
@@ -76,12 +71,12 @@ See docs/DEVELOPMENT.md.
 - **Never hand-edit `generated.rs`.** Edit the zod schema and run
   `protocol:gen`. Every nested object needs `named("Foo", …)` or the generator
   errors rather than guessing a type name.
-- **The product name lives in `APP_NAME`.** Never hardcode "Device Farm" in a
-  user-visible string. See [RENAMING.md](docs/RENAMING.md).
+- **The product name is `YARD - Device Farm`.** Hardcoded as a literal
+  wherever it's user-visible — `packages/coordinator/src/app-name.ts` and a
+  couple of spots in `packages/web`.
 - **Keep the docs in step with the code.** Before finishing a change, check
   whether the docs above describe what you just changed — an invariant, a wire
-  message, a schema, a command — and update them in the same commit. PROGRESS.md
-  always; the rest when relevant.
+  message, a schema, a command — and update them in the same commit.
 
 ## Invariants worth knowing
 
@@ -129,10 +124,9 @@ See docs/DEVELOPMENT.md.
 
 ## Git
 
-Commit per meaningful unit of work with PROGRESS.md updated alongside. The
-default branch is `main`.
+Commit per meaningful unit of work. The default branch is `main`.
 
-Commit messages and PR titles follow
+Branch names, commit messages and PR titles follow
 [Conventional Commits](https://www.conventionalcommits.org): `type(scope): summary`
 — e.g. `feat(sessions): ask to join a session`, `fix(provider): drop stale RTP
 keyframes`. Scope is the package or feature area; use `!` after the type/scope

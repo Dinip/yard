@@ -1,17 +1,17 @@
-name: device-farm
+name: yard
 
 services:
   postgres:
     image: postgres:18-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-farm}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-farm}
-      POSTGRES_DB: ${POSTGRES_DB:-farm}
+      POSTGRES_USER: ${POSTGRES_USER:-yard}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-yard}
+      POSTGRES_DB: ${POSTGRES_DB:-yard}
     volumes:
       - postgres-data:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-farm} -d ${POSTGRES_DB:-farm}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-yard} -d ${POSTGRES_DB:-yard}"]
       interval: 5s
       timeout: 5s
       retries: 20
@@ -29,7 +29,7 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3000
-      DATABASE_URL: postgres://${POSTGRES_USER:-farm}:${POSTGRES_PASSWORD:-farm}@postgres:5432/${POSTGRES_DB:-farm}
+      DATABASE_URL: postgres://${POSTGRES_USER:-yard}:${POSTGRES_PASSWORD:-yard}@postgres:5432/${POSTGRES_DB:-yard}
       PUBLIC_URL: ${PUBLIC_URL:?set PUBLIC_URL}
       WEB_ORIGIN: ${WEB_ORIGIN:-${PUBLIC_URL}}
       AUTH_SECRET: ${AUTH_SECRET:?set AUTH_SECRET}
@@ -38,7 +38,6 @@ services:
       MICROSOFT_TENANT_ID: ${MICROSOFT_TENANT_ID:-common}
       ENABLE_EMAIL_PASSWORD: ${ENABLE_EMAIL_PASSWORD:-false}
       SESSION_TOKEN_PRIVATE_KEY: ${SESSION_TOKEN_PRIVATE_KEY:-}
-      APP_NAME: ${APP_NAME:-Device Farm}
     healthcheck:
       test: ["CMD", "bun", "-e", "await fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1))"]
       interval: 15s
@@ -104,11 +103,11 @@ services:
       # in provider.yaml in step.
       - "${DEBUG_PORTS:-7200-7249}:${DEBUG_PORTS:-7200-7249}"
     environment:
-      FARM_CONFIG: /etc/farm/provider.yaml
-      FARM_PROVIDER_TOKEN: ${FARM_PROVIDER_TOKEN:?issue one under /admin/providers}
-      FARM_LOG: ${FARM_LOG:-info}
+      YARD_CONFIG: /etc/yard/provider.yaml
+      YARD_PROVIDER_TOKEN: ${YARD_PROVIDER_TOKEN:?issue one under /admin/providers}
+      YARD_LOG: ${YARD_LOG:-info}
     volumes:
-      - ./packages/provider/provider.yaml:/etc/farm/provider.yaml:ro
+      - ./packages/provider/provider.yaml:/etc/yard/provider.yaml:ro
       # adb's keypair. Not a cache: the phone's "Allow USB debugging" grant is
       # bound to this key's fingerprint, so a container that regenerates it on
       # recreate has to be re-authorised by hand, at the device, every time.
@@ -116,13 +115,13 @@ services:
       # The iOS developer disk image, downloaded once. A volume rather than a
       # tmpfs so a container recreate does not re-fetch it — and so it can be
       # pre-populated from Xcode's copy to keep the download off a mirror.
-      - ddi-cache:/var/lib/farm/ddi
+      - ddi-cache:/var/lib/yard/ddi
       # - /var/run/usbmuxd:/var/run/usbmuxd     # Linux: iOS
       # - /dev/bus/usb:/dev/bus/usb             # Linux: Android
     # privileged: true                          # Linux: USB access
     tmpfs:
       # Staged APK/IPA uploads only. Nothing here outlives an install.
-      - /var/lib/farm/scratch:size=4g
+      - /var/lib/yard/scratch:size=4g
 
 volumes:
   postgres-data:

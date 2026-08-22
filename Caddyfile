@@ -7,7 +7,7 @@
 	handle /api/* {
 		reverse_proxy coordinator:3000
 	}
-	handle /.well-known/farm-jwks.json {
+	handle /.well-known/yard-jwks.json {
 		reverse_proxy coordinator:3000
 	}
 

@@ -14,7 +14,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::Router;
 use base64::Engine as _;
-use farm_protocol::Platform;
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
 use provider_core::auth::TokenVerifier;
 use provider_core::backend::InputEvent;
@@ -24,10 +23,11 @@ use provider_core::server::{router, ServerState};
 use provider_core::session::{Authorization, SessionRegistry};
 use provider_core::supervisor::Supervisor;
 use serde::Serialize;
+use yard_protocol::Platform;
 
 const PROVIDER_ID: &str = "test-provider";
 /// The browser origin the coordinator hands out in `hello.ack`.
-const ALLOWED_ORIGIN: &str = "https://farm.example.com";
+const ALLOWED_ORIGIN: &str = "https://yard.example.com";
 
 const DEVICE_ID: &str = "mock-ios-1";
 const OTHER_DEVICE: &str = "mock-android-1";
@@ -98,7 +98,7 @@ impl Signer {
             &Claims {
                 iss: issuer,
                 sub: "user-1",
-                aud: farm_protocol::SESSION_TOKEN_AUDIENCE,
+                aud: yard_protocol::SESSION_TOKEN_AUDIENCE,
                 exp: now + ttl_secs,
                 iat: now,
                 device_id,
@@ -131,7 +131,7 @@ async fn start() -> Harness {
     let jwks_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let issuer = format!("http://{}", jwks_listener.local_addr().unwrap());
     let jwks_app = Router::new().route(
-        farm_protocol::JWKS_PATH,
+        yard_protocol::JWKS_PATH,
         axum::routing::get(move || {
             let body = jwks_body.clone();
             async move {
@@ -182,7 +182,7 @@ scratch_dir: {}
     supervisor.bootstrap().await;
 
     let verifier = Arc::new(TokenVerifier::new(
-        format!("{issuer}{}", farm_protocol::JWKS_PATH),
+        format!("{issuer}{}", yard_protocol::JWKS_PATH),
         PROVIDER_ID.into(),
         issuer.clone(),
     ));
@@ -407,13 +407,13 @@ async fn listing_opens_at_the_backend_root_when_no_path_is_given() {
         .await;
     assert_eq!(res.status(), 200);
 
-    let listing: farm_protocol::FileListing = res.json().await.unwrap();
+    let listing: yard_protocol::FileListing = res.json().await.unwrap();
     assert_eq!(listing.path, "/sdcard");
     // Null at the root is what makes the browser hide "..", so it is the
     // assertion that matters more than the entries.
     assert_eq!(listing.parent, None);
     assert!(listing.entries.iter().any(|e| e.name == "DCIM"
-        && e.kind == farm_protocol::FileKind::Directory
+        && e.kind == yard_protocol::FileKind::Directory
         && e.size.is_none()));
 }
 
@@ -430,14 +430,14 @@ async fn listing_a_subdirectory_reports_sizes_and_a_parent() {
         .await;
     assert_eq!(res.status(), 200);
 
-    let listing: farm_protocol::FileListing = res.json().await.unwrap();
+    let listing: yard_protocol::FileListing = res.json().await.unwrap();
     assert_eq!(listing.parent.as_deref(), Some("/sdcard"));
     let photo = listing
         .entries
         .iter()
         .find(|e| e.name == "IMG_0001.png")
         .expect("the synthetic photo");
-    assert_eq!(photo.kind, farm_protocol::FileKind::File);
+    assert_eq!(photo.kind, yard_protocol::FileKind::File);
     assert!(photo.size.unwrap() > 0);
 }
 
@@ -550,7 +550,7 @@ async fn upload_installs_then_deletes_the_staged_file() {
             h.base,
             h.token()
         ))
-        .header("x-farm-filename", "app-release.apk")
+        .header("x-yard-filename", "app-release.apk")
         .body(payload)
         .send()
         .await
@@ -582,7 +582,7 @@ async fn a_hostile_upload_filename_cannot_escape_the_scratch_directory() {
             h.base,
             h.token()
         ))
-        .header("x-farm-filename", "../../../../tmp/pwned.apk")
+        .header("x-yard-filename", "../../../../tmp/pwned.apk")
         .body(vec![0u8; 1024])
         .send()
         .await
@@ -649,8 +649,8 @@ async fn the_session_socket_hands_over_a_codec_then_streams_frames() {
             .unwrap()
         {
             Message::Binary(bytes) => match bytes[0] {
-                farm_protocol::AU_KEY | farm_protocol::AU_KEY_RESET => keys += 1,
-                farm_protocol::AU_DELTA => deltas += 1,
+                yard_protocol::AU_KEY | yard_protocol::AU_KEY_RESET => keys += 1,
+                yard_protocol::AU_DELTA => deltas += 1,
                 other => panic!("unknown access-unit type byte {other}"),
             },
             Message::Ping(_) | Message::Text(_) => {}
@@ -719,7 +719,7 @@ async fn a_mid_session_codec_change_re_announces_and_resets_the_decoder() {
             }
             // Only meaningful after the re-announcement: the reset belongs to
             // the new parameter sets, not to the connection's first keyframe.
-            Message::Binary(bytes) if re_announced && bytes[0] == farm_protocol::AU_KEY_RESET => {
+            Message::Binary(bytes) if re_announced && bytes[0] == yard_protocol::AU_KEY_RESET => {
                 reset_frame = true;
             }
             _ => {}
@@ -942,7 +942,7 @@ async fn the_allowed_origin_may_use_the_artifact_plane() {
         )
         .header("origin", ALLOWED_ORIGIN)
         .header("access-control-request-method", "POST")
-        .header("access-control-request-headers", "x-farm-filename")
+        .header("access-control-request-headers", "x-yard-filename")
         .send()
         .await
         .unwrap();
@@ -1019,11 +1019,11 @@ async fn the_issuer_comes_from_hello_ack_not_from_the_dialled_address() {
 
     // Deliberately not the address the provider dialled: that difference is
     // what production has and development does not.
-    let public_issuer = "https://farm.example.com";
+    let public_issuer = "https://yard.example.com";
     let token = h.signer.token(public_issuer, DEVICE_ID, RESERVATION, 60);
 
     let verifier = Arc::new(TokenVerifier::new(
-        format!("{}{}", h.issuer, farm_protocol::JWKS_PATH),
+        format!("{}{}", h.issuer, yard_protocol::JWKS_PATH),
         PROVIDER_ID.into(),
         // What a provider knows before registering: the address it dialled.
         h.issuer.clone(),

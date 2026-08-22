@@ -1,5 +1,5 @@
-import { setting, user } from "@farm/db";
 import { TRPCError } from "@trpc/server";
+import { setting, user } from "@yard/db";
 import { desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { audit } from "../../lib/audit.ts";

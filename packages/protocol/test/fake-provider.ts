@@ -320,7 +320,7 @@ if (import.meta.main) {
     if (key) args.set(key, Bun.argv[i + 1] ?? "");
   }
 
-  const token = args.get("token") ?? process.env.FARM_PROVIDER_TOKEN;
+  const token = args.get("token") ?? process.env.YARD_PROVIDER_TOKEN;
   if (!token) {
     console.error(
       "usage: bun packages/protocol/test/fake-provider.ts --token <pft_…> " +

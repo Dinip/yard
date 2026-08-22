@@ -10,7 +10,7 @@
  * not as an expiry. Each artifact-plane request mints a fresh one.
  */
 
-import type { ClientMessage, FileListing, ServerMessage } from "@farm/protocol";
+import type { ClientMessage, FileListing, ServerMessage } from "@yard/protocol";
 import { trpcClient } from "@/lib/trpc";
 
 export type SessionState = "idle" | "connecting" | "open" | "closed";
@@ -227,7 +227,7 @@ export function installApp(
           "POST",
           `${grant.providerBaseUrl}/s/${deviceId}/install?token=${encodeURIComponent(grant.token)}`,
         );
-        xhr.setRequestHeader("x-farm-filename", file.name);
+        xhr.setRequestHeader("x-yard-filename", file.name);
         xhr.setRequestHeader("content-type", "application/octet-stream");
         xhr.upload.onprogress = (event) => {
           if (event.lengthComputable) onProgress(event.loaded / event.total);

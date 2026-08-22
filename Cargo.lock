@@ -291,13 +291,13 @@ dependencies = [
  "adb-bridge",
  "anyhow",
  "async-trait",
- "farm-protocol",
  "futures",
  "provider-core",
  "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "yard-protocol",
 ]
 
 [[package]]
@@ -307,7 +307,6 @@ dependencies = [
  "anyhow",
  "async-trait",
  "axum",
- "farm-protocol",
  "futures",
  "idevice",
  "plist",
@@ -318,6 +317,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "yard-protocol",
 ]
 
 [[package]]
@@ -325,10 +325,10 @@ name = "backend-mock"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "farm-protocol",
  "provider-core",
  "tokio",
  "tracing",
+ "yard-protocol",
 ]
 
 [[package]]
@@ -897,30 +897,6 @@ checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "farm-protocol"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "farm-provider"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "backend-android",
- "backend-ios",
- "backend-mock",
- "clap",
- "farm-protocol",
- "provider-core",
- "tokio",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
@@ -2074,7 +2050,6 @@ dependencies = [
  "backend-mock",
  "base64 0.23.1",
  "ed25519-dalek 3.0.0",
- "farm-protocol",
  "futures",
  "jsonwebtoken",
  "rand 0.10.2",
@@ -2091,6 +2066,7 @@ dependencies = [
  "tracing",
  "uuid",
  "wildmatch",
+ "yard-protocol",
 ]
 
 [[package]]
@@ -3644,6 +3620,30 @@ dependencies = [
  "signature 2.2.0",
  "spki",
  "tls_codec",
+]
+
+[[package]]
+name = "yard-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "yard-provider"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "backend-android",
+ "backend-ios",
+ "backend-mock",
+ "clap",
+ "provider-core",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "yard-protocol",
 ]
 
 [[package]]

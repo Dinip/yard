@@ -20,12 +20,12 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::Router;
 use base64::Engine as _;
-use farm_protocol::{frame_au, AuKind, ClientMessage, Display, ServerMessage};
 use futures::{SinkExt as _, StreamExt as _};
 use serde::Deserialize;
 use tokio::io::AsyncWriteExt as _;
 use tokio::sync::broadcast;
 use tracing::{debug, info, warn};
+use yard_protocol::{frame_au, AuKind, ClientMessage, Display, ServerMessage};
 
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
@@ -104,7 +104,7 @@ fn cors(origins: WebOrigins) -> CorsLayer {
         .allow_methods([Method::GET, Method::POST])
         .allow_headers([
             header::CONTENT_TYPE,
-            HeaderName::from_static("x-farm-filename"),
+            HeaderName::from_static("x-yard-filename"),
         ])
 }
 
@@ -618,7 +618,7 @@ async fn install(
     };
 
     let filename = headers
-        .get("x-farm-filename")
+        .get("x-yard-filename")
         .and_then(|v| v.to_str().ok())
         .map(sanitize_filename)
         .unwrap_or_else(|| "upload.bin".to_owned());

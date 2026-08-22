@@ -1,6 +1,6 @@
 {
-  "title": "Device farm \u2014 devices",
-  "uid": "farm-devices",
+  "title": "YARD - devices",
+  "uid": "yard-devices",
   "schemaVersion": 39,
   "refresh": "30s",
   "time": {
@@ -14,9 +14,9 @@
         "type": "query",
         "datasource": {
           "type": "prometheus",
-          "uid": "farm-prometheus"
+          "uid": "yard-prometheus"
         },
-        "query": "label_values(farm_device_status, device)",
+        "query": "label_values(yard_device_status, device)",
         "includeAll": true,
         "multi": true,
         "current": {
@@ -25,7 +25,7 @@
         },
         "refresh": 1,
         "sort": 1,
-        "definition": "label_values(farm_device_status, device)",
+        "definition": "label_values(yard_device_status, device)",
         "label": "Device"
       }
     ]
@@ -52,11 +52,11 @@
       },
       "targets": [
         {
-          "expr": "sum by (device) (rate(farm_device_cpu_seconds_total{device=~\"$device\",mode!=\"idle\"}[5m])) / sum by (device) (rate(farm_device_cpu_seconds_total{device=~\"$device\"}[5m]))",
+          "expr": "sum by (device) (rate(yard_device_cpu_seconds_total{device=~\"$device\",mode!=\"idle\"}[5m])) / sum by (device) (rate(yard_device_cpu_seconds_total{device=~\"$device\"}[5m]))",
           "legendFormat": "{{device}}",
           "datasource": {
             "type": "prometheus",
-            "uid": "farm-prometheus"
+            "uid": "yard-prometheus"
           },
           "range": true,
           "instant": false,
@@ -65,7 +65,7 @@
       ],
       "datasource": {
         "type": "prometheus",
-        "uid": "farm-prometheus"
+        "uid": "yard-prometheus"
       }
     },
     {
@@ -87,11 +87,11 @@
       },
       "targets": [
         {
-          "expr": "farm_device_memory_used_bytes{device=~\"$device\"}",
+          "expr": "yard_device_memory_used_bytes{device=~\"$device\"}",
           "legendFormat": "{{device}}",
           "datasource": {
             "type": "prometheus",
-            "uid": "farm-prometheus"
+            "uid": "yard-prometheus"
           },
           "range": true,
           "instant": false,
@@ -100,7 +100,7 @@
       ],
       "datasource": {
         "type": "prometheus",
-        "uid": "farm-prometheus"
+        "uid": "yard-prometheus"
       }
     },
     {
@@ -122,22 +122,22 @@
       },
       "targets": [
         {
-          "expr": "farm_device_battery_temperature_celsius{device=~\"$device\"}",
+          "expr": "yard_device_battery_temperature_celsius{device=~\"$device\"}",
           "legendFormat": "{{device}} battery",
           "datasource": {
             "type": "prometheus",
-            "uid": "farm-prometheus"
+            "uid": "yard-prometheus"
           },
           "range": true,
           "instant": false,
           "editorMode": "code"
         },
         {
-          "expr": "farm_device_thermal_zone_celsius{device=~\"$device\"}",
+          "expr": "yard_device_thermal_zone_celsius{device=~\"$device\"}",
           "legendFormat": "{{device}} {{zone}}",
           "datasource": {
             "type": "prometheus",
-            "uid": "farm-prometheus"
+            "uid": "yard-prometheus"
           },
           "range": true,
           "instant": false,
@@ -146,7 +146,7 @@
       ],
       "datasource": {
         "type": "prometheus",
-        "uid": "farm-prometheus"
+        "uid": "yard-prometheus"
       }
     },
     {
@@ -169,11 +169,11 @@
       },
       "targets": [
         {
-          "expr": "farm_device_battery_level_ratio{device=~\"$device\"}",
+          "expr": "yard_device_battery_level_ratio{device=~\"$device\"}",
           "legendFormat": "{{device}}",
           "datasource": {
             "type": "prometheus",
-            "uid": "farm-prometheus"
+            "uid": "yard-prometheus"
           },
           "range": true,
           "instant": false,
@@ -182,13 +182,13 @@
       ],
       "datasource": {
         "type": "prometheus",
-        "uid": "farm-prometheus"
+        "uid": "yard-prometheus"
       }
     },
     {
       "id": 5,
       "type": "timeseries",
-      "title": "Watched apps \u2014 PSS",
+      "title": "Watched apps - PSS",
       "description": "Only processes matching metrics.app_patterns in provider.yaml.",
       "gridPos": {
         "h": 8,
@@ -205,11 +205,11 @@
       },
       "targets": [
         {
-          "expr": "farm_app_memory_pss_bytes{device=~\"$device\"}",
+          "expr": "yard_app_memory_pss_bytes{device=~\"$device\"}",
           "legendFormat": "{{device}} {{app}}",
           "datasource": {
             "type": "prometheus",
-            "uid": "farm-prometheus"
+            "uid": "yard-prometheus"
           },
           "range": true,
           "instant": false,
@@ -218,14 +218,14 @@
       ],
       "datasource": {
         "type": "prometheus",
-        "uid": "farm-prometheus"
+        "uid": "yard-prometheus"
       }
     },
     {
       "id": 6,
       "type": "state-timeline",
       "title": "Device status",
-      "description": "Each device's status over time. `busy` is reconstructed by the provider from its own status plus an authorized reservation \u2014 the provider itself never reports that word. A gap means the exporter stopped answering; a device that is merely gone still reports a status.",
+      "description": "Each device's status over time. `busy` is reconstructed by the provider from its own status plus an authorized reservation - the provider itself never reports that word. A gap means the exporter stopped answering; a device that is merely gone still reports a status.",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -282,9 +282,9 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "farm-prometheus"
+            "uid": "yard-prometheus"
           },
-          "expr": "1 * sum by (device) (farm_device_status{device=~\"$device\",status=\"absent\"}) + 2 * sum by (device) (farm_device_status{device=~\"$device\",status=\"present\"}) + 3 * sum by (device) (farm_device_status{device=~\"$device\",status=\"preparing\"}) + 4 * sum by (device) (farm_device_status{device=~\"$device\",status=\"ready\"}) + 5 * sum by (device) (farm_device_status{device=~\"$device\",status=\"busy\"}) + 6 * sum by (device) (farm_device_status{device=~\"$device\",status=\"unhealthy\"})",
+          "expr": "1 * sum by (device) (yard_device_status{device=~\"$device\",status=\"absent\"}) + 2 * sum by (device) (yard_device_status{device=~\"$device\",status=\"present\"}) + 3 * sum by (device) (yard_device_status{device=~\"$device\",status=\"preparing\"}) + 4 * sum by (device) (yard_device_status{device=~\"$device\",status=\"ready\"}) + 5 * sum by (device) (yard_device_status{device=~\"$device\",status=\"busy\"}) + 6 * sum by (device) (yard_device_status{device=~\"$device\",status=\"unhealthy\"})",
           "legendFormat": "{{device}}",
           "refId": "A",
           "range": true,
@@ -294,7 +294,7 @@
       ],
       "datasource": {
         "type": "prometheus",
-        "uid": "farm-prometheus"
+        "uid": "yard-prometheus"
       },
       "options": {
         "mergeValues": true,

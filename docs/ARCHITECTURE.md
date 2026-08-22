@@ -87,7 +87,7 @@ expected to bind it where only their monitoring can reach it. See
 Ed25519 JWTs carrying `deviceId`, `userId`, `reservationId`, `exp ≈ 60s`,
 refreshed by the client while the tab is open.
 
-The coordinator publishes a JWKS at `/.well-known/farm-jwks.json`; each provider
+The coordinator publishes a JWKS at `/.well-known/yard-jwks.json`; each provider
 fetches it at startup and caches it. Consequences worth stating:
 
 - No shared secret is distributed to providers.
@@ -133,4 +133,4 @@ the JWT in each session connect against it. No arbitration, no timers on-device.
 - [PROVIDER.md](./PROVIDER.md) — the Rust provider (phases 3–4)
 - [PROTOCOL.md](./PROTOCOL.md) — wire contract (phase 2)
 - [CLEANUP.md](./CLEANUP.md) — resetting a device between users
-- [REFERENCES.md](./REFERENCES.md) — what to read in the STF / stf-ios-provider sources
+- [REFERENCES.local.md](./REFERENCES.local.md) — what to read in the STF / stf-ios-provider sources (local only, not committed)

@@ -9,7 +9,6 @@ use std::sync::Arc;
 
 use anyhow::{bail, Context as _, Result};
 use clap::Parser;
-use farm_protocol::Platform;
 use provider_core::auth::TokenVerifier;
 use provider_core::config::{BackendKind, Config};
 use provider_core::control::ControlClient;
@@ -22,16 +21,17 @@ use provider_core::supervisor::Supervisor;
 use provider_core::DeviceBackend;
 use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
+use yard_protocol::Platform;
 
 #[derive(Parser, Debug)]
-#[command(name = "farm-provider", version, about = "Device provider")]
+#[command(name = "yard-provider", version, about = "Device provider")]
 struct Args {
     /// Path to provider.yaml.
     #[arg(
         short,
         long,
-        env = "FARM_CONFIG",
-        default_value = "/etc/farm/provider.yaml"
+        env = "YARD_CONFIG",
+        default_value = "/etc/yard/provider.yaml"
     )]
     config: PathBuf,
 
@@ -44,7 +44,7 @@ struct Args {
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::try_from_env("FARM_LOG").unwrap_or_else(|_| EnvFilter::new("info")),
+            EnvFilter::try_from_env("YARD_LOG").unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .init();
 
@@ -56,7 +56,7 @@ async fn main() -> Result<()> {
         devices = config.devices.len(),
         coordinator = %config.coordinator_base(),
         public = %config.public_base(),
-        "farm-provider {}",
+        "yard-provider {}",
         env!("CARGO_PKG_VERSION")
     );
 

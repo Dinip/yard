@@ -159,7 +159,7 @@ describe("persistence", () => {
   });
 
   test("a corrupt value is ignored rather than placing the handle nowhere", () => {
-    store.set("farm.console.controlsCorner", "middle");
+    store.set("yard.console.controlsCorner", "middle");
     expect(loadCorner()).toBe(DEFAULT_CORNER);
   });
 

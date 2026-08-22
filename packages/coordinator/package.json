@@ -1,5 +1,5 @@
 {
-  "name": "@farm/coordinator",
+  "name": "@yard/coordinator",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -17,8 +17,8 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@farm/db": "workspace:*",
-    "@farm/protocol": "workspace:*",
+    "@yard/db": "workspace:*",
+    "@yard/protocol": "workspace:*",
     "@t3-oss/env-core": "^0.13.11",
     "@trpc/server": "^11.18.0",
     "better-auth": "^1.6.25",

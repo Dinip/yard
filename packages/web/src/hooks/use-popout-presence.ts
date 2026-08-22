@@ -27,7 +27,7 @@ const STALE_AFTER = 5_000;
 
 function channelFor(deviceId: string): BroadcastChannel | null {
   if (typeof BroadcastChannel === "undefined") return null;
-  return new BroadcastChannel(`farm-device-${deviceId}`);
+  return new BroadcastChannel(`yard-device-${deviceId}`);
 }
 
 /**

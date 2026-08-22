@@ -4,11 +4,11 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "iOS 17.4+ device backend: CoreDevice over a root-free RSD tunnel, ported from stf-ios-provider"
+description = "iOS 27+ device backend: CoreDevice over a root-free RSD tunnel, ported from stf-ios-provider"
 
 [dependencies]
 provider-core.workspace = true
-farm-protocol.workspace = true
+yard-protocol.workspace = true
 
 idevice.workspace = true
 plist.workspace = true

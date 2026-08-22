@@ -10,10 +10,10 @@ while collapsing N containers, N ZMQ connections and N config files into one.
 
 | Crate | State |
 |---|---|
-| `farm-protocol` | ✅ generated wire types + framing helpers |
+| `yard-protocol` | ✅ generated wire types + framing helpers |
 | `provider-core` | ✅ config, control plane, session plane, supervision, JWT auth |
 | `backend-mock` | ✅ synthetic device — the whole provider runs with no hardware |
-| `backend-ios` | ✅ CoreDevice over a root-free RSD tunnel, iOS 17.4+ |
+| `backend-ios` | ✅ CoreDevice over a root-free RSD tunnel, iOS 27+ |
 | `backend-android` | ✅ adb host protocol + scrcpy, no transcode |
 
 ```
@@ -21,20 +21,20 @@ packages/provider/
 ├── Dockerfile
 ├── provider.example.yaml
 └── crates/
-    ├── farm-protocol/    generated mirror of packages/protocol
+    ├── yard-protocol/    generated mirror of packages/protocol
     ├── provider-core/    everything that is not device-specific
     ├── backend-mock/     synthetic device
-    └── farm-provider/    the binary
+    └── yard-provider/    the binary
 ```
 
 ## Running it
 
 ```bash
-cargo build --release -p farm-provider
+cargo build --release -p yard-provider
 
 # Register a provider and issue a token under /admin/providers first.
-FARM_PROVIDER_TOKEN=pft_… \
-  ./target/release/farm-provider --config packages/provider/provider.example.yaml
+YARD_PROVIDER_TOKEN=pft_… \
+  ./target/release/yard-provider --config packages/provider/provider.example.yaml
 ```
 
 `--check` validates the config and exits, which is also the container's
@@ -63,7 +63,7 @@ src/
 
 ### Config
 
-One real YAML file. Token precedence is `FARM_PROVIDER_TOKEN` > `token_file` >
+One real YAML file. Token precedence is `YARD_PROVIDER_TOKEN` > `token_file` >
 inline `token`, so a secret need never sit in the file. Unknown keys are
 rejected rather than ignored — a typo in a device stanza should not silently
 mean "no devices".
@@ -191,7 +191,7 @@ metrics:
 ```yaml
 # prometheus.yml
 scrape_configs:
-  - job_name: farm-provider
+  - job_name: yard-provider
     static_configs:
       - targets: ["lab-1.example.com:9100"]
 ```
@@ -203,7 +203,7 @@ inherit the CORS layer. There is deliberately **no auth** on the metrics port �
 bind it to an interface only your monitoring reaches. It is not a fifth plane;
 see [ARCHITECTURE.md](./ARCHITECTURE.md).
 
-**`farm_device_status` is reconstructed, not reported.** A provider's own status
+**`yard_device_status` is reconstructed, not reported.** A provider's own status
 is only ever `preparing`, `ready` or `unhealthy` — `busy` is the coordinator's
 word, set when a reservation goes active, and the supervisor deliberately never
 writes it. Exporting the raw value made `busy` a permanently dead series and made
@@ -233,7 +233,7 @@ double-count under `sum without(mode)`.
 how Prometheus spells "no data" — `rate()` and `avg_over_time` handle a gap, and
 `absent()` alerts on it. Re-serving the last known value would be a lie: an
 unplugged phone would show a flat, healthy 40 °C forever. The operational
-metrics (`farm_device_status`, viewers, install counts, error counts) are read
+metrics (`yard_device_status`, viewers, install counts, error counts) are read
 live and are never suppressed, which is what keeps *the device is gone* — status
 still reported, no CPU series — distinguishable from *the exporter is broken*,
 where there is nothing at all. A backend that answers `Unsupported` is a success
@@ -345,7 +345,7 @@ the gas gauge's reply is non-empty and useless, so an emptiness check takes it a
 never falls through. That was a real bug, caught only on hardware.
 
 The temperature parsing is kept anyway, since it costs nothing and another iOS
-version may populate it; `farm_device_battery_temperature_celsius` is simply
+version may populate it; `yard_device_battery_temperature_celsius` is simply
 absent for an iPhone, which is what an absent series is for. `metrics()` answers
 `Ok` with mostly `None` rather than `Unsupported`, so a healthy iPhone does not
 advance the exporter's error counter.
@@ -355,9 +355,9 @@ expensive on `info()`'s 15s cadence. It is now cached with a 60s TTL and shared:
 the metrics sampler refreshes it on its own cadence and `info()` rides on that,
 so the worst case is one round trip a minute instead of four.
 
-iOS 17.4+ only: below that the root-free `CoreDeviceProxy` tunnel does not
-exist, and bring-up fails loudly rather than half-working. There is no other
-iOS backend to hand an older device to.
+iOS 27+ only: real hardware testing found the root-free `CoreDeviceProxy`
+tunnel unreliable below that, and bring-up fails loudly rather than
+half-working. There is no other iOS backend to hand an older device to.
 
 **USB only.** usbmuxd lists a Wi-Fi-synced device *twice* — once `USB`, once
 `Network` — in no guaranteed order, and `idevice`'s `get_device` is a `find`, so
@@ -403,7 +403,7 @@ downloaded once per host, into `ddi.cache_dir`, and shared by every device on it
 ```yaml
 ddi:
   enabled: true                    # absent block = on, unlike `metrics:`
-  cache_dir: /var/lib/farm/ddi     # Image.dmg, BuildManifest.plist, Image.dmg.trustcache
+  cache_dir: /var/lib/yard/ddi     # Image.dmg, BuildManifest.plist, Image.dmg.trustcache
   base_url: https://raw.githubusercontent.com/doronz88/DeveloperDiskImage/main/PersonalizedImages/Xcode_iOS_DDI_Personalized
 ```
 

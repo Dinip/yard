@@ -15,11 +15,11 @@ use std::time::Duration;
 
 use anyhow::{bail, Context as _, Result};
 use base64::Engine as _;
-use farm_protocol::SESSION_TOKEN_AUDIENCE;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation};
 use serde::Deserialize;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
+use yard_protocol::SESSION_TOKEN_AUDIENCE;
 
 /// A JWKS refetch is rate-limited to this, so an attacker cannot make the
 /// provider hammer the coordinator by presenting tokens with unknown `kid`s.

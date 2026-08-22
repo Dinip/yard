@@ -24,15 +24,15 @@ jobs:
       postgres:
         image: postgres:18-alpine
         env:
-          POSTGRES_USER: farm
-          POSTGRES_PASSWORD: farm
-          POSTGRES_DB: farm
+          POSTGRES_USER: yard
+          POSTGRES_PASSWORD: yard
+          POSTGRES_DB: yard
         ports: ["5432:5432"]
         options: >-
-          --health-cmd "pg_isready -U farm -d farm"
+          --health-cmd "pg_isready -U yard -d yard"
           --health-interval 5s --health-timeout 5s --health-retries 20
     env:
-      DATABASE_URL: postgres://farm:farm@localhost:5432/farm
+      DATABASE_URL: postgres://yard:yard@localhost:5432/yard
       PUBLIC_URL: http://localhost:3000
       WEB_ORIGIN: http://localhost:5173
       # Length is validated at boot; the value is irrelevant to a test run.

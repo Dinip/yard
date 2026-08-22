@@ -1,4 +1,4 @@
-import type { ClientMessage } from "@farm/protocol";
+import type { ClientMessage } from "@yard/protocol";
 import { Loader2, MonitorOff } from "lucide-react";
 import { type PointerEvent as ReactPointerEvent, useCallback, useRef } from "react";
 import type { DeviceSessionApi } from "@/hooks/use-device-session";

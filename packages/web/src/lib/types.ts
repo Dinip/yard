@@ -1,5 +1,5 @@
-import type { AppRouter } from "@farm/coordinator/router";
 import type { inferRouterInputs, inferRouterOutputs } from "@trpc/server";
+import type { AppRouter } from "@yard/coordinator/router";
 
 export type RouterInputs = inferRouterInputs<AppRouter>;
 export type RouterOutputs = inferRouterOutputs<AppRouter>;

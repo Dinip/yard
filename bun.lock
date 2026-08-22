@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "device-farm",
+      "name": "yard",
       "devDependencies": {
         "@biomejs/biome": "^2.5.7",
         "@types/bun": "^1.3.14",
@@ -11,13 +11,13 @@
       },
     },
     "packages/coordinator": {
-      "name": "@farm/coordinator",
+      "name": "@yard/coordinator",
       "version": "0.0.0",
       "dependencies": {
-        "@farm/db": "workspace:*",
-        "@farm/protocol": "workspace:*",
         "@t3-oss/env-core": "^0.13.11",
         "@trpc/server": "^11.18.0",
+        "@yard/db": "workspace:*",
+        "@yard/protocol": "workspace:*",
         "better-auth": "^1.6.25",
         "drizzle-orm": "^0.45.2",
         "hono": "^4.13.0",
@@ -26,7 +26,7 @@
       },
     },
     "packages/db": {
-      "name": "@farm/db",
+      "name": "@yard/db",
       "version": "0.0.0",
       "dependencies": {
         "drizzle-orm": "^0.45.2",
@@ -39,23 +39,23 @@
       },
     },
     "packages/protocol": {
-      "name": "@farm/protocol",
+      "name": "@yard/protocol",
       "version": "0.0.0",
       "dependencies": {
         "zod": "^4.4.3",
       },
     },
     "packages/web": {
-      "name": "@farm/web",
+      "name": "@yard/web",
       "version": "0.0.0",
       "dependencies": {
-        "@farm/coordinator": "workspace:*",
-        "@farm/protocol": "workspace:*",
         "@tanstack/react-query": "^5.101.4",
         "@tanstack/react-router": "^1.170.19",
         "@trpc/client": "^11.18.0",
         "@trpc/server": "^11.18.0",
         "@trpc/tanstack-react-query": "^11.18.0",
+        "@yard/coordinator": "workspace:*",
+        "@yard/protocol": "workspace:*",
         "better-auth": "^1.6.25",
         "next-themes": "^0.4.6",
         "radix-ui": "^1.6.7",
@@ -207,14 +207,6 @@
     "@esbuild/win32-ia32": ["@esbuild/win32-ia32@0.25.12", "", { "os": "win32", "cpu": "ia32" }, "sha512-HkqnmmBoCbCwxUKKNPBixiWDGCpQGVsrQfJoVGYLPT41XWF8lHuE5N6WhVia2n4o5QK5M4tYr21827fNhi4byQ=="],
 
     "@esbuild/win32-x64": ["@esbuild/win32-x64@0.25.12", "", { "os": "win32", "cpu": "x64" }, "sha512-alJC0uCZpTFrSL0CCDjcgleBXPnCrEAhTBILpeAp7M/OFgoqtAetfBzX0xM00MUsVVPpVjlPuMbREqnZCXaTnA=="],
-
-    "@farm/coordinator": ["@farm/coordinator@workspace:packages/coordinator"],
-
-    "@farm/db": ["@farm/db@workspace:packages/db"],
-
-    "@farm/protocol": ["@farm/protocol@workspace:packages/protocol"],
-
-    "@farm/web": ["@farm/web@workspace:packages/web"],
 
     "@floating-ui/core": ["@floating-ui/core@1.8.0", "", { "dependencies": { "@floating-ui/utils": "^0.2.12" } }, "sha512-0CIZ5itps/8x7BG8dEIhs53BvCUH2PCoogtakwRTut+Arm58sJooJ0AuZhLw2HJYIR5cMLNPBSS728sPho2khQ=="],
 
@@ -509,6 +501,14 @@
     "@typescript/typescript-win32-x64": ["@typescript/typescript-win32-x64@7.0.2", "", { "os": "win32", "cpu": "x64" }, "sha512-0BQ3HkAHHlKLSp1qRvf3SUhGpGsDuhB/jgFw75guyqbxJqEaS0Cw/VFO8i2nHglJUzQCRtMMR/IBAKE3ETMC4g=="],
 
     "@vitejs/plugin-react": ["@vitejs/plugin-react@6.0.5", "", { "dependencies": { "@rolldown/pluginutils": "^1.0.1" }, "peerDependencies": { "@rolldown/plugin-babel": "^0.1.7 || ^0.2.0", "babel-plugin-react-compiler": "^1.0.0", "vite": "^8.0.0" }, "optionalPeers": ["@rolldown/plugin-babel", "babel-plugin-react-compiler"] }, "sha512-BOVzne/NL162sMdResB25mUv+vWMF5NoAjNf09TeGlE7ZpszZWSD3winycicLJw72yeVsoCn/2kOhEuCvEShMA=="],
+
+    "@yard/coordinator": ["@yard/coordinator@workspace:packages/coordinator"],
+
+    "@yard/db": ["@yard/db@workspace:packages/db"],
+
+    "@yard/protocol": ["@yard/protocol@workspace:packages/protocol"],
+
+    "@yard/web": ["@yard/web@workspace:packages/web"],
 
     "ansis": ["ansis@4.3.1", "", {}, "sha512-BJ8/l4R5LRE7hW9WdSuGYrLSHi2ynxeFpDFbH0K/CgNeY/tyhk+vO6TYxXC5r5CpUhNVX310xzPsN/H9lCdfOA=="],
 

@@ -1,4 +1,4 @@
-import type { CoordinatorMessage } from "@farm/protocol";
+import type { CoordinatorMessage } from "@yard/protocol";
 import type { ServerWebSocket } from "bun";
 import { Hono } from "hono";
 import { createBunWebSocket } from "hono/bun";

@@ -1,5 +1,5 @@
 {
-  "name": "device-farm",
+  "name": "yard",
   "private": true,
   "type": "module",
   "workspaces": [
@@ -11,14 +11,14 @@
     "format": "biome format --write .",
     "typecheck": "bun run --filter '*' typecheck",
     "dev": "bun run --filter '*' --elide-lines 0 dev",
-    "dev:coordinator": "bun run --filter '@farm/coordinator' dev",
-    "dev:web": "bun run --filter '@farm/web' dev",
-    "db:generate": "bun run --filter '@farm/db' generate",
-    "db:migrate": "bun run --filter '@farm/db' migrate",
-    "db:studio": "bun run --filter '@farm/db' studio",
+    "dev:coordinator": "bun run --filter '@yard/coordinator' dev",
+    "dev:web": "bun run --filter '@yard/web' dev",
+    "db:generate": "bun run --filter '@yard/db' generate",
+    "db:migrate": "bun run --filter '@yard/db' migrate",
+    "db:studio": "bun run --filter '@yard/db' studio",
     "build": "bun run --filter '*' build",
     "protocol:gen": "bun packages/protocol/scripts/gen-rust.ts",
-    "protocol:check": "bun test packages/protocol && bun run protocol:gen && git diff --exit-code -- packages/provider/crates/farm-protocol",
+    "protocol:check": "bun test packages/protocol && bun run protocol:gen && git diff --exit-code -- packages/provider/crates/yard-protocol",
     "test": "bun test packages/protocol packages/coordinator/test packages/web/test"
   },
   "devDependencies": {

@@ -11,11 +11,11 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 
-use farm_protocol::Platform;
 use provider_core::config::Config;
 use provider_core::metrics::{router, sample_once, MetricsCache, MetricsState};
 use provider_core::session::{Authorization, SessionRegistry};
 use provider_core::supervisor::Supervisor;
+use yard_protocol::Platform;
 
 const PROVIDER_ID: &str = "test-provider";
 const IOS_DEVICE: &str = "mock-ios-1";
@@ -146,22 +146,22 @@ async fn a_sampled_android_device_reports_cpu_memory_and_temperature() {
 
     assert!(has(
         &body,
-        &format!("farm_device_cpu_seconds_total{{device=\"{ANDROID_DEVICE}\",mode=\"user\"}}")
+        &format!("yard_device_cpu_seconds_total{{device=\"{ANDROID_DEVICE}\",mode=\"user\"}}")
     ));
     assert!(has(
         &body,
-        &format!("farm_device_memory_total_bytes{{device=\"{ANDROID_DEVICE}\"}}")
+        &format!("yard_device_memory_total_bytes{{device=\"{ANDROID_DEVICE}\"}}")
     ));
     assert!(has(
         &body,
         &format!(
-            "farm_device_thermal_zone_celsius{{device=\"{ANDROID_DEVICE}\",zone=\"mock-cpu\"}}"
+            "yard_device_thermal_zone_celsius{{device=\"{ANDROID_DEVICE}\",zone=\"mock-cpu\"}}"
         )
     ));
 
     let level = series(
         &body,
-        &format!("farm_device_battery_level_ratio{{device=\"{ANDROID_DEVICE}\"}}"),
+        &format!("yard_device_battery_level_ratio{{device=\"{ANDROID_DEVICE}\"}}"),
     )
     .expect("battery level");
     assert!((0.0..=1.0).contains(&level), "{level}");
@@ -177,15 +177,15 @@ async fn an_ios_device_reports_battery_but_no_cpu() {
 
     assert!(has(
         &body,
-        &format!("farm_device_battery_level_ratio{{device=\"{IOS_DEVICE}\"}}")
+        &format!("yard_device_battery_level_ratio{{device=\"{IOS_DEVICE}\"}}")
     ));
     assert!(!has(
         &body,
-        &format!("farm_device_cpu_seconds_total{{device=\"{IOS_DEVICE}\",mode=\"user\"}}")
+        &format!("yard_device_cpu_seconds_total{{device=\"{IOS_DEVICE}\",mode=\"user\"}}")
     ));
     assert!(!has(
         &body,
-        &format!("farm_device_memory_total_bytes{{device=\"{IOS_DEVICE}\"}}")
+        &format!("yard_device_memory_total_bytes{{device=\"{IOS_DEVICE}\"}}")
     ));
 }
 
@@ -198,13 +198,13 @@ async fn only_processes_matching_a_pattern_get_a_series() {
     assert!(has(
         &body,
         &format!(
-            "farm_app_memory_pss_bytes{{device=\"{ANDROID_DEVICE}\",app=\"com.example.demo.player\"}}"
+            "yard_app_memory_pss_bytes{{device=\"{ANDROID_DEVICE}\",app=\"com.example.demo.player\"}}"
         )
     ));
     assert!(!has(
         &body,
         &format!(
-            "farm_app_memory_pss_bytes{{device=\"{ANDROID_DEVICE}\",app=\"com.example.mock.app\"}}"
+            "yard_app_memory_pss_bytes{{device=\"{ANDROID_DEVICE}\",app=\"com.example.mock.app\"}}"
         )
     ));
 }
@@ -215,8 +215,8 @@ async fn no_patterns_means_no_per_app_series_at_all() {
     h.sample().await;
     let body = h.text().await;
 
-    assert!(!body.contains("farm_app_memory_pss_bytes"));
-    assert!(!body.contains("farm_app_cpu_seconds_total"));
+    assert!(!body.contains("yard_app_memory_pss_bytes"));
+    assert!(!body.contains("yard_app_cpu_seconds_total"));
 }
 
 /// node_exporter's enum idiom: every status is emitted so an alert can be
@@ -228,11 +228,11 @@ async fn device_status_emits_one_series_per_status() {
 
     let ready = series(
         &body,
-        &format!("farm_device_status{{device=\"{IOS_DEVICE}\",status=\"ready\"}}"),
+        &format!("yard_device_status{{device=\"{IOS_DEVICE}\",status=\"ready\"}}"),
     );
     let unhealthy = series(
         &body,
-        &format!("farm_device_status{{device=\"{IOS_DEVICE}\",status=\"unhealthy\"}}"),
+        &format!("yard_device_status{{device=\"{IOS_DEVICE}\",status=\"unhealthy\"}}"),
     );
 
     assert_eq!(ready, Some(1.0));
@@ -247,8 +247,8 @@ async fn device_status_emits_one_series_per_status() {
 #[tokio::test]
 async fn a_reserved_device_reports_busy_rather_than_ready() {
     let h = start(&[]).await;
-    let ready = format!("farm_device_status{{device=\"{IOS_DEVICE}\",status=\"ready\"}}");
-    let busy = format!("farm_device_status{{device=\"{IOS_DEVICE}\",status=\"busy\"}}");
+    let ready = format!("yard_device_status{{device=\"{IOS_DEVICE}\",status=\"ready\"}}");
+    let busy = format!("yard_device_status{{device=\"{IOS_DEVICE}\",status=\"busy\"}}");
 
     let body = h.text().await;
     assert_eq!(series(&body, &ready), Some(1.0));
@@ -303,14 +303,14 @@ async fn a_reservation_does_not_mask_an_unhealthy_device() {
     assert_eq!(
         series(
             &body,
-            &format!("farm_device_status{{device=\"{ANDROID_DEVICE}\",status=\"unhealthy\"}}")
+            &format!("yard_device_status{{device=\"{ANDROID_DEVICE}\",status=\"unhealthy\"}}")
         ),
         Some(1.0)
     );
     assert_eq!(
         series(
             &body,
-            &format!("farm_device_status{{device=\"{ANDROID_DEVICE}\",status=\"busy\"}}")
+            &format!("yard_device_status{{device=\"{ANDROID_DEVICE}\",status=\"busy\"}}")
         ),
         Some(0.0)
     );
@@ -320,7 +320,7 @@ async fn a_reservation_does_not_mask_an_unhealthy_device() {
 async fn an_authorized_reservation_shows_as_an_active_session() {
     let h = start(&[]).await;
 
-    let key = format!("farm_device_session_active{{device=\"{IOS_DEVICE}\"}}");
+    let key = format!("yard_device_session_active{{device=\"{IOS_DEVICE}\"}}");
     assert_eq!(series(&h.text().await, &key), Some(0.0));
 
     h.sessions
@@ -345,7 +345,7 @@ async fn a_failing_device_loses_its_series_but_keeps_its_operational_ones() {
     let h = start(&["*.demo.*"]).await;
     h.sample().await;
 
-    let cpu = format!("farm_device_cpu_seconds_total{{device=\"{ANDROID_DEVICE}\",mode=\"user\"}}");
+    let cpu = format!("yard_device_cpu_seconds_total{{device=\"{ANDROID_DEVICE}\",mode=\"user\"}}");
     assert!(has(&h.text().await, &cpu));
 
     h.android.state.healthy.store(false, Ordering::Relaxed);
@@ -362,18 +362,18 @@ async fn a_failing_device_loses_its_series_but_keeps_its_operational_ones() {
     assert_eq!(
         series(
             &body,
-            &format!("farm_device_metrics_errors_total{{device=\"{ANDROID_DEVICE}\"}}")
+            &format!("yard_device_metrics_errors_total{{device=\"{ANDROID_DEVICE}\"}}")
         ),
         Some(1.0)
     );
     assert!(has(
         &body,
-        &format!("farm_device_status{{device=\"{ANDROID_DEVICE}\",status=\"ready\"}}")
+        &format!("yard_device_status{{device=\"{ANDROID_DEVICE}\",status=\"ready\"}}")
     ));
     // The iOS device is unaffected: one device failing is not a farm outage.
     assert!(has(
         &body,
-        &format!("farm_device_battery_level_ratio{{device=\"{IOS_DEVICE}\"}}")
+        &format!("yard_device_battery_level_ratio{{device=\"{IOS_DEVICE}\"}}")
     ));
 }
 
@@ -389,7 +389,7 @@ async fn two_scrapes_without_a_sampler_pass_are_identical() {
     tokio::time::sleep(Duration::from_millis(50)).await;
     let second = h.text().await;
 
-    let key = format!("farm_device_cpu_seconds_total{{device=\"{ANDROID_DEVICE}\",mode=\"user\"}}");
+    let key = format!("yard_device_cpu_seconds_total{{device=\"{ANDROID_DEVICE}\",mode=\"user\"}}");
     assert_eq!(series(&first, &key), series(&second, &key));
 
     // ...and a pass does move them, so the test above is not passing because
@@ -404,8 +404,8 @@ async fn a_family_is_declared_once_however_many_devices_there_are() {
     h.sample().await;
     let body = h.text().await;
 
-    assert_eq!(body.matches("# TYPE farm_device_status ").count(), 1);
-    assert_eq!(body.matches("# TYPE farm_device_viewers ").count(), 1);
+    assert_eq!(body.matches("# TYPE yard_device_status ").count(), 1);
+    assert_eq!(body.matches("# TYPE yard_device_viewers ").count(), 1);
 }
 
 /// The provider has not registered in this harness — there is no coordinator at
@@ -418,7 +418,7 @@ async fn the_provider_reports_itself_unregistered_with_no_coordinator() {
     assert_eq!(
         series(
             &body,
-            &format!("farm_provider_control_connected{{provider=\"{PROVIDER_ID}\"}}")
+            &format!("yard_provider_control_connected{{provider=\"{PROVIDER_ID}\"}}")
         ),
         Some(0.0)
     );

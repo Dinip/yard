@@ -1,5 +1,5 @@
-import type { Database } from "@farm/db";
-import { setting } from "@farm/db";
+import type { Database } from "@yard/db";
+import { setting } from "@yard/db";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { env } from "../env.ts";

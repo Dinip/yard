@@ -9,8 +9,8 @@
  *   docker compose -f docker-compose.dev.yml up -d
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { device, provider, providerToken, reservation, user } from "@farm/db";
-import { FakeProvider, makeDevices } from "@farm/protocol/test/fake-provider";
+import { device, provider, providerToken, reservation, user } from "@yard/db";
+import { FakeProvider, makeDevices } from "@yard/protocol/test/fake-provider";
 import { eq, inArray } from "drizzle-orm";
 import { app } from "../src/app.ts";
 import { db } from "../src/db.ts";
@@ -347,7 +347,7 @@ describe("provider gateway", () => {
   });
 
   test("the JWKS the provider will verify against is published and usable", async () => {
-    const res = await fetch(`${baseUrl}/.well-known/farm-jwks.json`);
+    const res = await fetch(`${baseUrl}/.well-known/yard-jwks.json`);
     expect(res.ok).toBe(true);
 
     const body = (await res.json()) as { keys: Array<Record<string, string>> };

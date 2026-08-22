@@ -270,7 +270,7 @@ pub async fn usbmux_provider(udid: &str) -> Result<Box<dyn IdeviceProvider>> {
         .map_err(|err| anyhow!("list usbmuxd devices: {err:?}"))?;
     let device = pick_usb(devices, udid)?;
 
-    Ok(Box::new(device.to_provider(address, "farm-provider")))
+    Ok(Box::new(device.to_provider(address, "yard-provider")))
 }
 
 /// Choose the USB entry for a udid, and refuse anything else.
@@ -520,12 +520,13 @@ async fn product_version(provider: &dyn IdeviceProvider) -> Result<String> {
     Ok(value.as_string().unwrap_or_default().to_owned())
 }
 
-/// This provider is iOS 17.4+ only.
+/// This provider is iOS 27+ only.
 ///
-/// Below 17.4 the root-free tunnel can only reach the device over the
-/// RemotePairing/Wi-Fi path, and below 17 the CoreDevice display service does
-/// not exist at all. Neither is implemented here and there is no other backend
-/// to hand the device to, so fail loudly rather than half-work.
+/// The root-free tunnel needs CoreDeviceProxy, which Apple shipped in 17.4 —
+/// but real hardware testing (an iPhone 13) only worked reliably from iOS 27.
+/// Below that, whatever the version of CoreDeviceProxy shipped has not held up
+/// in practice, and there is no other backend to hand the device to, so fail
+/// loudly rather than half-work.
 fn assert_supported(product_version: &str) -> Result<()> {
     let mut parts = product_version.split('.');
     let parsed = (|| {
@@ -542,11 +543,11 @@ fn assert_supported(product_version: &str) -> Result<()> {
         return Ok(());
     };
 
-    if (major, minor) < (17, 4) {
+    if (major, minor) < (27, 0) {
         return Err(anyhow!(
-            "iOS {product_version} is not supported: this provider needs 17.4+, where \
-             CoreDeviceProxy builds the tunnel without root. There is no fallback path for \
-             older devices."
+            "iOS {product_version} is not supported: this provider needs 27+, where \
+             CoreDeviceProxy reliably builds the tunnel without root. There is no fallback path \
+             for older devices."
         ));
     }
     Ok(())
@@ -558,11 +559,11 @@ mod tests {
 
     #[test]
     fn rejects_versions_below_the_tunnel_floor() {
-        assert!(assert_supported("17.4").is_ok());
-        assert!(assert_supported("18.1.1").is_ok());
-        assert!(assert_supported("26.0").is_ok());
-        assert!(assert_supported("17.3.1").is_err());
-        assert!(assert_supported("16.7").is_err());
+        assert!(assert_supported("27.0").is_ok());
+        assert!(assert_supported("27.1.1").is_ok());
+        assert!(assert_supported("28.0").is_ok());
+        assert!(assert_supported("26.1").is_err());
+        assert!(assert_supported("17.4").is_err());
         // An unparseable version is a warning, not a hard stop: refusing to run
         // on a version string we simply do not recognise would be worse.
         assert!(assert_supported("").is_ok());

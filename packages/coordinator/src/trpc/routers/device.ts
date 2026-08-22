@@ -1,3 +1,4 @@
+import { TRPCError } from "@trpc/server";
 import {
   device,
   joinRequest,
@@ -6,8 +7,7 @@ import {
   reservationObserver,
   user,
   userAdbKey,
-} from "@farm/db";
-import { TRPCError } from "@trpc/server";
+} from "@yard/db";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { providers } from "../../gateway/registry.ts";
@@ -29,13 +29,13 @@ const RESERVABLE: ReadonlyArray<"ready" | "present"> = ["ready", "present"];
  * The TTL is admin-configurable policy rather than an env var, so it is read
  * per call — the settings cache makes that a memory lookup almost every time.
  */
-async function expiryFromNow(db: import("@farm/db").Database) {
+async function expiryFromNow(db: import("@yard/db").Database) {
   const ttl = await getSetting(db, "reservation.ttlSeconds");
   return new Date(Date.now() + ttl * 1000);
 }
 
 /** Device rows joined with their provider and current owner, shaped for the UI. */
-async function listDevices(db: import("@farm/db").Database) {
+async function listDevices(db: import("@yard/db").Database) {
   const rows = await db
     .select({
       device,
@@ -839,7 +839,7 @@ export const deviceRouter = router({
  * callers from looking it up a second time and racing a disconnect.
  */
 async function requireOwnedDevice(
-  ctx: { db: import("@farm/db").Database; user: { id: string; role?: string | null } },
+  ctx: { db: import("@yard/db").Database; user: { id: string; role?: string | null } },
   deviceId: string,
 ) {
   const [row] = await ctx.db
@@ -879,7 +879,7 @@ async function requireOwnedDevice(
 
 /** The request this user already has open on a reservation. */
 async function pendingRequest(
-  db: import("@farm/db").Database,
+  db: import("@yard/db").Database,
   reservationId: string,
   userId: string,
 ) {
@@ -901,7 +901,7 @@ async function pendingRequest(
 }
 
 /** An open observer row on this reservation — somebody who joined, and stayed. */
-async function isObserver(db: import("@farm/db").Database, reservationId: string, userId: string) {
+async function isObserver(db: import("@yard/db").Database, reservationId: string, userId: string) {
   const [row] = await db
     .select({ id: reservationObserver.id })
     .from(reservationObserver)

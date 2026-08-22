@@ -27,9 +27,9 @@ use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{extract::State, Router};
-use farm_protocol::DeviceStatus;
 use futures::StreamExt as _;
 use tracing::{debug, info, warn};
+use yard_protocol::DeviceStatus;
 
 use crate::backend::{AppFilter, BackendError, DeviceMetrics};
 use crate::config::Config;
@@ -77,7 +77,7 @@ pub struct MetricsCache {
 struct DeviceSample {
     at: Instant,
     /// Unix seconds of the last *successful* read, carried across failures so
-    /// `time() - farm_device_metrics_sample_timestamp_seconds` stays a usable
+    /// `time() - yard_device_metrics_sample_timestamp_seconds` stays a usable
     /// freshness signal rather than vanishing at the first error.
     succeeded_at: Option<f64>,
     /// A failure is stored rather than dropped: the error counter has to
@@ -257,7 +257,7 @@ pub async fn encode(state: &MetricsState) -> String {
     let provider = &state.config.id;
 
     out.gauge(
-        "farm_provider_build_info",
+        "yard_provider_build_info",
         "Provider version, always 1.",
         &[
             ("provider", provider),
@@ -266,7 +266,7 @@ pub async fn encode(state: &MetricsState) -> String {
         1.0,
     );
     out.gauge(
-        "farm_provider_control_connected",
+        "yard_provider_control_connected",
         "1 when the coordinator has acked this provider's hello.",
         &[("provider", provider)],
         f64::from(u8::from(state.supervisor.is_registered().await)),
@@ -295,7 +295,7 @@ pub async fn encode(state: &MetricsState) -> String {
         // idiom, so an alert is `== 1` rather than `absent()`.
         for candidate in ALL_STATUSES {
             out.gauge(
-                "farm_device_status",
+                "yard_device_status",
                 "1 on the device's current status, 0 on the others.",
                 &[("device", id), ("status", status_label(*candidate))],
                 f64::from(u8::from(*candidate == status)),
@@ -303,49 +303,49 @@ pub async fn encode(state: &MetricsState) -> String {
         }
 
         out.gauge(
-            "farm_device_session_active",
+            "yard_device_session_active",
             "1 while a reservation is authorized on this device.",
             &[("device", id)],
             f64::from(u8::from(session_active)),
         );
         out.gauge(
-            "farm_device_viewers",
+            "yard_device_viewers",
             "Live subscribers to this device's video stream.",
             &[("device", id)],
             video.viewer_count() as f64,
         );
         out.gauge(
-            "farm_device_streaming",
+            "yard_device_streaming",
             "1 when the device has broadcast a keyframe and is streaming.",
             &[("device", id)],
             f64::from(u8::from(video.is_streaming())),
         );
         out.counter(
-            "farm_device_video_bytes_total",
+            "yard_device_video_bytes_total",
             "Access-unit bytes produced by this device's encoder.",
             &[("device", id)],
             video.bytes_published() as f64,
         );
         out.counter(
-            "farm_device_video_frames_total",
+            "yard_device_video_frames_total",
             "Access units produced by this device's encoder.",
             &[("device", id)],
             video.frames_published() as f64,
         );
         out.counter(
-            "farm_device_installs_total",
+            "yard_device_installs_total",
             "Installs attempted on this device.",
             &[("device", id), ("result", "ok")],
             installs_ok as f64,
         );
         out.counter(
-            "farm_device_installs_total",
+            "yard_device_installs_total",
             "Installs attempted on this device.",
             &[("device", id), ("result", "error")],
             installs_failed as f64,
         );
         out.counter(
-            "farm_device_metrics_errors_total",
+            "yard_device_metrics_errors_total",
             "Failed metric samples for this device.",
             &[("device", id)],
             cache.get(id).map(|s| s.errors).unwrap_or(0) as f64,
@@ -360,7 +360,7 @@ pub async fn encode(state: &MetricsState) -> String {
 
         if let Some(at) = sample.succeeded_at {
             out.gauge(
-                "farm_device_metrics_sample_timestamp_seconds",
+                "yard_device_metrics_sample_timestamp_seconds",
                 "Unix time of the last successful sample for this device.",
                 &[("device", id)],
                 at,
@@ -383,7 +383,7 @@ pub async fn encode(state: &MetricsState) -> String {
         if let Some(cpu) = &metrics.cpu {
             for (mode, seconds) in cpu.modes() {
                 out.counter(
-                    "farm_device_cpu_seconds_total",
+                    "yard_device_cpu_seconds_total",
                     "Cumulative CPU seconds on the device, by mode.",
                     &[("device", id), ("mode", mode)],
                     seconds,
@@ -393,20 +393,20 @@ pub async fn encode(state: &MetricsState) -> String {
 
         if let Some(memory) = &metrics.memory {
             out.gauge(
-                "farm_device_memory_total_bytes",
+                "yard_device_memory_total_bytes",
                 "Total physical memory on the device.",
                 &[("device", id)],
                 memory.total as f64,
             );
             if let Some(available) = memory.available {
                 out.gauge(
-                    "farm_device_memory_available_bytes",
+                    "yard_device_memory_available_bytes",
                     "Memory available for new allocations without swapping.",
                     &[("device", id)],
                     available as f64,
                 );
                 out.gauge(
-                    "farm_device_memory_used_bytes",
+                    "yard_device_memory_used_bytes",
                     "Total memory less what is available.",
                     &[("device", id)],
                     memory.total.saturating_sub(available) as f64,
@@ -416,7 +416,7 @@ pub async fn encode(state: &MetricsState) -> String {
 
         if let Some(level) = metrics.battery_level {
             out.gauge(
-                "farm_device_battery_level_ratio",
+                "yard_device_battery_level_ratio",
                 "Battery charge, 0 to 1.",
                 &[("device", id)],
                 level,
@@ -424,7 +424,7 @@ pub async fn encode(state: &MetricsState) -> String {
         }
         if let Some(charging) = metrics.battery_charging {
             out.gauge(
-                "farm_device_battery_charging",
+                "yard_device_battery_charging",
                 "1 while the device is charging.",
                 &[("device", id)],
                 f64::from(u8::from(charging)),
@@ -432,7 +432,7 @@ pub async fn encode(state: &MetricsState) -> String {
         }
         if let Some(celsius) = metrics.battery_temperature_c {
             out.gauge(
-                "farm_device_battery_temperature_celsius",
+                "yard_device_battery_temperature_celsius",
                 "Battery temperature.",
                 &[("device", id)],
                 celsius,
@@ -440,7 +440,7 @@ pub async fn encode(state: &MetricsState) -> String {
         }
         for zone in &metrics.thermal_zones {
             out.gauge(
-                "farm_device_thermal_zone_celsius",
+                "yard_device_thermal_zone_celsius",
                 "Thermal sensor reading, by zone.",
                 &[("device", id), ("zone", &zone.name)],
                 zone.celsius,
@@ -450,7 +450,7 @@ pub async fn encode(state: &MetricsState) -> String {
         for app in &metrics.apps {
             if let Some(seconds) = app.cpu_seconds {
                 out.counter(
-                    "farm_app_cpu_seconds_total",
+                    "yard_app_cpu_seconds_total",
                     "Cumulative CPU seconds for a watched process.",
                     &[("device", id), ("app", &app.process)],
                     seconds,
@@ -458,7 +458,7 @@ pub async fn encode(state: &MetricsState) -> String {
             }
             if let Some(pss) = app.pss_bytes {
                 out.gauge(
-                    "farm_app_memory_pss_bytes",
+                    "yard_app_memory_pss_bytes",
                     "Proportional set size of a watched process.",
                     &[("device", id), ("app", &app.process)],
                     pss as f64,
@@ -650,21 +650,21 @@ mod tests {
     #[test]
     fn interleaved_families_are_regrouped_and_declared_once() {
         let mut out = Encoder::default();
-        out.gauge("farm_one", "First.", &[("device", "a")], 1.0);
-        out.counter("farm_two", "Second.", &[("device", "a")], 10.0);
-        out.gauge("farm_one", "First.", &[("device", "b")], 2.0);
-        out.counter("farm_two", "Second.", &[("device", "b")], 20.0);
+        out.gauge("yard_one", "First.", &[("device", "a")], 1.0);
+        out.counter("yard_two", "Second.", &[("device", "a")], 10.0);
+        out.gauge("yard_one", "First.", &[("device", "b")], 2.0);
+        out.counter("yard_two", "Second.", &[("device", "b")], 20.0);
 
         assert_eq!(
             out.finish(),
-            "# HELP farm_one First.\n\
-             # TYPE farm_one gauge\n\
-             farm_one{device=\"a\"} 1\n\
-             farm_one{device=\"b\"} 2\n\
-             # HELP farm_two Second.\n\
-             # TYPE farm_two counter\n\
-             farm_two{device=\"a\"} 10\n\
-             farm_two{device=\"b\"} 20\n"
+            "# HELP yard_one First.\n\
+             # TYPE yard_one gauge\n\
+             yard_one{device=\"a\"} 1\n\
+             yard_one{device=\"b\"} 2\n\
+             # HELP yard_two Second.\n\
+             # TYPE yard_two counter\n\
+             yard_two{device=\"a\"} 10\n\
+             yard_two{device=\"b\"} 20\n"
         );
     }
 
@@ -675,7 +675,7 @@ mod tests {
     fn label_values_are_escaped() {
         let mut out = Encoder::default();
         out.gauge(
-            "farm_test",
+            "yard_test",
             "A test.",
             &[("device", "we\"ird\\one\nhere")],
             1.0,
@@ -683,7 +683,7 @@ mod tests {
 
         assert!(out
             .finish()
-            .contains(r#"farm_test{device="we\"ird\\one\nhere"} 1"#));
+            .contains(r#"yard_test{device="we\"ird\\one\nhere"} 1"#));
     }
 
     #[test]

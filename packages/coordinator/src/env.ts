@@ -8,7 +8,7 @@ export const env = createEnv({
 
     DATABASE_URL: z.string().url(),
 
-    /** Public origin of the coordinator itself, e.g. https://farm.example.com */
+    /** Public origin of the coordinator itself, e.g. https://yard.example.com */
     PUBLIC_URL: z.string().url(),
     /** Origin(s) allowed to call the API with credentials — the web SPA. */
     WEB_ORIGIN: z
@@ -44,9 +44,6 @@ export const env = createEnv({
      * keeps the lifetime it was configured with until an admin changes it.
      */
     RESERVATION_TTL: z.coerce.number().int().default(900),
-
-    /** Display name of the product. Centralised here so a rename is one variable. */
-    APP_NAME: z.string().default("Device Farm"),
   },
   runtimeEnv: process.env,
   emptyStringAsUndefined: true,

@@ -13,37 +13,37 @@ RUN apt-get update \
 # independently of application changes. Same trick as stf-ios-provider's
 # Dockerfile — dependency compilation dominates this build.
 COPY Cargo.toml Cargo.lock ./
-COPY packages/provider/crates/farm-protocol/Cargo.toml packages/provider/crates/farm-protocol/
+COPY packages/provider/crates/yard-protocol/Cargo.toml packages/provider/crates/yard-protocol/
 COPY packages/provider/crates/provider-core/Cargo.toml packages/provider/crates/provider-core/
 COPY packages/provider/crates/adb-bridge/Cargo.toml    packages/provider/crates/adb-bridge/
 COPY packages/provider/crates/backend-mock/Cargo.toml  packages/provider/crates/backend-mock/
 COPY packages/provider/crates/backend-ios/Cargo.toml   packages/provider/crates/backend-ios/
 COPY packages/provider/crates/backend-android/Cargo.toml packages/provider/crates/backend-android/
-COPY packages/provider/crates/farm-provider/Cargo.toml packages/provider/crates/farm-provider/
+COPY packages/provider/crates/yard-provider/Cargo.toml packages/provider/crates/yard-provider/
 # The scrcpy server is embedded with include_bytes!, so it has to be present
 # for the stub build too — a missing file here fails compilation, not linking.
 COPY packages/provider/vendor ./packages/provider/vendor
-RUN mkdir -p packages/provider/crates/farm-protocol/src \
+RUN mkdir -p packages/provider/crates/yard-protocol/src \
              packages/provider/crates/provider-core/src \
              packages/provider/crates/adb-bridge/src \
              packages/provider/crates/backend-mock/src \
              packages/provider/crates/backend-ios/src \
              packages/provider/crates/backend-android/src \
-             packages/provider/crates/farm-provider/src \
- && echo "" > packages/provider/crates/farm-protocol/src/lib.rs \
+             packages/provider/crates/yard-provider/src \
+ && echo "" > packages/provider/crates/yard-protocol/src/lib.rs \
  && echo "" > packages/provider/crates/provider-core/src/lib.rs \
  && echo "" > packages/provider/crates/adb-bridge/src/lib.rs \
  && echo "" > packages/provider/crates/backend-mock/src/lib.rs \
  && echo "" > packages/provider/crates/backend-ios/src/lib.rs \
  && echo "" > packages/provider/crates/backend-android/src/lib.rs \
- && echo "fn main() {}" > packages/provider/crates/farm-provider/src/main.rs \
- && cargo build --release -p farm-provider \
+ && echo "fn main() {}" > packages/provider/crates/yard-provider/src/main.rs \
+ && cargo build --release -p yard-provider \
  && rm -rf packages/provider/crates/*/src
 
 COPY packages/provider ./packages/provider
 # Touch so cargo does not trust the stub build's timestamps.
 RUN find packages/provider -name '*.rs' -exec touch {} + \
- && cargo build --release -p farm-provider
+ && cargo build --release -p yard-provider
 
 # debian-slim rather than distroless/cc: the Android backend needs an adb
 # server, which owns the USB transport and cannot be spoken to over TCP without
@@ -59,9 +59,9 @@ FROM debian:bookworm-slim AS runtime
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates adb \
  && rm -rf /var/lib/apt/lists/* \
- && mkdir -p /var/lib/farm/scratch
+ && mkdir -p /var/lib/yard/scratch
 
-COPY --from=builder /build/target/release/farm-provider /usr/local/bin/farm-provider
+COPY --from=builder /build/target/release/yard-provider /usr/local/bin/yard-provider
 COPY packages/provider/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
@@ -72,11 +72,11 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 # process still has nothing on disk worth reaching: the only writable path is
 # the scratch tmpfs, which nothing outlives an install in.
 EXPOSE 7100
-ENV FARM_CONFIG=/etc/farm/provider.yaml
+ENV YARD_CONFIG=/etc/yard/provider.yaml
 
 # Self-probe: the session plane is what browsers depend on, so that is what
 # health means here.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD ["/usr/local/bin/farm-provider", "--config", "/etc/farm/provider.yaml", "--check"]
+  CMD ["/usr/local/bin/yard-provider", "--config", "/etc/yard/provider.yaml", "--check"]
 
 ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

@@ -3,7 +3,7 @@ datasources:
   - name: Prometheus
     # Fixed uid so the dashboard JSON can name it. Without one Grafana assigns a
     # random uid per install and any datasource reference in a dashboard breaks.
-    uid: farm-prometheus
+    uid: yard-prometheus
     type: prometheus
     access: proxy
     url: http://prometheus:9090

@@ -1,8 +1,9 @@
-import { JWKS_PATH } from "@farm/protocol";
 import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
+import { JWKS_PATH } from "@yard/protocol";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
+import { APP_NAME } from "./app-name.ts";
 import { auth } from "./auth.ts";
 import { env } from "./env.ts";
 import { gatewayRoutes } from "./gateway/route.ts";
@@ -27,7 +28,7 @@ app.use(
   }),
 );
 
-app.get("/health", (c) => c.json({ ok: true, name: env.APP_NAME }));
+app.get("/health", (c) => c.json({ ok: true, name: APP_NAME }));
 
 /**
  * Public key for session tokens. Every provider fetches this once at startup

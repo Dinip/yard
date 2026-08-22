@@ -2,7 +2,7 @@
  * Canonical wire messages, parsed by **both** sides.
  *
  * `bun test packages/protocol` asserts zod accepts every one of these and that
- * re-encoding is byte-stable. `cargo test -p farm-protocol` reads the same file
+ * re-encoding is byte-stable. `cargo test -p yard-protocol` reads the same file
  * and asserts serde does too.
  *
  * A schema change that breaks one language but not the other fails here, which
@@ -155,9 +155,9 @@ export const coordinatorFixtures = {
     type: "hello.ack",
     protocolVersion: 1,
     heartbeatIntervalMs: 15000,
-    jwksUrl: "https://farm.example.com/.well-known/farm-jwks.json",
-    issuer: "https://farm.example.com",
-    webOrigins: ["https://farm.example.com"],
+    jwksUrl: "https://yard.example.com/.well-known/yard-jwks.json",
+    issuer: "https://yard.example.com",
+    webOrigins: ["https://yard.example.com"],
   },
   helloReject: { type: "hello.reject", reason: "unknown provider token" },
   authorize: {

@@ -1,4 +1,4 @@
-//! iOS 17.4+ device backend, driving CoreDevice over a root-free RSD tunnel.
+//! iOS 27+ device backend, driving CoreDevice over a root-free RSD tunnel.
 //!
 //! Ported from `stf-ios-provider`, whose device layer this keeps almost
 //! unchanged — see the module headers for what moved and why. What is gone is
@@ -15,9 +15,9 @@
 //!   lib.rs      the pointer state machine and the trait impl
 //! ```
 //!
-//! Requires iOS 17.4+: below that the root-free CoreDeviceProxy tunnel does not
-//! exist, and the backend fails loudly at session bring-up rather than
-//! half-working.
+//! Requires iOS 27+: real hardware testing found the root-free CoreDeviceProxy
+//! tunnel unreliable below that, and the backend fails loudly at session
+//! bring-up rather than half-working.
 
 pub mod app_list;
 pub mod ddi;
@@ -33,7 +33,6 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
-use farm_protocol::{AppInfo, Display, FileEntry, FileKind, FileListing, Platform};
 use idevice::core_device::{
     AppServiceClient, ImageFormat, PasteboardPayload, PasteboardServiceClient, RotationDirection,
     ScreenCaptureServiceClient, GENERAL_PASTEBOARD,
@@ -51,6 +50,7 @@ use provider_core::backend::{
 use provider_core::video::{channel, VideoGeometry, VideoHandle, VideoPublisher};
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
+use yard_protocol::{AppInfo, Display, FileEntry, FileKind, FileListing, Platform};
 
 use crate::app_list::AppList;
 use crate::device::{connect_service, DeviceHost};

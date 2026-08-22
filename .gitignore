@@ -42,13 +42,12 @@ lerna-debug.log*
 *.key
 !**/testdata/*.key
 
-# reference sources kept on disk outside this repo:
-#   ../stf ../stf-ios-provider ../idevice
-# they are intentionally NOT vendored here. See docs/REFERENCES.md
-
 # rust
 /target/
 
-# NOTE: packages/provider/crates/farm-protocol/src/generated.rs and
+# NOTE: packages/provider/crates/yard-protocol/src/generated.rs and
 # tests/fixtures.json are generated but deliberately COMMITTED — CI regenerates
 # and diffs them to catch wire-contract drift. Do not add them here.
+
+# local-only docs: not relevant outside this machine, never committed
+*.local.md

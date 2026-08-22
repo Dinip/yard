@@ -18,7 +18,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use farm_protocol::{AppInfo, Display, FileEntry, FileKind, FileListing, Platform};
 use provider_core::adb_auth::AdbAuthority;
 use provider_core::backend::{
     parent_of, AppFilter, AppMetrics, BackendError, CpuTimes, DeviceBackend, DeviceInfo,
@@ -30,6 +29,7 @@ use provider_core::video::{
 use tokio::sync::Mutex;
 use tokio::time::Instant;
 use tracing::{debug, info};
+use yard_protocol::{AppInfo, Display, FileEntry, FileKind, FileListing, Platform};
 
 /// Frame cadence. 10fps is enough to exercise fan-out and shedding without
 /// making test logs unreadable.
@@ -329,7 +329,7 @@ impl DeviceBackend for MockBackend {
                 Platform::Android => "Google".into(),
             }),
             os_version: Some(match self.platform {
-                Platform::Ios => "17.4.1".into(),
+                Platform::Ios => "27.0".into(),
                 Platform::Android => "14".into(),
             }),
             abi: Some(match self.platform {

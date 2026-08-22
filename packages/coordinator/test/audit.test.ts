@@ -8,7 +8,7 @@
  * Requires Postgres at DATABASE_URL.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { auditLog, user } from "@farm/db";
+import { auditLog, user } from "@yard/db";
 import { inArray } from "drizzle-orm";
 import { db } from "../src/db.ts";
 import { caller as callerFor, closePoolOnExit, testUser } from "./helpers.ts";

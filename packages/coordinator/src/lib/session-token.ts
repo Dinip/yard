@@ -1,4 +1,4 @@
-import { SESSION_TOKEN_AUDIENCE, type SessionTokenClaims } from "@farm/protocol";
+import { SESSION_TOKEN_AUDIENCE, type SessionTokenClaims } from "@yard/protocol";
 import { calculateJwkThumbprint, exportJWK, generateKeyPair, importPKCS8, SignJWT } from "jose";
 import { env } from "../env.ts";
 
@@ -7,7 +7,7 @@ const ALG = "EdDSA";
 /**
  * Ed25519 signer for session tokens (browser → provider).
  *
- * Providers verify against the JWKS published at `/.well-known/farm-jwks.json`,
+ * Providers verify against the JWKS published at `/.well-known/yard-jwks.json`,
  * so no secret is ever distributed to a provider and a provider keeps serving
  * an already-authorized session across a coordinator restart.
  *
@@ -45,7 +45,7 @@ async function loadKeys() {
 
 const keys = await loadKeys();
 
-/** Served at `/.well-known/farm-jwks.json` and cached by every provider. */
+/** Served at `/.well-known/yard-jwks.json` and cached by every provider. */
 export const jwks = { keys: [keys.publicJwk] };
 
 export interface SessionTokenInput {

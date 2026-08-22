@@ -1,11 +1,11 @@
-import { device, provider, providerToken, reservation } from "@farm/db";
+import { device, provider, providerToken, reservation } from "@yard/db";
 import {
   type CoordinatorMessage,
   type DeviceSnapshot,
   JWKS_PATH,
   PROTOCOL_VERSION,
   ProviderMessage,
-} from "@farm/protocol";
+} from "@yard/protocol";
 import { and, eq, inArray, lt, notInArray } from "drizzle-orm";
 import { db } from "../db.ts";
 import { env } from "../env.ts";

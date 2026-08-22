@@ -23,7 +23,7 @@ packages/protocol/
 ## Codegen
 
 ```bash
-bun run protocol:gen     # → packages/provider/crates/farm-protocol/src/generated.rs
+bun run protocol:gen     # → packages/provider/crates/yard-protocol/src/generated.rs
 bun run protocol:check   # tests + regen + diff, as CI runs it
 ```
 
@@ -46,10 +46,10 @@ stale copy of the wire contract that encodes cleanly and delivers nothing.
 ### Cross-language fixtures
 
 `test/fixtures.ts` holds canonical messages. `bun test packages/protocol`
-asserts zod parses them and writes `crates/farm-protocol/tests/fixtures.json`
+asserts zod parses them and writes `crates/yard-protocol/tests/fixtures.json`
 (a generated file, so biome ignores it — otherwise running the tests and running
 the formatter would each undo the other);
-`cargo test -p farm-protocol` reads it back and asserts serde re-encodes it
+`cargo test -p yard-protocol` reads it back and asserts serde re-encodes it
 unchanged. A change that breaks one language but not the other fails a test.
 
 This caught a real bug during development: `.optional()` and `.nullable()` were
@@ -158,11 +158,11 @@ provider trusting a key an admin deleted.
 ## Session tokens ✅ built
 
 Ed25519 (`EdDSA`) JWTs signed by the coordinator, published at
-`/.well-known/farm-jwks.json`, verified by each provider against its cached copy.
+`/.well-known/yard-jwks.json`, verified by each provider against its cached copy.
 
 ```json
 { "deviceId": "…", "userId": "…", "reservationId": "…", "providerId": "…",
-  "iss": "<PUBLIC_URL>", "aud": "farm-provider", "exp": "≈60s" }
+  "iss": "<PUBLIC_URL>", "aud": "yard-provider", "exp": "≈60s" }
 ```
 
 `device.sessionToken` issues one only to the holder of the device's active

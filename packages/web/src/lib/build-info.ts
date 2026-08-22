@@ -14,11 +14,10 @@ declare const __APP_VERSION__: string;
 declare const __GIT_SHA__: string | null;
 
 /**
- * A rename site — see docs/RENAMING.md. Not APP_NAME-style configuration: the
- * source of a deployment is the source it was built from, not something an
- * operator sets.
+ * Not configuration: the source of a deployment is the repo it was built
+ * from, not something an operator sets.
  */
-export const REPO_URL = "https://github.com/Dinip/device-farm";
+export const REPO_URL = "https://github.com/Dinip/yard";
 
 export const VERSION = typeof __APP_VERSION__ === "string" ? __APP_VERSION__ : "0.0.0";
 

@@ -7,11 +7,11 @@
 //!
 //! If this file is missing, run `bun test packages/protocol` first.
 
-use farm_protocol::{
-    ClientMessage, CoordinatorMessage, FileListing, ProviderMessage, ServerMessage,
-};
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
+use yard_protocol::{
+    ClientMessage, CoordinatorMessage, FileListing, ProviderMessage, ServerMessage,
+};
 
 fn fixtures() -> Value {
     let raw = include_str!("fixtures.json");
