@@ -1,0 +1,37 @@
+# Writes the Rust cache that pr.yml restores. It has to happen on main: a cache
+# belongs to the ref that wrote it, and a pull request may read only its own or
+# the base branch's.
+
+name: Rust cache
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+  warm:
+    runs-on: ubuntu-latest
+    # Must match pr.yml's rust job.
+    env:
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci
+      # Clippy leaves check-mode metadata, `--no-run` the codegen artifacts that
+      # check-mode cannot supply. A pull request runs both, so it wants both.
+      # Tests are not run: main already passed the PR gate.
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace --no-run
