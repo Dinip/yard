@@ -104,8 +104,8 @@ function AuditPage() {
       <div>
         <h1 className="font-semibold text-2xl">Audit log</h1>
         <p className="text-muted-foreground text-sm">
-          Every reservation, release and install. Installs carry the digest of a file that no longer
-          exists anywhere.
+          Every action, from reservations to installs to setting changes. Installs carry the digest
+          of a file that no longer exists anywhere.
         </p>
       </div>
 
