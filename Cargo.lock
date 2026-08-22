@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "adb-bridge"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -286,7 +286,7 @@ dependencies = [
 
 [[package]]
 name = "backend-android"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "adb-bridge",
  "anyhow",
@@ -302,7 +302,7 @@ dependencies = [
 
 [[package]]
 name = "backend-ios"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -322,7 +322,7 @@ dependencies = [
 
 [[package]]
 name = "backend-mock"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "provider-core",
@@ -2041,7 +2041,7 @@ dependencies = [
 
 [[package]]
 name = "provider-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -3624,7 +3624,7 @@ dependencies = [
 
 [[package]]
 name = "yard-protocol"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -3632,7 +3632,7 @@ dependencies = [
 
 [[package]]
 name = "yard-provider"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "backend-android",
