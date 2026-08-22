@@ -27,9 +27,9 @@ use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{extract::State, Router};
-use yard_protocol::DeviceStatus;
 use futures::StreamExt as _;
 use tracing::{debug, info, warn};
+use yard_protocol::DeviceStatus;
 
 use crate::backend::{AppFilter, BackendError, DeviceMetrics};
 use crate::config::Config;

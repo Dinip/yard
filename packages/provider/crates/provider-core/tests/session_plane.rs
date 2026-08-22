@@ -14,7 +14,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::Router;
 use base64::Engine as _;
-use yard_protocol::Platform;
 use jsonwebtoken::{Algorithm, EncodingKey, Header};
 use provider_core::auth::TokenVerifier;
 use provider_core::backend::InputEvent;
@@ -24,6 +23,7 @@ use provider_core::server::{router, ServerState};
 use provider_core::session::{Authorization, SessionRegistry};
 use provider_core::supervisor::Supervisor;
 use serde::Serialize;
+use yard_protocol::Platform;
 
 const PROVIDER_ID: &str = "test-provider";
 /// The browser origin the coordinator hands out in `hello.ack`.

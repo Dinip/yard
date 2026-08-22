@@ -9,7 +9,6 @@ use std::sync::Arc;
 
 use anyhow::{bail, Context as _, Result};
 use clap::Parser;
-use yard_protocol::Platform;
 use provider_core::auth::TokenVerifier;
 use provider_core::config::{BackendKind, Config};
 use provider_core::control::ControlClient;
@@ -22,6 +21,7 @@ use provider_core::supervisor::Supervisor;
 use provider_core::DeviceBackend;
 use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
+use yard_protocol::Platform;
 
 #[derive(Parser, Debug)]
 #[command(name = "yard-provider", version, about = "Device provider")]

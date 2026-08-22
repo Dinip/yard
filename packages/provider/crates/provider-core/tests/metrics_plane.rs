@@ -11,11 +11,11 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 
-use yard_protocol::Platform;
 use provider_core::config::Config;
 use provider_core::metrics::{router, sample_once, MetricsCache, MetricsState};
 use provider_core::session::{Authorization, SessionRegistry};
 use provider_core::supervisor::Supervisor;
+use yard_protocol::Platform;
 
 const PROVIDER_ID: &str = "test-provider";
 const IOS_DEVICE: &str = "mock-ios-1";

@@ -12,15 +12,15 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{bail, Context as _, Result};
-use yard_protocol::{
-    CommandData, CommandPayload, CoordinatorMessage, DeviceSnapshot, ProviderMessage,
-    PROTOCOL_VERSION,
-};
 use futures::{SinkExt as _, StreamExt as _};
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
 use tracing::{debug, error, info, warn};
+use yard_protocol::{
+    CommandData, CommandPayload, CoordinatorMessage, DeviceSnapshot, ProviderMessage,
+    PROTOCOL_VERSION,
+};
 
 use crate::config::{Config, RECONNECT_MAX, RECONNECT_MIN};
 use crate::origins::WebOrigins;

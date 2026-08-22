@@ -23,13 +23,13 @@ use std::time::{Duration, Instant};
 use adb_bridge::Bridge;
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
-use yard_protocol::{AppInfo, Display, FileEntry, FileKind, FileListing, Platform};
 use provider_core::adb_auth::AdbAuthority;
 use provider_core::backend::{
     join_path, parent_of, AppFilter, BackendError, DeviceBackend, DeviceInfo, DeviceMetrics,
     InputEvent, ProgressSink, RemoteDebug, Result as BackendResult,
 };
 use provider_core::ports::{PortLease, PortPool};
+use yard_protocol::{AppInfo, Display, FileEntry, FileKind, FileListing, Platform};
 
 use crate::bridge::{DeviceAuthorizer, DeviceServices};
 use provider_core::video::{channel, VideoGeometry, VideoHandle, VideoPublisher};
