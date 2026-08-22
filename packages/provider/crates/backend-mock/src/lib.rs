@@ -329,7 +329,7 @@ impl DeviceBackend for MockBackend {
                 Platform::Android => "Google".into(),
             }),
             os_version: Some(match self.platform {
-                Platform::Ios => "17.4.1".into(),
+                Platform::Ios => "27.0".into(),
                 Platform::Android => "14".into(),
             }),
             abi: Some(match self.platform {

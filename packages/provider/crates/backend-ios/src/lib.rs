@@ -1,4 +1,4 @@
-//! iOS 17.4+ device backend, driving CoreDevice over a root-free RSD tunnel.
+//! iOS 27+ device backend, driving CoreDevice over a root-free RSD tunnel.
 //!
 //! Ported from `stf-ios-provider`, whose device layer this keeps almost
 //! unchanged — see the module headers for what moved and why. What is gone is
@@ -15,9 +15,9 @@
 //!   lib.rs      the pointer state machine and the trait impl
 //! ```
 //!
-//! Requires iOS 17.4+: below that the root-free CoreDeviceProxy tunnel does not
-//! exist, and the backend fails loudly at session bring-up rather than
-//! half-working.
+//! Requires iOS 27+: real hardware testing found the root-free CoreDeviceProxy
+//! tunnel unreliable below that, and the backend fails loudly at session
+//! bring-up rather than half-working.
 
 pub mod app_list;
 pub mod ddi;

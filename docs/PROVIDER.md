@@ -13,7 +13,7 @@ while collapsing N containers, N ZMQ connections and N config files into one.
 | `yard-protocol` | ✅ generated wire types + framing helpers |
 | `provider-core` | ✅ config, control plane, session plane, supervision, JWT auth |
 | `backend-mock` | ✅ synthetic device — the whole provider runs with no hardware |
-| `backend-ios` | ✅ CoreDevice over a root-free RSD tunnel, iOS 17.4+ |
+| `backend-ios` | ✅ CoreDevice over a root-free RSD tunnel, iOS 27+ |
 | `backend-android` | ✅ adb host protocol + scrcpy, no transcode |
 
 ```
@@ -355,9 +355,9 @@ expensive on `info()`'s 15s cadence. It is now cached with a 60s TTL and shared:
 the metrics sampler refreshes it on its own cadence and `info()` rides on that,
 so the worst case is one round trip a minute instead of four.
 
-iOS 17.4+ only: below that the root-free `CoreDeviceProxy` tunnel does not
-exist, and bring-up fails loudly rather than half-working. There is no other
-iOS backend to hand an older device to.
+iOS 27+ only: real hardware testing found the root-free `CoreDeviceProxy`
+tunnel unreliable below that, and bring-up fails loudly rather than
+half-working. There is no other iOS backend to hand an older device to.
 
 **USB only.** usbmuxd lists a Wi-Fi-synced device *twice* — once `USB`, once
 `Network` — in no guaranteed order, and `idevice`'s `get_device` is a `find`, so

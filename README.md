@@ -41,9 +41,10 @@ traffic.
 
 ## Status
 
-Verified against real hardware: an iPhone 13 on iOS 17.4+ and a Galaxy S22 on
-Android both reserve, stream to a browser, and take touch and keyboard input —
-through the containerised stack, with the coordinator nowhere near the video.
+Verified against real hardware: an iPhone 13 on iOS 27 (beta) and a Galaxy S22
+on Android both reserve, stream to a browser, and take touch and keyboard
+input — through the containerised stack, with the coordinator nowhere near the
+video.
 
 It also runs with **no hardware at all**: the Rust provider ships a mock backend
 that registers, reserves, streams synthetic video and accepts input and
