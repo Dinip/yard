@@ -2,10 +2,12 @@
 
 **Y**our **A**ccess (to) **R**eal **D**evices.
 
-A device farm for real Android and iOS hardware — live video, touch and keyboard
+A device farm for real Android and iOS hardware - live video, touch and keyboard
 input, app install, clipboard, screenshots, reservations, and adb remote
 debugging, all from a browser. Plug phones into a machine anywhere, and they
 show up as something a whole team can book and use over the network.
+
+![The device list: ten Android and iOS devices, one in use](docs/images/devices.webp)
 
 ## How it fits together
 
@@ -39,11 +41,39 @@ traffic.
 
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) has the detail.
 
+## In use
+
+<table>
+  <tr>
+    <td><img src="docs/images/android.webp" alt="An Android session in the browser" width="745"></td>
+    <td><img src="docs/images/android_popout.webp" alt="An Android device in a popout window" width="211"></td>
+  </tr>
+</table>
+
+**Android.** A live screen with hardware keys, rotate, screenshot and record,
+APK install, file browsing and clipboard in both directions.
+
+<table>
+  <tr>
+    <td><img src="docs/images/ios.webp" alt="An iOS session in the browser" width="745"></td>
+    <td><img src="docs/images/ios_popout.webp" alt="An iOS device in a popout window" width="211"></td>
+  </tr>
+</table>
+
+**iOS.** The same session, the same controls. Either platform can be **popped
+out** into its own window, so a device sits beside whatever it is being used to
+test.
+
+![The audit log](docs/images/audit.webp)
+
+**Everything is logged** - reservations and releases, installs, cleanups,
+setting changes, admin actions.
+
 ## Status
 
 Verified against real hardware: an iPhone 13 on iOS 27 (beta) and a Galaxy S22
 on Android both reserve, stream to a browser, and take touch and keyboard
-input — through the containerised stack, with the coordinator nowhere near the
+input - through the containerised stack, with the coordinator nowhere near the
 video.
 
 It also runs with **no hardware at all**: the Rust provider ships a mock backend
