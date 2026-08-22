@@ -145,4 +145,6 @@ version and write the changelog, so a mistyped `feat:` ships a version bump. See
 the release section of [DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
 **Ask before opening a PR.** Finishing a unit of work is not permission to
-publish it; propose the title and body and wait for a yes.
+publish it. Commit on a branch, then show a preview — the exact title and the
+full body, as they would appear on GitHub — and wait for a yes before pushing
+and opening anything.
