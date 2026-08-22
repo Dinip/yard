@@ -126,7 +126,7 @@ See docs/DEVELOPMENT.md.
 
 Commit per meaningful unit of work. The default branch is `main`.
 
-Commit messages and PR titles follow
+Branch names, commit messages and PR titles follow
 [Conventional Commits](https://www.conventionalcommits.org): `type(scope): summary`
 — e.g. `feat(sessions): ask to join a session`, `fix(provider): drop stale RTP
 keyframes`. Scope is the package or feature area; use `!` after the type/scope
