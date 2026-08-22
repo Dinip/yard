@@ -290,7 +290,6 @@ rather than a broken one.
 
 | Question | File |
 |---|---|
-| What's built, what's next | [PROGRESS.md](./PROGRESS.md) |
 | Why the system is shaped this way | [ARCHITECTURE.md](./ARCHITECTURE.md) |
 | Tables and their invariants | [DATA-MODEL.md](./DATA-MODEL.md) |
 | Backend internals | [COORDINATOR.md](./COORDINATOR.md) |

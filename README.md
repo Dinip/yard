@@ -41,19 +41,14 @@ traffic.
 
 ## Status
 
-All 22 phases are complete and verified against real hardware: an iPhone 13 on
-iOS 17.4+ and a Galaxy S22 on Android both reserve, stream to a browser, and
-take touch and keyboard input — through the containerised stack, with the
-coordinator nowhere near the video.
+Verified against real hardware: an iPhone 13 on iOS 17.4+ and a Galaxy S22 on
+Android both reserve, stream to a browser, and take touch and keyboard input —
+through the containerised stack, with the coordinator nowhere near the video.
 
 It also runs with **no hardware at all**: the Rust provider ships a mock backend
 that registers, reserves, streams synthetic video and accepts input and
 uploads, and `packages/protocol/test/fake-provider.ts` does the same one layer
 up.
-
-**[docs/PROGRESS.md](docs/PROGRESS.md) is the live status board** — read it
-first. It records what each phase cost, including the bugs that only appeared
-once the thing was run the way it deploys.
 
 ## Quick start
 
@@ -84,7 +79,6 @@ packages/
 
 | | |
 |---|---|
-| [PROGRESS.md](docs/PROGRESS.md) | What's built, what's next, open decisions |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | The four planes and why they're separate |
 | [DATA-MODEL.md](docs/DATA-MODEL.md) | Tables and their invariants |
 | [COORDINATOR.md](docs/COORDINATOR.md) | Backend package |

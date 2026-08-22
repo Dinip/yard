@@ -4,11 +4,7 @@ Guidance for Claude Code when working in this repository.
 
 ## Read first
 
-**[docs/PROGRESS.md](docs/PROGRESS.md)** — the live status board. The project is
-built in six phases and work is expected to stop and resume; PROGRESS.md is the
-resumption point. **Update it in the same commit as the work it describes.**
-
-Then, depending on what you're touching:
+Depending on what you're touching:
 [ARCHITECTURE.md](docs/ARCHITECTURE.md) · [DATA-MODEL.md](docs/DATA-MODEL.md) ·
 [COORDINATOR.md](docs/COORDINATOR.md) · [WEB.md](docs/WEB.md) ·
 [PROVIDER.md](docs/PROVIDER.md) · [PROTOCOL.md](docs/PROTOCOL.md) ·
@@ -80,8 +76,7 @@ See docs/DEVELOPMENT.md.
   couple of spots in `packages/web`.
 - **Keep the docs in step with the code.** Before finishing a change, check
   whether the docs above describe what you just changed — an invariant, a wire
-  message, a schema, a command — and update them in the same commit. PROGRESS.md
-  always; the rest when relevant.
+  message, a schema, a command — and update them in the same commit.
 
 ## Invariants worth knowing
 
@@ -129,8 +124,7 @@ See docs/DEVELOPMENT.md.
 
 ## Git
 
-Commit per meaningful unit of work with PROGRESS.md updated alongside. The
-default branch is `main`.
+Commit per meaningful unit of work. The default branch is `main`.
 
 Commit messages and PR titles follow
 [Conventional Commits](https://www.conventionalcommits.org): `type(scope): summary`
