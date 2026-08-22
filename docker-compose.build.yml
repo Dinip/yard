@@ -1,0 +1,23 @@
+# Build overlay: the same stack, from this checkout instead of GHCR.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up --build
+#
+# The `image:` names come from the base file, so a local build lands on the tag
+# it would have been pulled under — set VERSION_TAG to something like `dev` to keep
+# it from shadowing a pulled `latest`.
+
+services:
+  coordinator:
+    build:
+      context: .
+      dockerfile: packages/coordinator/Dockerfile
+
+  web:
+    build:
+      context: .
+      dockerfile: packages/web/Dockerfile
+
+  provider:
+    build:
+      context: .
+      dockerfile: packages/provider/Dockerfile
