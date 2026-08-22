@@ -26,4 +26,4 @@ if command -v adb >/dev/null 2>&1; then
 	fi
 fi
 
-exec /usr/local/bin/farm-provider "$@"
+exec /usr/local/bin/yard-provider "$@"
