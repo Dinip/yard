@@ -39,9 +39,6 @@ import { trpc } from "@/lib/trpc";
 export function AppShell({ children }: { children: ReactNode }) {
   const router = useRouter();
   const { data: me } = useQuery(trpc.user.me.queryOptions());
-  // The product name is hardcoded on the coordinator and reaches the browser
-  // through `user.capabilities`, so it has one source instead of two.
-  const { data: caps } = useQuery(trpc.user.capabilities.queryOptions());
 
   return (
     <TooltipProvider delayDuration={300}>
@@ -53,10 +50,10 @@ export function AppShell({ children }: { children: ReactNode }) {
           {/* The only place the product name appears in the chrome now, so it
               is a tooltip rather than nothing. The mark is deliberately not the
               Devices glyph — the same icon twice in one column reads as a bug. */}
-          <Hint label={caps?.appName ?? ""} side="right">
+          <Hint label="YARD - Device Farm" side="right">
             <Link
               to="/devices"
-              aria-label={caps?.appName}
+              aria-label="YARD - Device Farm"
               className="mb-2 flex size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground"
             >
               <Boxes className="size-5" />

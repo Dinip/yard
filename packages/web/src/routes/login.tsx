@@ -58,7 +58,7 @@ function LoginPage() {
     <div className="flex min-h-svh flex-col items-center justify-center gap-4 bg-background p-6">
       <Card className="w-full max-w-sm">
         <CardHeader>
-          <CardTitle className="text-2xl">{caps?.appName ?? "YARD - Device Farm"}</CardTitle>
+          <CardTitle className="text-2xl">YARD - Device Farm</CardTitle>
           <CardDescription>Sign in to reserve and control devices.</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">

@@ -75,9 +75,9 @@ See docs/DEVELOPMENT.md.
 - **Never hand-edit `generated.rs`.** Edit the zod schema and run
   `protocol:gen`. Every nested object needs `named("Foo", …)` or the generator
   errors rather than guessing a type name.
-- **The product name lives in `packages/coordinator/src/app-name.ts`.** It
-  reaches the browser through `user.capabilities`; don't hardcode it a second
-  time in `packages/web`.
+- **The product name is `YARD - Device Farm`.** Hardcoded as a literal
+  wherever it's user-visible — `packages/coordinator/src/app-name.ts` and a
+  couple of spots in `packages/web`.
 - **Keep the docs in step with the code.** Before finishing a change, check
   whether the docs above describe what you just changed — an invariant, a wire
   message, a schema, a command — and update them in the same commit. PROGRESS.md

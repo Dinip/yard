@@ -3,7 +3,6 @@ import { userAdbKey } from "@yard/db";
 import { AdbKeyParseError, parseAdbPublicKey } from "@yard/protocol/adbkey";
 import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
-import { APP_NAME } from "../../app-name.ts";
 import { authCapabilities } from "../../auth.ts";
 import { pushAdbKeysForUser } from "../../lib/adb-keys.ts";
 import { audit } from "../../lib/audit.ts";
@@ -116,10 +115,7 @@ export const userRouter = router({
   }),
 
   /** Lets the sign-in page render only the methods that are actually configured. */
-  capabilities: publicProcedure.query(() => ({
-    ...authCapabilities,
-    appName: APP_NAME,
-  })),
+  capabilities: publicProcedure.query(() => authCapabilities),
 
   adbKeys: adbKeysRouter,
 });
