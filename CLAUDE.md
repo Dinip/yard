@@ -126,7 +126,7 @@ See docs/DEVELOPMENT.md.
 
 Commit per meaningful unit of work. The default branch is `main`.
 
-Branch names, commit messages and PR titles follow
+Commit messages and PR titles follow
 [Conventional Commits](https://www.conventionalcommits.org): `type(scope): summary`
 — e.g. `feat(sessions): ask to join a session`, `fix(provider): drop stale RTP
 keyframes`. Scope is the package or feature area; use `!` after the type/scope
@@ -135,6 +135,10 @@ for a breaking change.
 This includes PRs: merges are squashed, so the PR title becomes the commit on
 `main` and must be a valid Conventional Commit — not a bare description of the
 branch.
+
+Branch names should also follow a conventional style: `type/short-description`, e.g.
+`feat/sessions-join-request`, `fix/provider-keyframe-drop`. Use dashes, not
+underscores, and avoid bare numbers.
 
 Commit types drive releases: release-please reads them to compute the next
 version and write the changelog, so a mistyped `feat:` ships a version bump. See
