@@ -30,7 +30,7 @@ struct Args {
     #[arg(
         short,
         long,
-        env = "YARD_CONFIG",
+        env = "PROVIDER_CONFIG",
         default_value = "/etc/yard/provider.yaml"
     )]
     config: PathBuf,
@@ -44,7 +44,7 @@ struct Args {
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::try_from_env("YARD_LOG").unwrap_or_else(|_| EnvFilter::new("info")),
+            EnvFilter::try_from_env("PROVIDER_LOG_LEVEL").unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .init();
 

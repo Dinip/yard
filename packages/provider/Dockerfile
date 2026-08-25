@@ -53,13 +53,15 @@ FROM debian:bookworm-slim AS runtime
 # ca-certificates is required, not optional: the control plane and the JWKS
 # fetch both use the OS trust store (see reqwest's rustls-native-certs).
 #
-# adb is the Android backend's one host dependency. The scrcpy server needs no
-# install — it is embedded in the binary and pushed to the phone at session
-# start — and iOS needs only usbmuxd, which is the host's.
+# adb and usbmuxd are the two backends' host dependencies, and the container
+# runs both itself rather than borrowing the host's: a daemon whose lifecycle is
+# the host's is one the container cannot restart, and usbmuxd's in particular
+# ends at the last unplugged device. The scrcpy server needs no install — it is
+# embedded in the binary and pushed to the phone at session start.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates adb \
+ && apt-get install -y --no-install-recommends ca-certificates adb usbmuxd \
  && rm -rf /var/lib/apt/lists/* \
- && mkdir -p /var/lib/yard/scratch
+ && mkdir -p /var/lib/yard/scratch /var/lib/lockdown
 
 COPY --from=builder /build/target/release/yard-provider /usr/local/bin/yard-provider
 COPY packages/provider/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
@@ -72,7 +74,7 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 # process still has nothing on disk worth reaching: the only writable path is
 # the scratch tmpfs, which nothing outlives an install in.
 EXPOSE 7100
-ENV YARD_CONFIG=/etc/yard/provider.yaml
+ENV PROVIDER_CONFIG=/etc/yard/provider.yaml
 
 # Self-probe: the session plane is what browsers depend on, so that is what
 # health means here.

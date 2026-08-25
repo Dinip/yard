@@ -54,7 +54,7 @@ binary with `backend: mock` devices:
 ```bash
 cargo build --release -p yard-provider
 cp packages/provider/provider.example.yaml /tmp/provider.yaml   # then edit
-YARD_PROVIDER_TOKEN=pft_… ./target/release/yard-provider --config /tmp/provider.yaml
+PROVIDER_TOKEN=pft_… ./target/release/yard-provider --config /tmp/provider.yaml
 ```
 
 `--check` validates the config and exits. Still no hardware required: mock
@@ -113,19 +113,31 @@ providers refetch the JWKS.
 docker compose --env-file .env.docker --profile provider up -d
 ```
 
-On **Linux** uncomment the USB mounts in `docker-compose.yml` — the whole
-`/dev/bus/usb` directory, not individual `--device` nodes, because a phone that
-reboots re-enumerates under a new node — and make sure the host runs no adb
-server of its own, since only one may own a device.
+On **Linux** uncomment the USB mount and `privileged` in `docker-compose.yml` —
+the whole `/dev/bus/usb` directory, not individual `--device` nodes, because a
+phone that reboots re-enumerates under a new node — and mask the host's usbmuxd:
 
-The container starts its own adb server on entry, so a Linux device entry takes
-**no `adb_server` option**; the one in the checked-in `provider.yaml` is there
-for the macOS shape below and pointing at `host.docker.internal` on Linux gets
-you `Connection refused (os error 111)`.
+```bash
+sudo systemctl mask --now usbmuxd.service     # once; the container runs its own
+```
 
-Its keypair lives in the `adb-keys` volume, because the phone's "Allow USB
-debugging" grant is bound to that key's fingerprint — a regenerated key means
-tapping the dialog at the device again. Authorise once, tick *Always allow*, and
+The container starts **both** daemons itself, an adb server and a supervised
+usbmuxd, so the host must run neither; only one process may own a device.
+
+Which is also why a Linux device entry takes **no `adb_server` option**; the one
+in the checked-in `provider.yaml` is there for the macOS shape below and
+pointing at `host.docker.internal` on Linux gets you `Connection refused (os
+error 111)`.
+
+Don't bind-mount the host's `/var/run/usbmuxd` instead. Docker binds the
+socket's *inode*, so the mount dies with the daemon at the last unplugged
+device — and if the socket is missing when the container starts, Docker creates
+a *directory* at that path, after which the host's usbmuxd can never bind it
+again.
+
+The adb server's keypair lives in the `adb-keys` volume, because the phone's
+"Allow USB debugging" grant is bound to that key's fingerprint — a regenerated
+key means tapping the dialog at the device again. Authorise once, tick *Always allow*, and
 recreates are silent.
 
 **This is now the only key any device trusts.** Since the provider terminates
@@ -152,6 +164,17 @@ docker compose --env-file .env.docker \
 Android needs no bridge — the adb server already speaks TCP, and the device's
 `adb_server` option points at it. This is a development shape; a provider host
 in production is Linux with the bus passed in.
+
+iOS pairing has the same shape, in the `lockdown-keys` volume. usbmuxd keeps
+the host identity it pairs under and one record per device in
+`/var/lib/lockdown`, so an empty one makes the container a *new* computer to
+every iPhone — each asking to Trust This Computer again, at the device. Seed it
+from a host that has already paired them, the way the adb key is seeded:
+
+```bash
+docker compose --profile provider create provider
+docker cp /var/lib/lockdown/. yard-provider-1:/var/lib/lockdown/
+```
 
 An iPhone also needs a Developer Disk Image mounted, and loses it on every
 reboot. The provider now mounts it itself and downloads the image once into

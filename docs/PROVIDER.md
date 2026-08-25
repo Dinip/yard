@@ -33,7 +33,7 @@ packages/provider/
 cargo build --release -p yard-provider
 
 # Register a provider and issue a token under /admin/providers first.
-YARD_PROVIDER_TOKEN=pft_… \
+PROVIDER_TOKEN=pft_… \
   ./target/release/yard-provider --config packages/provider/provider.example.yaml
 ```
 
@@ -63,7 +63,7 @@ src/
 
 ### Config
 
-One real YAML file. Token precedence is `YARD_PROVIDER_TOKEN` > `token_file` >
+One real YAML file. Token precedence is `PROVIDER_TOKEN` > `token_file` >
 inline `token`, so a secret need never sit in the file. Unknown keys are
 rejected rather than ignored — a typo in a device stanza should not silently
 mean "no devices".
@@ -678,8 +678,68 @@ The builder uses the stub-source dependency-cache trick from
 
 The runtime stage runs as **root**, unlike the coordinator's. `privileged: true`
 grants access to the USB devices, not permission on them — the `/dev/bus/usb`
-nodes are root-owned, and the adb server has to write to them. The entrypoint
-starts that server; the container's only writable path is the scratch tmpfs.
+nodes are root-owned, and the daemons have to write to them. The container's
+only writable path is the scratch tmpfs.
+
+### The two daemons
+
+`docker-entrypoint.sh` starts an adb server and a usbmuxd, because neither
+backend owns a USB transport itself. Three env vars steer it, alongside the
+binary's own `PROVIDER_CONFIG`, `PROVIDER_TOKEN` and `PROVIDER_LOG_LEVEL`:
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `PROVIDER_START_ADB` | `auto` | Start an adb server. `auto` is "if `/dev/bus/usb` is mounted", so the macOS shape — which points at the host's daemons — skips it without being told to. `yes`/`no` override. |
+| `PROVIDER_START_USBMUXD` | `auto` | The same, for usbmuxd. |
+| `PROVIDER_USBMUXD_RESCAN_SECONDS` | `2` | How often usbmuxd is nudged to rescan the bus — which, two paragraphs down, turns out to be the only thing that notices a device being plugged in. |
+
+Both daemons are the container's own rather than the host's, because
+**usbmuxd exits when the last device is unplugged** and the udev rule that
+brings it back lives on the host, where the container cannot reach it.
+Borrowing the host's daemon by bind-mounting `/var/run/usbmuxd` looks simpler
+and is worse — Docker binds the socket's *inode*, so the mount is stale the
+moment usbmuxd restarts, and a missing socket at container start has Docker
+create a *directory* at that path, after which the host's usbmuxd cannot bind it
+either. Mask the host's: `systemctl mask --now usbmuxd.service`.
+
+usbmuxd is supervised in a restart loop; adb is not, since `adb start-server`
+daemonises and the Android backend reconnects on its own.
+
+It also runs as `usbmuxd -f -z` with a **SIGUSR2 every two seconds**, which is
+what stands in for udev inside a container. usbmuxd polls the bus each second
+only until it registers for libusb hotplug events — and that registration
+*succeeds* in a container while delivering nothing, because libusb on Debian
+watches udevd's netlink broadcast and that reaches only udevd's own network
+namespace. Left alone it would sit with its poll disabled, deaf to anything
+plugged in after start. `-z` is what makes SIGUSR2 mean "rescan the bus", and a
+rescan is the same device-list walk the poll was doing. `-n` is not the answer:
+disabling hotplug disables the poll along with it.
+
+`/var/lib/lockdown` is a volume for the same reason `/root/.android` is. It
+holds the `SystemBUID`/`HostID` this host pairs under and one pair record per
+device, so a container that starts with an empty one is a *new* computer to
+every iPhone in the rack — each of them asking to Trust This Computer again, by
+hand, at the device.
+
+### One provider per platform on a single host
+
+Two providers on one machine — one Android, one iOS — is a supported shape and
+does not fight over the bus. A claim is per USB *interface*, and the two daemons
+open disjoint devices: adb opens what advertises the adb interface, usbmuxd only
+Apple's VID. Two of the *same* daemon over one device is the thing that breaks,
+so give each container only the one it needs:
+
+```yaml
+# the iOS provider
+environment:
+  PROVIDER_START_ADB: "no"
+# the Android provider
+environment:
+  PROVIDER_START_USBMUXD: "no"
+```
+
+Both still mount all of `/dev/bus/usb` — the nodes are shared, the claims are
+not. Give each its own `id`, `bind` port and `remote_debug.ports` range.
 
 ## Testing
 

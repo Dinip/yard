@@ -83,16 +83,17 @@ services:
   # Needs host device access, so it is opt-in:
   #   docker compose --profile provider up
   #
-  # Linux, where the devices are: uncomment the volumes and `privileged`. Mount
-  # the whole /dev/bus/usb *directory*, not individual --device nodes — a phone
-  # that reboots re-enumerates under a new node and a static binding silently
-  # loses it. The host must not run its own adb server; only one may own a
-  # device — and drop the `adb_server` option from provider.yaml, since the
-  # container starts its own on entry rather than borrowing the host's.
+  # Shaped for Linux, where the devices are. The whole /dev/bus/usb *directory*
+  # goes in, not individual --device nodes — a phone that reboots re-enumerates
+  # under a new node and a static binding silently loses it. The container
+  # starts both an adb server and a usbmuxd of its own, so the host must run
+  # neither — only one process may own a device. Mask the host's usbmuxd with
+  # `systemctl mask --now usbmuxd.service`, and drop the `adb_server` option
+  # from provider.yaml, since the container is no longer borrowing the host's.
   #
-  # macOS: Docker cannot pass USB through at all. Reach the host's daemons
-  # instead — see docker-compose.macos.yml, which is what this repo's own
-  # testing uses.
+  # macOS: Docker cannot pass USB through at all, so comment the mount and
+  # `privileged` out and reach the host's daemons instead — see
+  # docker-compose.macos.yml, which is what this repo's own testing uses.
   provider:
     profiles: ["provider"]
     image: ghcr.io/dinip/yard/provider:${VERSION_TAG:-latest}
@@ -103,9 +104,13 @@ services:
       # in provider.yaml in step.
       - "${DEBUG_PORTS:-7200-7249}:${DEBUG_PORTS:-7200-7249}"
     environment:
-      YARD_CONFIG: /etc/yard/provider.yaml
-      YARD_PROVIDER_TOKEN: ${YARD_PROVIDER_TOKEN:?issue one under /admin/providers}
-      YARD_LOG: ${YARD_LOG:-info}
+      PROVIDER_TOKEN: ${PROVIDER_TOKEN:?issue one under /admin/providers}
+      PROVIDER_LOG_LEVEL: ${PROVIDER_LOG_LEVEL:-info}
+      # The entrypoint starts an adb server and a usbmuxd whenever /dev/bus/usb
+      # is mounted. Turn one off to split a host into a provider per platform 
+      # See docs/PROVIDER.md.
+      PROVIDER_START_ADB: ${PROVIDER_START_ADB:-auto}
+      PROVIDER_START_USBMUXD: ${PROVIDER_START_USBMUXD:-auto}
     volumes:
       - ./packages/provider/provider.yaml:/etc/yard/provider.yaml:ro
       # adb's keypair. Not a cache: the phone's "Allow USB debugging" grant is
@@ -116,9 +121,15 @@ services:
       # tmpfs so a container recreate does not re-fetch it — and so it can be
       # pre-populated from Xcode's copy to keep the download off a mirror.
       - ddi-cache:/var/lib/yard/ddi
-      # - /var/run/usbmuxd:/var/run/usbmuxd     # Linux: iOS
-      # - /dev/bus/usb:/dev/bus/usb             # Linux: Android
-    # privileged: true                          # Linux: USB access
+      # usbmuxd's half of the same problem: /var/lib/lockdown holds the host
+      # identity it pairs under and one pair record per device. Lose it and
+      # every iPhone in the rack asks to Trust This Computer again, by hand.
+      - lockdown-keys:/var/lib/lockdown
+      # Comment this out on macOS: the path does not exist to bind.
+      - /dev/bus/usb:/dev/bus/usb
+    # Access to the /dev/bus/usb nodes, which are root-owned — the permission,
+    # not the devices. See docs/PROVIDER.md.
+    privileged: true
     tmpfs:
       # Staged APK/IPA uploads only. Nothing here outlives an install.
       - /var/lib/yard/scratch:size=4g
@@ -129,3 +140,4 @@ volumes:
   caddy-config:
   adb-keys:
   ddi-cache:
+  lockdown-keys:
