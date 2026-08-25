@@ -44,7 +44,8 @@ struct Args {
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::try_from_env("PROVIDER_LOG_LEVEL").unwrap_or_else(|_| EnvFilter::new("info")),
+            EnvFilter::try_from_env("PROVIDER_LOG_LEVEL")
+                .unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .init();
 
