@@ -5,9 +5,11 @@
 //! are not independent — but readiness now feeds `DeviceBackend::is_healthy`
 //! instead of STF's `TemporarilyUnavailable`.
 //!
-//! usbmuxd is normally the host's own socket. `USBMUXD_SOCKET_ADDRESS` exists
-//! for the one case where it cannot be: a provider container on macOS, where
-//! Docker passes neither USB nor unix sockets through.
+//! usbmuxd is normally a local unix socket — the host's on a bare-metal
+//! provider, the container's own on Linux under Docker.
+//! `USBMUXD_SOCKET_ADDRESS` exists for the one case where it cannot be: a
+//! provider container on macOS, where Docker passes no USB through and usbmuxd
+//! is reached over a TCP bridge on the host.
 //!
 //! One supervisor task rebuilds the whole session forever. Everything below the
 //! tunnel is torn down and recreated together, because the pieces are not
@@ -215,6 +217,36 @@ impl DeviceHost {
     }
 }
 
+/// What `USBMUXD_SOCKET_ADDRESS` named, before any name resolution.
+enum Configured {
+    Unix(String),
+    Tcp(std::net::SocketAddr),
+    Host(String),
+}
+
+/// Split libusbmuxd's env-var syntax into something addressable.
+///
+/// The documented unix form is `UNIX:/path`, which contains a colon — reading
+/// one as a `host:port` and resolving it is how a perfectly good socket path
+/// used to end up silently discarded for the default. A bare path is accepted
+/// too, since that is what this codebase's own examples used.
+fn parse_usbmuxd_address(configured: &str) -> Configured {
+    let trimmed = configured.trim();
+
+    if let Some((scheme, rest)) = trimmed.split_once(':') {
+        if scheme.eq_ignore_ascii_case("unix") {
+            return Configured::Unix(rest.to_string());
+        }
+    }
+    if trimmed.starts_with('/') || !trimmed.contains(':') {
+        return Configured::Unix(trimmed.to_string());
+    }
+    match trimmed.parse::<std::net::SocketAddr>() {
+        Ok(socket) => Configured::Tcp(socket),
+        Err(_) => Configured::Host(trimmed.to_string()),
+    }
+}
+
 /// Where usbmuxd is, honouring `USBMUXD_SOCKET_ADDRESS`.
 ///
 /// Normally this is the host's own socket and the default is right. The
@@ -230,15 +262,15 @@ async fn usbmuxd_address() -> UsbmuxdAddr {
         return UsbmuxdAddr::from_env_var().unwrap_or_default();
     };
 
-    if !configured.contains(':') {
-        return UsbmuxdAddr::UnixSocket(configured);
-    }
-    if let Ok(socket) = configured.parse::<std::net::SocketAddr>() {
-        return UsbmuxdAddr::TcpSocket(socket);
-    }
-    // Owned rather than borrowed: the resolver's future is generic over the
-    // address and a `&str` ties it to this frame.
-    match tokio::net::lookup_host(configured.clone()).await {
+    let host = match parse_usbmuxd_address(&configured) {
+        Configured::Unix(path) => return UsbmuxdAddr::UnixSocket(path),
+        Configured::Tcp(socket) => return UsbmuxdAddr::TcpSocket(socket),
+        // Owned rather than borrowed: the resolver's future is generic over the
+        // address and a `&str` ties it to this frame.
+        Configured::Host(host) => host,
+    };
+
+    match tokio::net::lookup_host(host).await {
         Ok(mut resolved) => match resolved.next() {
             Some(socket) => {
                 info!(configured, %socket, "resolved usbmuxd address");
@@ -579,6 +611,31 @@ mod tests {
 
     fn network() -> Connection {
         Connection::Network(std::net::IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 0, 4)))
+    }
+
+    #[test]
+    fn reads_libusbmuxds_unix_form_as_a_path_not_a_hostname() {
+        // The bug this guards: `UNIX:/run/usbmuxd` contains a colon, so it was
+        // treated as host:port, failed to resolve, and fell back to the default
+        // socket — silently ignoring the one setting that had been made.
+        for configured in ["UNIX:/run/usbmuxd", "unix:/run/usbmuxd", "/run/usbmuxd"] {
+            match parse_usbmuxd_address(configured) {
+                Configured::Unix(path) => assert_eq!(path, "/run/usbmuxd"),
+                _ => panic!("{configured} is a unix socket"),
+            }
+        }
+    }
+
+    #[test]
+    fn keeps_telling_a_literal_address_from_a_hostname() {
+        match parse_usbmuxd_address("127.0.0.1:27015") {
+            Configured::Tcp(socket) => assert_eq!(socket.port(), 27015),
+            _ => panic!("an ip:port is a TCP address"),
+        }
+        match parse_usbmuxd_address("host.docker.internal:27015") {
+            Configured::Host(host) => assert_eq!(host, "host.docker.internal:27015"),
+            _ => panic!("a hostname needs resolving"),
+        }
     }
 
     #[test]
