@@ -118,6 +118,10 @@ See docs/DEVELOPMENT.md.
   exposed adb port belongs to the reservation, not the device** — revoking the
   session withdraws the listener and closes every connection under it, because
   a client is authenticated at its handshake and never re-checked.
+- **`busy` is the coordinator's word.** A provider reports a reserved device as
+  `ready`, so the gateway resolves an incoming `ready` against the reservation
+  table rather than storing it — a blind write would advertise a held device as
+  free and skip the `cleaning` hold on release, which is guarded on `busy`.
 - **Pointer coordinates are normalised 0..1, never pixels**, and down/move/up
   are never collapsed into a `tap` — the backend needs them to tell a drag from
   a tap.

@@ -60,6 +60,14 @@ Lifecycle: `absent` → `present` → `preparing` → `ready` → `busy` → `cl
   Only reached when cleanup policy is on; `updatedAt` is when it started, which
   is what the reaper measures against. See [CLEANUP.md](CLEANUP.md)
 
+`busy` is the coordinator's alone. A provider has no notion of reservations and
+reports a device somebody is driving as `ready`, so the gateway resolves an
+incoming `ready` against the reservation table instead of storing it — otherwise
+a routine re-upsert (a battery tick is enough) would advertise a held device as
+free, and the release path, which is guarded on `busy`, would skip the
+`cleaning` hold on the way out. Every other status the provider sends is a fact
+only it knows, and wins.
+
 `streamCodec` holds the string handed straight to the browser's `VideoDecoder`
 (`hev1.1.6.L93.B0` for iOS, `avc1.640028` for Android). `adbPort` is populated
 only while an adb transport is exposed.

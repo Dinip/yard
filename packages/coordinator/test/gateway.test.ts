@@ -272,6 +272,36 @@ describe("provider gateway", () => {
     await fake.close();
   });
 
+  /**
+   * The bug this guards: a provider polls its devices every 15s and re-upserts
+   * on any change — a battery tick is enough — with the status it knows, which
+   * for a reserved device is `ready`. That used to overwrite `busy`, so a phone
+   * somebody was driving advertised itself as free.
+   */
+  test("a provider's `ready` does not clear the `busy` of an active reservation", async () => {
+    const fake = connectFake();
+    await fake.connect();
+    const target = devices[0]!.id;
+
+    await caller(USER_A).device.reserve({ deviceId: target });
+
+    fake.upsertDevice({ ...devices[0]!, status: "ready" });
+    fake.setDeviceStatus(target, "ready");
+    await Bun.sleep(150);
+
+    const [held] = await db.select().from(device).where(eq(device.id, target));
+    expect(held?.status).toBe("busy");
+
+    await caller(USER_A).device.release({ deviceId: target });
+    fake.upsertDevice({ ...devices[0]!, status: "ready" });
+    await Bun.sleep(150);
+
+    const [free] = await db.select().from(device).where(eq(device.id, target));
+    expect(free?.status).toBe("ready");
+
+    await fake.close();
+  });
+
   test("disconnect marks devices absent and releases their reservations", async () => {
     const fake = connectFake();
     await fake.connect();
