@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.2](https://github.com/Dinip/yard/compare/v0.1.1...v0.1.2) (2026-08-26)
+
+
+### Bug Fixes
+
+* **gateway:** stop a provider's `ready` clearing a reserved device's `busy` ([#42](https://github.com/Dinip/yard/issues/42)) ([ada7c85](https://github.com/Dinip/yard/commit/ada7c85d0c50aee0d271ecf1599da7b5e10e5eaf))
+
+
+### Documentation
+
+* **readme:** show the UI with screenshots ([#38](https://github.com/Dinip/yard/issues/38)) ([5a2e279](https://github.com/Dinip/yard/commit/5a2e27970861579cf76321a89414c879541f35bf))
+
 ## [0.1.1](https://github.com/Dinip/yard/compare/v0.1.0...v0.1.1) (2026-08-22)
 
 
