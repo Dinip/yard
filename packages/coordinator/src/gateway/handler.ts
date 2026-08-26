@@ -6,7 +6,7 @@ import {
   PROTOCOL_VERSION,
   ProviderMessage,
 } from "@yard/protocol";
-import { and, eq, inArray, lt, notInArray } from "drizzle-orm";
+import { and, eq, inArray, lt, notInArray, sql } from "drizzle-orm";
 import { db } from "../db.ts";
 import { env } from "../env.ts";
 import { adbAuthRequests } from "../lib/adb-auth.ts";
@@ -19,6 +19,25 @@ import { ProviderConnection, providers } from "./registry.ts";
 export const HEARTBEAT_INTERVAL_MS = 15_000;
 /** Three missed heartbeats. Generous: a GC pause must not drop a provider. */
 export const HEARTBEAT_TIMEOUT_MS = HEARTBEAT_INTERVAL_MS * 3 + 5_000;
+
+/**
+ * What to store when a provider reports a device as `ready`.
+ *
+ * `busy` is the coordinator's word — a provider has no notion of reservations
+ * and calls a device somebody is using `ready`, so writing that value blind
+ * clears the `busy` an active reservation put there. The device then reads as
+ * free while somebody is on it, and, because the release path is guarded on
+ * `busy`, it skips the `cleaning` hold on the way out and rejoins the pool
+ * half-wiped.
+ *
+ * So a `ready` is resolved against the reservation table rather than trusted.
+ * Every other status is a fact about the device that only the provider knows,
+ * and wins.
+ */
+const readyOrBusy = (deviceId: string) => sql`case when exists (
+  select 1 from ${reservation}
+  where ${reservation.deviceId} = ${deviceId} and ${reservation.state} = 'active'
+) then 'busy'::device_status else 'ready'::device_status end`;
 
 export interface AuthedProvider {
   providerId: string;
@@ -122,7 +141,11 @@ export class GatewaySession {
       case "device.status":
         await db
           .update(device)
-          .set({ status: msg.status, notes: msg.note ?? null, updatedAt: new Date() })
+          .set({
+            status: msg.status === "ready" ? readyOrBusy(msg.deviceId) : msg.status,
+            notes: msg.note ?? null,
+            updatedAt: new Date(),
+          })
           .where(and(eq(device.id, msg.deviceId), eq(device.providerId, this.auth.providerId)));
         deviceEvents.publish();
         break;
@@ -313,7 +336,7 @@ export class GatewaySession {
       id: snapshot.id,
       providerId: this.auth.providerId,
       platform: snapshot.platform,
-      status: snapshot.status,
+      status: snapshot.status === "ready" ? readyOrBusy(snapshot.id) : snapshot.status,
       name: snapshot.name ?? null,
       model: snapshot.model ?? null,
       manufacturer: snapshot.manufacturer ?? null,
