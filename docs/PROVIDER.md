@@ -691,7 +691,7 @@ binary's own `PROVIDER_CONFIG`, `PROVIDER_TOKEN` and `PROVIDER_LOG_LEVEL`:
 | --- | --- | --- |
 | `PROVIDER_START_ADB` | `auto` | Start an adb server. `auto` is "if `/dev/bus/usb` is mounted", so the macOS shape — which points at the host's daemons — skips it without being told to. `yes`/`no` override. |
 | `PROVIDER_START_USBMUXD` | `auto` | The same, for usbmuxd. |
-| `PROVIDER_USBMUXD_RESCAN_SECONDS` | `2` | How often usbmuxd is nudged to rescan the bus — which, two paragraphs down, turns out to be the only thing that notices a device being plugged in. |
+| `PROVIDER_USBMUXD_WATCH_SECONDS` | `2` | How often sysfs is polled for a change in the set of Apple devices — which, two paragraphs down, turns out to be the only thing that notices a phone being plugged in or out. |
 
 Both daemons are the container's own rather than the host's, because
 **usbmuxd exits when the last device is unplugged** and the udev rule that
@@ -703,17 +703,33 @@ create a *directory* at that path, after which the host's usbmuxd cannot bind it
 either. Mask the host's: `systemctl mask --now usbmuxd.service`.
 
 usbmuxd is supervised in a restart loop; adb is not, since `adb start-server`
-daemonises and the Android backend reconnects on its own.
+daemonises and the Android backend reconnects on its own. It runs without `-z`,
+so it stays up with no devices attached and the socket the backend polls is
+always there — exiting at the last unplug is what the host's udev-activated unit
+wants, not what a supervised one does.
 
-It also runs as `usbmuxd -f -z` with a **SIGUSR2 every two seconds**, which is
-what stands in for udev inside a container. usbmuxd polls the bus each second
-only until it registers for libusb hotplug events — and that registration
-*succeeds* in a container while delivering nothing, because libusb on Debian
-watches udevd's netlink broadcast and that reaches only udevd's own network
-namespace. Left alone it would sit with its poll disabled, deaf to anything
-plugged in after start. `-z` is what makes SIGUSR2 mean "rescan the bus", and a
-rescan is the same device-list walk the poll was doing. `-n` is not the answer:
-disabling hotplug disables the poll along with it.
+A **watchdog polls sysfs every two seconds** and restarts usbmuxd whenever the
+set of Apple devices on the bus changes. That is what stands in for udev in
+here, and a rescan is not enough: libusb learns about a plug or an unplug from
+udevd's netlink broadcast, and that reaches only udevd's own network namespace.
+Inside a container its device list is therefore frozen at the moment usbmuxd
+started — a phone that comes back on a new bus address is invisible, and the one
+it replaced stays in the list forever, failing to open on every rescan with
+`LIBUSB_ERROR_IO` and `errno=19`. That is the shape of the bug: unplug an iPhone
+and plug it back in, and iOS never returns until the container is restarted.
+Only a fresh libusb — meaning a fresh process — sees the bus as it now is.
+
+sysfs, unlike libusb's cache, is the host's and always current, so it is what
+the watchdog watches: every `/sys/bus/usb/devices` entry with Apple's vendor ID,
+and its `devnum`, since re-enumeration is exactly what a replug looks like. A
+restart costs every *other* iPhone its usbmuxd connection, so a change has to
+survive one more tick before it counts — a device that re-enumerates passes
+through intermediate states, and each of them would otherwise be its own
+restart. The backends reconnect on their own; the cost is a few seconds of
+tunnel re-establishment on the devices that were not the one you touched.
+
+adb needs none of this. Its server walks `/dev/bus/usb` itself once a second
+rather than asking libusb, so it sees a replug the way it would on a host.
 
 `/var/lib/lockdown` is a volume for the same reason `/root/.android` is. It
 holds the `SystemBUID`/`HostID` this host pairs under and one pair record per

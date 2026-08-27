@@ -55,24 +55,50 @@ if wants "${PROVIDER_START_USBMUXD:-auto}" && command -v usbmuxd >/dev/null 2>&1
 	# all: usbmuxd exits when the last device is unplugged, and the udev rule
 	# that would bring it back is the host's.
 	#
-	# The SIGUSR2 nudge is what replaces udev in here. usbmuxd polls the bus
-	# every second only until it manages to register for libusb hotplug events —
-	# which succeeds in a container and then delivers nothing, because libusb
-	# watches udevd's netlink broadcast and that reaches only udevd's own
-	# network namespace. So it would sit there, poll disabled, deaf to every
-	# device plugged in after start. -z is what makes SIGUSR2 mean "rescan the
-	# bus"; discovery is a device-list walk, the same one the poll it replaces
-	# was doing. -n is not the answer: it turns the poll off too.
+	# The watchdog is what replaces udev in here, and a rescan is not enough.
+	# libusb learns about a plug or an unplug from udevd's netlink broadcast,
+	# which reaches only udevd's own network namespace, so in a container its
+	# device list is frozen at the moment usbmuxd started: a device that comes
+	# back on a new bus address is invisible, and the one it replaced is still
+	# in the list, failing to open forever (LIBUSB_ERROR_IO, errno 19). Only a
+	# fresh libusb — a fresh process — sees the bus as it is now.
+	#
+	# sysfs, unlike libusb's cache, is the host's and always current, so the
+	# watchdog polls it for Apple devices and restarts usbmuxd when the set
+	# changes. That costs every *other* iPhone its usbmuxd connection, hence
+	# the settle tick: a device that re-enumerates passes through intermediate
+	# states, and each of them would otherwise be its own restart.
+	apple_devices() {
+		for device in /sys/bus/usb/devices/*; do
+			[ -r "$device/idVendor" ] || continue
+			[ "$(cat "$device/idVendor")" = "05ac" ] || continue
+			echo "$device $(cat "$device/devnum" 2>/dev/null)"
+		done
+	}
+
 	(
+		watch_seconds="${PROVIDER_USBMUXD_WATCH_SECONDS:-2}"
 		while true; do
-			usbmuxd -f -z &
+			usbmuxd -f &
 			muxer=$!
+			seen=$(apple_devices)
+			pending=""
 			while kill -0 "$muxer" 2>/dev/null; do
-				sleep "${PROVIDER_USBMUXD_RESCAN_SECONDS:-2}"
-				kill -USR2 "$muxer" 2>/dev/null || true
+				sleep "$watch_seconds"
+				now=$(apple_devices)
+				if [ "$now" = "$seen" ]; then
+					pending=""
+					continue
+				fi
+				if [ "$now" != "$pending" ]; then
+					pending=$now
+					continue
+				fi
+				echo "usb devices changed; restarting usbmuxd to pick them up" >&2
+				kill "$muxer" 2>/dev/null || true
+				break
 			done
 			wait "$muxer" || true
-			echo "warning: usbmuxd exited; restarting" >&2
 			sleep 1
 		done
 	) &
