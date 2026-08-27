@@ -34,6 +34,9 @@
   --success: oklch(0.63 0.17 149);
   --warning: oklch(0.75 0.16 70);
   --info: oklch(0.6 0.15 250);
+  /* What "yours" is drawn in. Overridden per accent below; the default keeps
+     the neutral primary the rest of the UI uses. */
+  --mine: var(--primary);
 }
 
 .dark {
@@ -60,6 +63,62 @@
   --success: oklch(0.7 0.16 150);
   --warning: oklch(0.8 0.15 75);
   --info: oklch(0.68 0.14 250);
+  --mine: var(--primary);
+}
+
+/*
+ * User-chosen accents, light values first and lifted in dark so a saturated
+ * hue stays legible against a near-black card rather than sinking into it.
+ *
+ * Every lightness here is the one that clears 4.5:1 against the *badge* fill
+ * (the card tinted 15% by the same colour), which is the tightest of the three
+ * places the token is used as text — the card itself is easier.
+ *
+ * The dark rules match a descendant as well as the root element itself,
+ * because the swatches in the picker set `data-accent` on themselves to
+ * preview a colour they are not currently themed in.
+ */
+/* Spelled out rather than left to inherit: the swatch for Default sits inside
+   a document already themed to the *current* accent, so without this it
+   previews whatever is selected instead of the colour it stands for. */
+[data-accent="default"] {
+  --mine: var(--primary);
+}
+[data-accent="blue"] {
+  --mine: oklch(0.52 0.19 258);
+}
+[data-accent="violet"] {
+  --mine: oklch(0.54 0.22 295);
+}
+[data-accent="emerald"] {
+  --mine: oklch(0.49 0.15 155);
+}
+[data-accent="amber"] {
+  --mine: oklch(0.52 0.15 70);
+}
+[data-accent="rose"] {
+  --mine: oklch(0.53 0.21 15);
+}
+
+.dark[data-accent="blue"],
+.dark [data-accent="blue"] {
+  --mine: oklch(0.72 0.15 258);
+}
+.dark[data-accent="violet"],
+.dark [data-accent="violet"] {
+  --mine: oklch(0.72 0.16 295);
+}
+.dark[data-accent="emerald"],
+.dark [data-accent="emerald"] {
+  --mine: oklch(0.75 0.15 155);
+}
+.dark[data-accent="amber"],
+.dark [data-accent="amber"] {
+  --mine: oklch(0.8 0.15 75);
+}
+.dark[data-accent="rose"],
+.dark [data-accent="rose"] {
+  --mine: oklch(0.72 0.17 15);
 }
 
 @theme inline {
@@ -85,6 +144,7 @@
   --color-success: var(--success);
   --color-warning: var(--warning);
   --color-info: var(--info);
+  --color-mine: var(--mine);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);

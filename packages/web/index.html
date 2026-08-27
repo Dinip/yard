@@ -19,6 +19,9 @@
             window.matchMedia("(prefers-color-scheme: dark)").matches);
         document.documentElement.classList.toggle("dark", dark);
         document.documentElement.style.colorScheme = dark ? "dark" : "light";
+        // Same reasoning for the highlight accent — see src/lib/accent.ts.
+        document.documentElement.dataset.accent =
+          localStorage.getItem("mine-accent") || "default";
       })();
     </script>
   </head>

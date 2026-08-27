@@ -11,6 +11,7 @@ import {
   Smartphone,
 } from "lucide-react";
 import type { ReactNode } from "react";
+import { AccentToggle } from "@/components/accent-toggle";
 import { BuildStamp, GithubMark } from "@/components/build-stamp";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -99,6 +100,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <ThemeToggle />
+              <AccentToggle />
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 onSelect={async () => {
