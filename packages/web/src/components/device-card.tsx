@@ -32,7 +32,7 @@ export function DeviceCard({ device, mine }: { device: DeviceListItem; mine?: bo
           unavailable && "opacity-60",
           // A held device is the one card the user came here to find, so it
           // carries the accent on the whole card rather than a badge alone.
-          mine && "border-primary/50 bg-primary/5 hover:border-primary",
+          mine && "border-mine/50 bg-mine/5 hover:border-mine",
         )}
       >
         <CardHeader className="px-4">
@@ -50,7 +50,7 @@ export function DeviceCard({ device, mine }: { device: DeviceListItem; mine?: bo
             </div>
             <div className="flex shrink-0 items-center gap-1.5">
               {mine && (
-                <Badge className="bg-primary/15 text-primary" variant="outline">
+                <Badge className="bg-mine/15 text-mine" variant="outline">
                   Yours
                 </Badge>
               )}
@@ -87,7 +87,7 @@ export function DeviceCard({ device, mine }: { device: DeviceListItem; mine?: bo
 
         <CardFooter className="px-4">
           {mine ? (
-            <p className="truncate font-medium text-primary text-xs">Reserved by you</p>
+            <p className="truncate font-medium text-mine text-xs">Reserved by you</p>
           ) : device.reservation ? (
             <p className="truncate text-muted-foreground text-xs">
               In use by <span className="text-foreground">{device.reservation.ownerName}</span>

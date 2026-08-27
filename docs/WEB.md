@@ -12,11 +12,13 @@ src/
 │   ├── trpc.ts           typed client + query client
 │   ├── auth-client.ts    better-auth react client (+ admin plugin)
 │   ├── types.ts          RouterInputs / RouterOutputs helpers
+│   ├── accent.ts         the stored highlight colour
 │   └── utils.ts          cn(), relativeTime()
 ├── components/
 │   ├── app-shell.tsx     left nav rail, account menu
 │   ├── side-panel.tsx    the collapsible column both device flanks are
 │   ├── device-card.tsx
+│   ├── accent-toggle.tsx / theme-toggle.tsx
 │   ├── device-console.tsx / device-screen.tsx
 │   └── ui/               shadcn components
 └── routes/
@@ -134,6 +136,20 @@ Two things are easy to get wrong here:
   one without the other reintroduces the flash.
 - **`color-scheme` is set alongside each palette.** Native form controls, the
   canvas backdrop and the platform scrollbar read that property, not our tokens.
+
+### The highlight accent
+
+The colour a user's own reservations are drawn in is its own token, `--mine`,
+swapped by a `data-accent` attribute on `<html>`. `AccentToggle` sets it, and
+`lib/accent.ts` stores the choice under `mine-accent`. Each accent carries a
+light value and a lifted dark one, because a hue tuned for white sinks into a
+near-black card.
+
+It is a browser preference, not an account column: nothing on the server depends
+on it, and the same pre-paint script and `storage` event that carry the theme
+carry this for free. The `Default` swatch pins `--mine` to `var(--primary)`
+explicitly — it renders inside a document already themed to the *current*
+accent, so inheriting would preview whatever is selected.
 
 The popout is a second window on the same origin, so it picks up a theme change
 through the `storage` event with no protocol involvement. The device video keeps

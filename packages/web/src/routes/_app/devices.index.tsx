@@ -63,7 +63,7 @@ function DevicesPage() {
             {filtered.length} of {devices?.length ?? 0}
           </span>
           {mineCount > 0 && (
-            <span className="rounded-full bg-primary/15 px-2 py-0.5 font-medium text-primary text-xs leading-none">
+            <span className="rounded-full bg-mine/15 px-2 py-0.5 font-medium text-mine text-xs leading-none">
               {mineCount} yours
             </span>
           )}
