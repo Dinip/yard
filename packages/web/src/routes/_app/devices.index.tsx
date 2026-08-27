@@ -23,19 +23,31 @@ function DevicesPage() {
     ...trpc.device.list.queryOptions(),
     refetchInterval: pollInterval,
   });
+  const { data: me } = useQuery(trpc.user.me.queryOptions());
   const [q, setQ] = useState("");
   const [platform, setPlatform] = useState<(typeof PLATFORMS)[number]>("all");
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    return (devices ?? []).filter((d) => {
+    const matches = (devices ?? []).filter((d) => {
       if (platform !== "all" && d.platform !== platform) return false;
       if (!needle) return true;
       return [d.name, d.model, d.id, d.osVersion, d.manufacturer]
         .filter(Boolean)
         .some((v) => String(v).toLowerCase().includes(needle));
     });
-  }, [devices, q, platform]);
+    // The devices you are holding sort to the front: they are the ones you came
+    // back to the list for, and a farm is big enough that scanning for them is
+    // the common case.
+    return matches.sort(
+      (a, b) => Number(b.reservation?.userId === me?.id) - Number(a.reservation?.userId === me?.id),
+    );
+  }, [devices, q, platform, me?.id]);
+
+  const mineCount = useMemo(
+    () => (devices ?? []).filter((d) => d.reservation?.userId === me?.id).length,
+    [devices, me?.id],
+  );
 
   return (
     <div className="flex flex-col gap-6">
@@ -50,6 +62,11 @@ function DevicesPage() {
           <span className="text-muted-foreground text-sm leading-none">
             {filtered.length} of {devices?.length ?? 0}
           </span>
+          {mineCount > 0 && (
+            <span className="rounded-full bg-primary/15 px-2 py-0.5 font-medium text-primary text-xs leading-none">
+              {mineCount} yours
+            </span>
+          )}
           <LiveIndicator connected={connected} />
         </div>
         <div className="flex-1" />
@@ -89,7 +106,11 @@ function DevicesPage() {
       ) : (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-4">
           {filtered.map((d) => (
-            <DeviceCard key={d.id} device={d} />
+            <DeviceCard
+              key={d.id}
+              device={d}
+              mine={Boolean(me) && d.reservation?.userId === me?.id}
+            />
           ))}
         </div>
       )}

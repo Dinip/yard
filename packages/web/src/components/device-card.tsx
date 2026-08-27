@@ -17,7 +17,7 @@ const STATUS_STYLES: Record<string, string> = {
   absent: "bg-muted text-muted-foreground opacity-70",
 };
 
-export function DeviceCard({ device }: { device: DeviceListItem }) {
+export function DeviceCard({ device, mine }: { device: DeviceListItem; mine?: boolean }) {
   const unavailable = device.status === "absent" || device.status === "unhealthy";
 
   return (
@@ -30,6 +30,9 @@ export function DeviceCard({ device }: { device: DeviceListItem }) {
         className={cn(
           "h-full gap-3 py-4 transition-colors hover:border-ring",
           unavailable && "opacity-60",
+          // A held device is the one card the user came here to find, so it
+          // carries the accent on the whole card rather than a badge alone.
+          mine && "border-primary/50 bg-primary/5 hover:border-primary",
         )}
       >
         <CardHeader className="px-4">
@@ -45,9 +48,16 @@ export function DeviceCard({ device }: { device: DeviceListItem }) {
                 {device.model ?? "unknown model"}
               </p>
             </div>
-            <Badge variant="outline" className={cn("shrink-0", STATUS_STYLES[device.status])}>
-              {device.status}
-            </Badge>
+            <div className="flex shrink-0 items-center gap-1.5">
+              {mine && (
+                <Badge className="bg-primary/15 text-primary" variant="outline">
+                  Yours
+                </Badge>
+              )}
+              <Badge variant="outline" className={cn(STATUS_STYLES[device.status])}>
+                {device.status}
+              </Badge>
+            </div>
           </div>
         </CardHeader>
 
@@ -76,7 +86,9 @@ export function DeviceCard({ device }: { device: DeviceListItem }) {
         </CardContent>
 
         <CardFooter className="px-4">
-          {device.reservation ? (
+          {mine ? (
+            <p className="truncate font-medium text-primary text-xs">Reserved by you</p>
+          ) : device.reservation ? (
             <p className="truncate text-muted-foreground text-xs">
               In use by <span className="text-foreground">{device.reservation.ownerName}</span>
             </p>
