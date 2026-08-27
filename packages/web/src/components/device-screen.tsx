@@ -25,7 +25,7 @@ export function DeviceScreen({
   interactive?: boolean;
 }) {
   const { send, frameSize, display, state, unsupported, fallbackUrl, detail } = session;
-  const activePointers = useRef(new Set<number>());
+  const activePointers = useRef(new Map<number, { x: number; y: number }>());
 
   // The canvas is in viewer space; the device's HID surface is in device
   // space, and on iOS the renderer has turned the picture between the two.
@@ -47,18 +47,31 @@ export function DeviceScreen({
     if (!interactive) return;
     event.currentTarget.setPointerCapture(event.pointerId);
     event.currentTarget.focus();
-    activePointers.current.add(event.pointerId);
-    send({ type: "pointer.down", pointerId: event.pointerId, at: at(event) });
+    const point = at(event);
+    activePointers.current.set(event.pointerId, point);
+    send({ type: "pointer.down", pointerId: event.pointerId, at: point });
   };
 
   const onPointerMove = (event: ReactPointerEvent<HTMLCanvasElement>) => {
     if (!interactive || !activePointers.current.has(event.pointerId)) return;
-    send({ type: "pointer.move", pointerId: event.pointerId, at: at(event) });
+    const point = at(event);
+    activePointers.current.set(event.pointerId, point);
+    send({ type: "pointer.move", pointerId: event.pointerId, at: point });
   };
 
   const endPointer = (event: ReactPointerEvent<HTMLCanvasElement>) => {
-    if (!interactive || !activePointers.current.delete(event.pointerId)) return;
+    if (!activePointers.current.delete(event.pointerId)) return;
     send({ type: "pointer.up", pointerId: event.pointerId, at: at(event) });
+  };
+
+  const onLostPointerCapture = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    const point = activePointers.current.get(event.pointerId);
+    if (!point) return;
+    activePointers.current.delete(event.pointerId);
+    // Safari can revoke capture when an edge swipe leaves the browser's input
+    // surface. Its lost-capture event does not carry reliable coordinates, so
+    // lift at the last point we sent instead of leaving a contact on the device.
+    send({ type: "pointer.up", pointerId: event.pointerId, at: point });
   };
 
   const onKeyDown = (event: React.KeyboardEvent<HTMLCanvasElement>) => {
@@ -113,6 +126,7 @@ export function DeviceScreen({
             onPointerMove={onPointerMove}
             onPointerUp={endPointer}
             onPointerCancel={endPointer}
+            onLostPointerCapture={onLostPointerCapture}
             onKeyDown={onKeyDown}
             onKeyUp={onKeyUp}
             onPaste={onPaste}
