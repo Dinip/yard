@@ -70,6 +70,10 @@
  * User-chosen accents, light values first and lifted in dark so a saturated
  * hue stays legible against a near-black card rather than sinking into it.
  *
+ * Every lightness here is the one that clears 4.5:1 against the *badge* fill
+ * (the card tinted 15% by the same colour), which is the tightest of the three
+ * places the token is used as text — the card itself is easier.
+ *
  * The dark rules match a descendant as well as the root element itself,
  * because the swatches in the picker set `data-accent` on themselves to
  * preview a colour they are not currently themed in.
@@ -81,19 +85,19 @@
   --mine: var(--primary);
 }
 [data-accent="blue"] {
-  --mine: oklch(0.55 0.19 258);
+  --mine: oklch(0.52 0.19 258);
 }
 [data-accent="violet"] {
-  --mine: oklch(0.55 0.22 295);
+  --mine: oklch(0.54 0.22 295);
 }
 [data-accent="emerald"] {
-  --mine: oklch(0.55 0.15 155);
+  --mine: oklch(0.49 0.15 155);
 }
 [data-accent="amber"] {
-  --mine: oklch(0.62 0.15 70);
+  --mine: oklch(0.52 0.15 70);
 }
 [data-accent="rose"] {
-  --mine: oklch(0.58 0.21 15);
+  --mine: oklch(0.53 0.21 15);
 }
 
 .dark[data-accent="blue"],
