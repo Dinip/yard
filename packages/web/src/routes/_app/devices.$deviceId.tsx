@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { ArrowLeft, ExternalLink } from "lucide-react";
+import { ArrowLeft, ExternalLink, Smartphone } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { DeviceConsole } from "@/components/device-console";
@@ -377,14 +377,7 @@ function DevicePage() {
               )}
             </div>
           )
-        ) : (
-          <Button
-            disabled={reserve.isPending || device.status === "cleaning"}
-            onClick={() => reserve.mutate({ deviceId })}
-          >
-            {device.status === "cleaning" ? "Being cleaned" : "Reserve"}
-          </Button>
-        )}
+        ) : null}
       </div>
 
       <div className="flex min-h-0 flex-1 gap-3">
@@ -399,12 +392,30 @@ function DevicePage() {
                   ? "Your request to join is waiting for an answer."
                   : "Ask to join, or wait for it to come free."}
               </p>
-            ) : device.status === "cleaning" ? (
-              <p>
-                This device is being reset after its last session. It will be available in a moment.
-              </p>
             ) : (
-              <p>Reserve this device to open a session.</p>
+              // The reserve action lives here rather than in the header: this
+              // empty panel is where the eye already is, and it is the only
+              // thing the page is asking for.
+              <div className="flex flex-col items-center gap-4">
+                <Smartphone className="size-8 text-muted-foreground/50" />
+                <div className="grid gap-1">
+                  <p className="font-medium text-base text-foreground">
+                    {device.status === "cleaning" ? "Being cleaned" : "This device is free"}
+                  </p>
+                  <p>
+                    {device.status === "cleaning"
+                      ? "It is being reset after its last session, and will be available in a moment."
+                      : "Reserve it to open a session and start streaming."}
+                  </p>
+                </div>
+                <Button
+                  size="lg"
+                  disabled={reserve.isPending || device.status === "cleaning"}
+                  onClick={() => reserve.mutate({ deviceId })}
+                >
+                  {device.status === "cleaning" ? "Being cleaned" : "Reserve this device"}
+                </Button>
+              </div>
             )}
           </div>
         ) : poppedOut ? (
