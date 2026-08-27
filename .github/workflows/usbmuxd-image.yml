@@ -1,0 +1,56 @@
+name: usbmuxd image
+
+on:
+  workflow_dispatch:
+    inputs:
+      versions:
+        description: Comma-separated image tags
+        required: true
+        default: latest
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: image
+        env:
+          VERSIONS: ${{ inputs.versions }}
+        run: |
+          repository=$(printf '%s' "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')
+          image="ghcr.io/$repository/usbmuxd"
+          IFS=',' read -ra versions <<< "$VERSIONS"
+          tags=()
+
+          for version in "${versions[@]}"; do
+            version="${version#"${version%%[![:space:]]*}"}"
+            version="${version%"${version##*[![:space:]]}"}"
+            [[ -n "$version" ]] || continue
+            [[ "$version" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]] || exit 1
+            tags+=("$image:$version")
+          done
+
+          ((${#tags[@]})) || exit 1
+          {
+            echo "tags<<EOF"
+            printf '%s\n' "${tags[@]}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+      - uses: docker/build-push-action@v7
+        with:
+          context: packages/usbmuxd
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.image.outputs.tags }}

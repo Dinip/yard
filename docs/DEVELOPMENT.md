@@ -109,31 +109,38 @@ providers refetch the JWKS.
 
 ### The provider container
 
+The production Linux shape includes a small usbmuxd sidecar:
+
 ```bash
 docker compose --env-file .env.docker --profile provider up -d
 ```
 
-On **Linux** uncomment the USB mount and `privileged` in `docker-compose.yml` —
-the whole `/dev/bus/usb` directory, not individual `--device` nodes, because a
-phone that reboots re-enumerates under a new node — and mask the host's usbmuxd:
+The provider stays on the default Compose network, so Caddy still reaches it as
+`provider:7100`. Only the sidecar uses the host network namespace. libusb then
+receives the host udev daemon's hot-plug broadcasts without putting the
+browser-facing provider on the host network.
+
+On **Linux**, mask the host's usbmuxd once:
 
 ```bash
-sudo systemctl mask --now usbmuxd.service     # once; the container runs its own
+sudo systemctl mask --now usbmuxd.service
 ```
 
-The container starts **both** daemons itself, an adb server and a supervised
-usbmuxd, so the host must run neither; only one process may own a device.
+The sidecar owns usbmuxd and the `lockdown-keys` volume. The provider still
+starts adb for Android devices but connects to the sidecar through a Unix socket
+in the `usbmuxd-socket` volume. The whole `/dev/bus/usb` directory goes into
+both services rather than individual device nodes, because a phone that reboots
+re-enumerates under a new node.
 
 Which is also why a Linux device entry takes **no `adb_server` option**; the one
 in the checked-in `provider.yaml` is there for the macOS shape below and
 pointing at `host.docker.internal` on Linux gets you `Connection refused (os
 error 111)`.
 
-Don't bind-mount the host's `/var/run/usbmuxd` instead. Docker binds the
-socket's *inode*, so the mount dies with the daemon at the last unplugged
-device — and if the socket is missing when the container starts, Docker creates
-a *directory* at that path, after which the host's usbmuxd can never bind it
-again.
+This does not bind-mount the host's `/var/run/usbmuxd`. The daemon and socket
+both live inside Docker. The named volume shares the socket's parent directory,
+so a sidecar restart and socket replacement remain visible to the provider.
+There is no host socket inode for the provider to pin.
 
 The adb server's keypair lives in the `adb-keys` volume, because the phone's
 "Allow USB debugging" grant is bound to that key's fingerprint — a regenerated
@@ -165,15 +172,16 @@ Android needs no bridge — the adb server already speaks TCP, and the device's
 `adb_server` option points at it. This is a development shape; a provider host
 in production is Linux with the bus passed in.
 
-iOS pairing has the same shape, in the `lockdown-keys` volume. usbmuxd keeps
-the host identity it pairs under and one record per device in
+iOS pairing has the same shape, in the sidecar's `lockdown-keys` volume.
+usbmuxd keeps the host identity it pairs under and one record per device in
 `/var/lib/lockdown`, so an empty one makes the container a *new* computer to
 every iPhone — each asking to Trust This Computer again, at the device. Seed it
 from a host that has already paired them, the way the adb key is seeded:
 
 ```bash
-docker compose --profile provider create provider
-docker cp /var/lib/lockdown/. yard-provider-1:/var/lib/lockdown/
+docker compose --profile provider up -d usbmuxd
+docker cp /var/lib/lockdown/. yard-usbmuxd-1:/var/lib/lockdown/
+docker compose restart usbmuxd
 ```
 
 An iPhone also needs a Developer Disk Image mounted, and loses it on every
@@ -221,10 +229,11 @@ docker compose up -d
 Migrations run automatically from the coordinator's entrypoint, so this is a
 one-command deploy on a single node.
 
-`docker-compose.yml` pulls `ghcr.io/dinip/yard/{coordinator,web,provider}`.
-`VERSION_TAG` picks which build — `latest` for releases, `edge` for the tip of
-`main`, or a pinned `1.2.3`. To build from the checkout instead, add the build
-overlay:
+`docker-compose.yml` pulls `ghcr.io/dinip/yard/{coordinator,web,provider}` and
+`ghcr.io/dinip/yard/usbmuxd:latest`. `VERSION_TAG` selects the application
+build. `USBMUXD_IMAGE` can select another sidecar tag or mirror, but normal
+deployments do not build it. To build the application images from the checkout,
+add the build overlay:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.build.yml up --build
@@ -239,6 +248,13 @@ The `provider` service is behind a profile because it needs host device access:
 docker compose --profile provider up
 ```
 
+To rebuild the provider from this checkout:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.build.yml \
+  --profile provider up --build
+```
+
 ## CI and releases
 
 | Workflow | Runs on | Does |
@@ -246,6 +262,7 @@ docker compose --profile provider up
 | `pr.yml` | pull requests | lint, typecheck, tests, drift guard, amd64 build of all three images |
 | `edge.yml` | push to `main` touching build inputs | publishes `edge` and `sha-<commit>` |
 | `release.yml` | push to `main` | grooms the release PR; on merge, publishes `1.2.3`, `1.2` and `latest` |
+| `usbmuxd-image.yml` | manual | publishes the requested multi-platform sidecar tags |
 | `rust-cache.yml` | push to `main` touching Rust | rebuilds the Rust cache that pull requests restore |
 
 `pr.yml`, `edge.yml` and `release.yml` call `images.yml`, which builds each
@@ -255,8 +272,13 @@ QEMU, because emulating a Rust compile is slow enough to dominate the pipeline.
 Tags are decided by the caller and passed in, never derived from the ref,
 because a release build does not run from a tag.
 
-Neither publishing path re-runs the test suite: the commit passed CI as a pull
-request, and the only thing left to prove is that the images build.
+Run `usbmuxd-image.yml` once, then make that GHCR package public. Its `versions`
+input accepts comma-separated tags such as `1.0.0,1.0,latest` and defaults to
+`latest`. The workflow builds the image once and applies every requested tag.
+The other workflows never call it.
+
+Application image publishing does not re-run the test suite. The commit already
+passed CI as a pull request.
 
 `rust-cache.yml` is there because a cache belongs to the ref that wrote it. A
 pull request restores its own or the base branch's, never another pull

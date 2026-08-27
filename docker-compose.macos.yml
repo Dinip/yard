@@ -14,8 +14,12 @@
 # Linux with the USB bus passed into the container.
 
 services:
+  usbmuxd:
+    scale: 0
+
   provider:
     environment:
+      PROVIDER_START_ADB: "no"
       # Resolved inside the container to the host; the iOS backend does the
       # lookup itself because idevice's parser handles only IPs and paths.
       USBMUXD_SOCKET_ADDRESS: host.docker.internal:${USBMUXD_BRIDGE_PORT:-27015}

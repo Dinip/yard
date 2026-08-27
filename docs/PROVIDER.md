@@ -681,81 +681,59 @@ grants access to the USB devices, not permission on them — the `/dev/bus/usb`
 nodes are root-owned, and the daemons have to write to them. The container's
 only writable path is the scratch tmpfs.
 
-### The two daemons
+### The USB daemons
 
-`docker-entrypoint.sh` starts an adb server and a usbmuxd, because neither
-backend owns a USB transport itself. Three env vars steer it, alongside the
-binary's own `PROVIDER_CONFIG`, `PROVIDER_TOKEN` and `PROVIDER_LOG_LEVEL`:
+Neither backend owns a USB transport itself. The provider entrypoint starts adb
+for Android. The base Compose file runs usbmuxd in a small sidecar. The provider
+stays on the Docker network that Caddy uses.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `PROVIDER_START_ADB` | `auto` | Start an adb server. `auto` is "if `/dev/bus/usb` is mounted", so the macOS shape — which points at the host's daemons — skips it without being told to. `yes`/`no` override. |
-| `PROVIDER_START_USBMUXD` | `auto` | The same, for usbmuxd. |
-| `PROVIDER_USBMUXD_WATCH_SECONDS` | `2` | How often sysfs is polled for a change in the set of Apple devices — which, two paragraphs down, turns out to be the only thing that notices a phone being plugged in or out. |
+| `PROVIDER_START_ADB` | `auto` | Start an adb server. `auto` means "if `/dev/bus/usb` is mounted"; `yes`/`no` override it. The macOS overlay sets `no`. |
 
-Both daemons are the container's own rather than the host's, because
-**usbmuxd exits when the last device is unplugged** and the udev rule that
-brings it back lives on the host, where the container cannot reach it.
-Borrowing the host's daemon by bind-mounting `/var/run/usbmuxd` looks simpler
-and is worse — Docker binds the socket's *inode*, so the mount is stale the
-moment usbmuxd restarts, and a missing socket at container start has Docker
-create a *directory* at that path, after which the host's usbmuxd cannot bind it
-either. Mask the host's: `systemctl mask --now usbmuxd.service`.
+The sidecar replaces the host usbmuxd, so mask the host service once with
+`systemctl mask --now usbmuxd.service`. This avoids two daemons competing for
+the same devices.
 
-usbmuxd is supervised in a restart loop; adb is not, since `adb start-server`
-daemonises and the Android backend reconnects on its own. It runs without `-z`,
-so it stays up with no devices attached and the socket the backend polls is
-always there — exiting at the last unplug is what the host's udev-activated unit
-wants, not what a supervised one does.
+The sidecar runs usbmuxd without `-z`, so it stays up with no devices attached.
+It joins the host network namespace, where libusb receives the host udev
+daemon's hot-plug events. Its socket lives in the `usbmuxd-socket` volume. The
+provider mounts that volume at `/run/yard-usbmuxd` and uses
+`USBMUXD_SOCKET_ADDRESS=UNIX:/run/yard-usbmuxd/usbmuxd`. Sharing the directory
+rather than one socket inode makes a replacement visible after a sidecar
+restart.
 
-A **watchdog polls sysfs every two seconds** and restarts usbmuxd whenever the
-set of Apple devices on the bus changes. That is what stands in for udev in
-here, and a rescan is not enough: libusb learns about a plug or an unplug from
-udevd's netlink broadcast, and that reaches only udevd's own network namespace.
-Inside a container its device list is therefore frozen at the moment usbmuxd
-started — a phone that comes back on a new bus address is invisible, and the one
-it replaced stays in the list forever, failing to open on every rescan with
-`LIBUSB_ERROR_IO` and `errno=19`. That is the shape of the bug: unplug an iPhone
-and plug it back in, and iOS never returns until the container is restarted.
-Only a fresh libusb — meaning a fresh process — sees the bus as it now is.
+The provider remains on the default Compose network, so Caddy can proxy
+`provider:7100`. Only usbmuxd uses host networking, and it exposes no TCP
+listener.
 
-sysfs, unlike libusb's cache, is the host's and always current, so it is what
-the watchdog watches: every `/sys/bus/usb/devices` entry with Apple's vendor ID,
-and its `devnum`, since re-enumeration is exactly what a replug looks like. A
-restart costs every *other* iPhone its usbmuxd connection, so a change has to
-survive one more tick before it counts — a device that re-enumerates passes
-through intermediate states, and each of them would otherwise be its own
-restart. The backends reconnect on their own; the cost is a few seconds of
-tunnel re-establishment on the devices that were not the one you touched.
+Do not bind-mount the host's `/var/run/usbmuxd` socket. Docker pins the socket
+inode, so the provider keeps a stale mount when the host daemon replaces it. If
+the socket is absent at container creation, Docker may also create a directory
+at that path and prevent the host daemon from binding there.
 
 adb needs none of this. Its server walks `/dev/bus/usb` itself once a second
 rather than asking libusb, so it sees a replug the way it would on a host.
 
-`/var/lib/lockdown` is a volume for the same reason `/root/.android` is. It
-holds the `SystemBUID`/`HostID` this host pairs under and one pair record per
-device, so a container that starts with an empty one is a *new* computer to
-every iPhone in the rack — each of them asking to Trust This Computer again, by
-hand, at the device.
+The sidecar's `/var/lib/lockdown` is a volume for the same reason
+`/root/.android` is. It holds the `SystemBUID`/`HostID` this host pairs under and
+one pair record per device, so a container that starts with an empty one is a
+*new* computer to every iPhone in the rack — each of them asking to Trust This
+Computer again, by hand, at the device.
 
 ### One provider per platform on a single host
 
 Two providers on one machine — one Android, one iOS — is a supported shape and
 does not fight over the bus. A claim is per USB *interface*, and the two daemons
 open disjoint devices: adb opens what advertises the adb interface, usbmuxd only
-Apple's VID. Two of the *same* daemon over one device is the thing that breaks,
-so give each container only the one it needs:
+Apple's VID. Disable adb in an iOS-only provider:
 
 ```yaml
-# the iOS provider
 environment:
   PROVIDER_START_ADB: "no"
-# the Android provider
-environment:
-  PROVIDER_START_USBMUXD: "no"
 ```
 
-Both still mount all of `/dev/bus/usb` — the nodes are shared, the claims are
-not. Give each its own `id`, `bind` port and `remote_debug.ports` range.
+Give each provider its own `id`, `bind` port and `remote_debug.ports` range.
 
 ## Testing
 

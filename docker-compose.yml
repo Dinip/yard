@@ -1,5 +1,4 @@
-# Runs the published images from GHCR. `VERSION_TAG` pins the version — `latest`
-# tracks releases, `edge` the tip of main, or a `1.2.3` for a fixed one.
+# Runs published images from GHCR. `VERSION_TAG` selects the application release.
 #
 # To build the images from this checkout instead:
 #   docker compose -f docker-compose.yml -f docker-compose.build.yml up --build
@@ -80,20 +79,20 @@ services:
       timeout: 5s
       retries: 3
 
-  # Needs host device access, so it is opt-in:
-  #   docker compose --profile provider up
-  #
-  # Shaped for Linux, where the devices are. The whole /dev/bus/usb *directory*
-  # goes in, not individual --device nodes — a phone that reboots re-enumerates
-  # under a new node and a static binding silently loses it. The container
-  # starts both an adb server and a usbmuxd of its own, so the host must run
-  # neither — only one process may own a device. Mask the host's usbmuxd with
-  # `systemctl mask --now usbmuxd.service`, and drop the `adb_server` option
-  # from provider.yaml, since the container is no longer borrowing the host's.
-  #
-  # macOS: Docker cannot pass USB through at all, so comment the mount and
-  # `privileged` out and reach the host's daemons instead — see
-  # docker-compose.macos.yml, which is what this repo's own testing uses.
+  usbmuxd:
+    profiles: ["provider"]
+    image: ${USBMUXD_IMAGE:-ghcr.io/dinip/yard/usbmuxd:latest}
+    restart: unless-stopped
+    network_mode: host
+    device_cgroup_rules:
+      - "c 189:* rwm"
+    volumes:
+      - /dev/bus/usb:/dev/bus/usb
+      - /run/udev:/run/udev:ro
+      - usbmuxd-socket:/run
+      - lockdown-keys:/var/lib/lockdown
+
+  # Linux device access is opt-in: docker compose --profile provider up
   provider:
     profiles: ["provider"]
     image: ghcr.io/dinip/yard/provider:${VERSION_TAG:-latest}
@@ -106,11 +105,8 @@ services:
     environment:
       PROVIDER_TOKEN: ${PROVIDER_TOKEN:?issue one under /admin/providers}
       PROVIDER_LOG_LEVEL: ${PROVIDER_LOG_LEVEL:-info}
-      # The entrypoint starts an adb server and a usbmuxd whenever /dev/bus/usb
-      # is mounted. Turn one off to split a host into a provider per platform 
-      # See docs/PROVIDER.md.
       PROVIDER_START_ADB: ${PROVIDER_START_ADB:-auto}
-      PROVIDER_START_USBMUXD: ${PROVIDER_START_USBMUXD:-auto}
+      USBMUXD_SOCKET_ADDRESS: UNIX:/run/yard-usbmuxd/usbmuxd
     volumes:
       - ./packages/provider/provider.yaml:/etc/yard/provider.yaml:ro
       # adb's keypair. Not a cache: the phone's "Allow USB debugging" grant is
@@ -121,10 +117,7 @@ services:
       # tmpfs so a container recreate does not re-fetch it — and so it can be
       # pre-populated from Xcode's copy to keep the download off a mirror.
       - ddi-cache:/var/lib/yard/ddi
-      # usbmuxd's half of the same problem: /var/lib/lockdown holds the host
-      # identity it pairs under and one pair record per device. Lose it and
-      # every iPhone in the rack asks to Trust This Computer again, by hand.
-      - lockdown-keys:/var/lib/lockdown
+      - usbmuxd-socket:/run/yard-usbmuxd
       # Comment this out on macOS: the path does not exist to bind.
       - /dev/bus/usb:/dev/bus/usb
     # Access to the /dev/bus/usb nodes, which are root-owned — the permission,
@@ -141,3 +134,4 @@ volumes:
   adb-keys:
   ddi-cache:
   lockdown-keys:
+  usbmuxd-socket:
