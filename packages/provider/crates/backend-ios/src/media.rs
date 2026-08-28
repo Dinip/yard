@@ -75,8 +75,25 @@ const REFRESH_HEARTBEAT: Duration = Duration::from_secs(10);
 /// RTCP receiver-report cadence.
 const RTCP_INTERVAL: Duration = Duration::from_secs(1);
 
-/// No access unit for this long and the session is considered wedged.
+/// No access unit *and* no word from the device for this long, and the session
+/// is considered wedged.
 const STALL_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// How long the video may be silent while the device is still sending RTCP.
+///
+/// iOS 27 only encodes when the screen changes: a static screen goes quiet for
+/// up to a minute at a time and ignores keyframe requests until it has
+/// something to draw. Measured on an idle iPhone, silences ran 16–55 s between
+/// bursts, all inside one healthy session. The old five-second rule read every
+/// one of those as a wedge and rebuilt the tunnel, which is how an idle device
+/// ended up flapping between ready and unhealthy under a live reservation.
+const IDLE_VIDEO_TIMEOUT: Duration = Duration::from_secs(90);
+
+/// How stale the device's own RTCP has to be before its silence counts.
+///
+/// It reports once a second, so this is generous; the point is only to
+/// distinguish "paused encoder, live device" from "nothing there at all".
+const FEEDBACK_TIMEOUT: Duration = Duration::from_secs(4);
 
 /// How long the *first* access unit gets before the watchdog counts it as a
 /// stall. Bring-up is legitimately slower than steady state — the negotiation
@@ -231,6 +248,9 @@ pub async fn run(
     // Seeded to now so the watchdog gives a fresh stream its full grace period
     // rather than firing on a zero-initialised value.
     let (au_tx, au_rx) = watch::channel(Instant::now());
+    // The device's own receiver reports, which keep coming while its encoder is
+    // paused. This is the liveness signal; access units are not.
+    let (rtcp_tx, rtcp_rx) = watch::channel(Instant::now());
 
     let mut tasks = tokio::task::JoinSet::new();
 
@@ -241,6 +261,7 @@ pub async fn run(
         streaming.clone(),
         stats.clone(),
         au_tx,
+        rtcp_tx,
         video,
         options.motion_idr,
     ));
@@ -252,6 +273,10 @@ pub async fn run(
         video.remote_ssrc,
         stats.clone(),
     ));
+
+    // The payload is still ignored, but the socket is drained: an unread flow
+    // is backpressure on the adapter every other stream shares.
+    tasks.spawn(drain_audio(audio_udp.clone()));
 
     if let Some(audio) = audio {
         // The audio session has the same RTCPTimeoutInterval as video, and the
@@ -265,7 +290,7 @@ pub async fn run(
         ));
     }
 
-    tasks.spawn(stall_watchdog(au_rx, streaming));
+    tasks.spawn(stall_watchdog(au_rx, rtcp_rx, streaming, stats.clone()));
 
     let outcome = tasks.join_next().await;
 
@@ -294,6 +319,7 @@ async fn receive_video(
     streaming: Arc<AtomicBool>,
     stats: Arc<RtpStats>,
     last_au: watch::Sender<Instant>,
+    last_rtcp: watch::Sender<Instant>,
     identity: StreamIdentity,
     motion_idr: bool,
 ) -> Result<()> {
@@ -318,11 +344,16 @@ async fn receive_video(
     let mut refresh_tick = interval(Duration::from_millis(100));
     refresh_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
+    // A once-a-second census of what the device is actually sending. Debug
+    // rather than info because it is only ever read while chasing a stall.
+    let mut census = Census::default();
+
     loop {
         let datagram = tokio::select! {
             received = socket.recv() => received.context("video RTP recv")?,
             _ = refresh_tick.tick() => {
                 refresh.tick(&mut byte_window).await;
+                census.report(&stats);
                 continue;
             }
             _ = publisher.keyframe_requested() => {
@@ -332,6 +363,8 @@ async fn receive_video(
         };
 
         if is_rtcp(&datagram.data) {
+            census.rtcp += 1;
+            let _ = last_rtcp.send(Instant::now());
             continue;
         }
         let Some(packet) = RtpPacket::parse(&datagram.data) else {
@@ -406,6 +439,7 @@ async fn receive_video(
         }
 
         if au_corrupt {
+            census.dropped += 1;
             // Ask for a fresh IDR: without one every later delta references
             // slices we never delivered, and the browser freezes waiting for a
             // keyframe that on a long-GOP stream may never come naturally.
@@ -426,7 +460,10 @@ async fn receive_video(
 
             if au_is_key {
                 streaming.store(true, Ordering::Relaxed);
+                census.keys += 1;
             }
+            census.published += 1;
+            census.bytes += data.len() as u64;
             let _ = last_au.send(now);
             // A publish with no viewers is not an error: the device streams
             // whether or not anyone is watching.
@@ -439,6 +476,61 @@ async fn receive_video(
         current_au.clear();
         au_is_key = false;
         au_corrupt = false;
+    }
+}
+
+/// A once-a-second summary of the receive path, for telling a device that
+/// stopped encoding from one whose packets we are failing to assemble.
+struct Census {
+    since: Instant,
+    packets_at: u64,
+    published: u64,
+    keys: u64,
+    dropped: u64,
+    bytes: u64,
+    rtcp: u64,
+}
+
+impl Default for Census {
+    fn default() -> Self {
+        Self {
+            since: Instant::now(),
+            packets_at: 0,
+            published: 0,
+            keys: 0,
+            dropped: 0,
+            bytes: 0,
+            rtcp: 0,
+        }
+    }
+}
+
+impl Census {
+    fn report(&mut self, stats: &RtpStats) {
+        if self.since.elapsed() < Duration::from_secs(1) {
+            return;
+        }
+        let packets = stats.packets.load(Ordering::Relaxed);
+        debug!(
+            packets = packets - self.packets_at,
+            access_units = self.published,
+            keyframes = self.keys,
+            dropped = self.dropped,
+            bytes = self.bytes,
+            // Feedback from the device on the same socket: it arriving while
+            // RTP does not separates a stopped encoder from a dead tunnel.
+            rtcp = self.rtcp,
+            // What we are telling the device about its own stream. A loss
+            // figure the device believes is what would make it give up.
+            reported_lost = stats.lost.load(Ordering::Relaxed),
+            highest_seq = stats.highest_seq.load(Ordering::Relaxed),
+            "video census"
+        );
+        *self = Self {
+            since: Instant::now(),
+            packets_at: packets,
+            ..Default::default()
+        };
     }
 }
 
@@ -622,31 +714,84 @@ async fn rtcp_liveness(
     }
 }
 
-/// Fail the session when the encoder stops emitting entirely.
+/// Read and discard the audio stream.
+///
+/// Xcode's mirror pairs audio with video and iOS throttles a lone video client,
+/// so the stream has to exist; nothing consumes its payload. Leaving it unread
+/// is not the same as not needing it — the datagrams still queue inside the
+/// tunnel adapter, against the same budget video is trying to use.
+async fn drain_audio(socket: Arc<UdpSocketHandle>) -> Result<()> {
+    let mut packets = 0u64;
+    let mut since = Instant::now();
+    loop {
+        socket.recv().await.context("audio RTP recv")?;
+        packets += 1;
+        if since.elapsed() >= Duration::from_secs(1) {
+            debug!(packets, "audio census");
+            packets = 0;
+            since = Instant::now();
+        }
+    }
+}
+
+/// Fail the session when the device stops streaming and stops answering.
 ///
 /// A wedged encoder — one that choked on a keyframe request, or whose display
-/// slept — never recovers within a session. The supervisor's rebuild is the
-/// only reliable way to get it streaming again.
+/// slept — never recovers within a session, and the supervisor's rebuild is the
+/// only reliable way to get it streaming again. Silence alone does not say
+/// which happened, so the device's receiver reports decide: while they keep
+/// arriving the device is alive and merely has nothing new to encode, and
+/// tearing the tunnel down would cost fifteen seconds to fix nothing.
+/// How long video may be silent before the session is rebuilt.
+fn stall_budget(streaming: bool, quiet_device: bool) -> Duration {
+    match (streaming, quiet_device) {
+        (false, _) => FIRST_FRAME_TIMEOUT,
+        (true, true) => STALL_TIMEOUT,
+        (true, false) => IDLE_VIDEO_TIMEOUT,
+    }
+}
+
 async fn stall_watchdog(
     last_au: watch::Receiver<Instant>,
+    last_rtcp: watch::Receiver<Instant>,
     streaming: Arc<AtomicBool>,
+    stats: Arc<RtpStats>,
 ) -> Result<()> {
     let mut tick = interval(STALL_TIMEOUT / 4);
     tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
+    // Whether RTP kept arriving while no access unit came out is the whole
+    // difference between a device that stopped encoding and a receive path that
+    // stopped assembling, and the two want opposite fixes.
+    let mut seen_au = *last_au.borrow();
+    let mut packets_at_last_au = stats.packets.load(Ordering::Relaxed);
+
     loop {
         tick.tick().await;
 
-        let budget = if streaming.load(Ordering::Relaxed) {
-            STALL_TIMEOUT
-        } else {
-            FIRST_FRAME_TIMEOUT
-        };
+        let current_au = *last_au.borrow();
+        if current_au != seen_au {
+            seen_au = current_au;
+            packets_at_last_au = stats.packets.load(Ordering::Relaxed);
+        }
 
-        let since = last_au.borrow().elapsed();
+        let quiet_device = last_rtcp.borrow().elapsed() > FEEDBACK_TIMEOUT;
+        let budget = stall_budget(streaming.load(Ordering::Relaxed), quiet_device);
+
+        let since = seen_au.elapsed();
         if since > budget {
+            let stalled_packets = stats
+                .packets
+                .load(Ordering::Relaxed)
+                .saturating_sub(packets_at_last_au);
+            let feedback = if quiet_device {
+                "the device stopped reporting too"
+            } else {
+                "the device kept reporting"
+            };
             return Err(anyhow!(
-                "no access unit for {:.1}s — restarting the session",
+                "no access unit for {:.1}s ({stalled_packets} RTP packets in that window, \
+                 {feedback}) — restarting the session",
                 since.as_secs_f32()
             ));
         }
@@ -656,6 +801,24 @@ async fn stall_watchdog(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_paused_encoder_on_a_talking_device_is_given_room() {
+        // The iOS 27 case: nothing to encode on a static screen, but the
+        // device is still reporting every second.
+        assert_eq!(stall_budget(true, false), IDLE_VIDEO_TIMEOUT);
+    }
+
+    #[test]
+    fn a_device_that_went_quiet_altogether_is_restarted_promptly() {
+        assert_eq!(stall_budget(true, true), STALL_TIMEOUT);
+    }
+
+    #[test]
+    fn bring_up_keeps_its_own_grace_however_the_device_is_behaving() {
+        assert_eq!(stall_budget(false, false), FIRST_FRAME_TIMEOUT);
+        assert_eq!(stall_budget(false, true), FIRST_FRAME_TIMEOUT);
+    }
 
     #[test]
     fn loss_is_measured_from_the_first_sequence_seen() {

@@ -456,12 +456,26 @@ impl Supervisor {
     /// authorize would yank a working user back to their home screen every
     /// renewal interval.
     async fn wake_screen(&self, device: &Arc<Device>) {
-        if !device.screen_blanked.swap(false, Ordering::Relaxed) {
+        // Claimed rather than read, so two authorizes landing together press
+        // the side button once between them; pressing it twice would park the
+        // screen again.
+        if device
+            .screen_blanked
+            .compare_exchange(true, false, Ordering::Relaxed, Ordering::Relaxed)
+            .is_err()
+        {
             return;
         }
         match device.backend.set_screen_awake(true).await {
             Ok(()) | Err(BackendError::Unsupported(_)) => {}
-            Err(err) => warn!(device = %device.id, %err, "could not wake the screen"),
+            // Give the belief back. Dropping it on a failed press — the HID
+            // surfaces were rebuilding, say — loses the device: nothing would
+            // ever try to light that screen again, and the holder reserves a
+            // black phone. Seen in the field on 2026-08-28.
+            Err(err) => {
+                device.screen_blanked.store(true, Ordering::Relaxed);
+                warn!(device = %device.id, %err, "could not wake the screen");
+            }
         }
     }
 
