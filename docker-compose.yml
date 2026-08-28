@@ -1,5 +1,4 @@
-# Runs the published images from GHCR. `VERSION_TAG` pins the version — `latest`
-# tracks releases, `edge` the tip of main, or a `1.2.3` for a fixed one.
+# Runs published images from GHCR. `VERSION_TAG` selects the application release.
 #
 # To build the images from this checkout instead:
 #   docker compose -f docker-compose.yml -f docker-compose.build.yml up --build
@@ -80,19 +79,20 @@ services:
       timeout: 5s
       retries: 3
 
-  # Needs host device access, so it is opt-in:
-  #   docker compose --profile provider up
-  #
-  # Linux, where the devices are: uncomment the volumes and `privileged`. Mount
-  # the whole /dev/bus/usb *directory*, not individual --device nodes — a phone
-  # that reboots re-enumerates under a new node and a static binding silently
-  # loses it. The host must not run its own adb server; only one may own a
-  # device — and drop the `adb_server` option from provider.yaml, since the
-  # container starts its own on entry rather than borrowing the host's.
-  #
-  # macOS: Docker cannot pass USB through at all. Reach the host's daemons
-  # instead — see docker-compose.macos.yml, which is what this repo's own
-  # testing uses.
+  usbmuxd:
+    profiles: ["provider"]
+    image: ${USBMUXD_IMAGE:-ghcr.io/dinip/yard/usbmuxd:latest}
+    restart: unless-stopped
+    network_mode: host
+    device_cgroup_rules:
+      - "c 189:* rwm"
+    volumes:
+      - /dev/bus/usb:/dev/bus/usb
+      - /run/udev:/run/udev:ro
+      - usbmuxd-socket:/run
+      - lockdown-keys:/var/lib/lockdown
+
+  # Linux device access is opt-in: docker compose --profile provider up
   provider:
     profiles: ["provider"]
     image: ghcr.io/dinip/yard/provider:${VERSION_TAG:-latest}
@@ -103,9 +103,10 @@ services:
       # in provider.yaml in step.
       - "${DEBUG_PORTS:-7200-7249}:${DEBUG_PORTS:-7200-7249}"
     environment:
-      YARD_CONFIG: /etc/yard/provider.yaml
-      YARD_PROVIDER_TOKEN: ${YARD_PROVIDER_TOKEN:?issue one under /admin/providers}
-      YARD_LOG: ${YARD_LOG:-info}
+      PROVIDER_TOKEN: ${PROVIDER_TOKEN:?issue one under /admin/providers}
+      PROVIDER_LOG_LEVEL: ${PROVIDER_LOG_LEVEL:-info}
+      PROVIDER_START_ADB: ${PROVIDER_START_ADB:-auto}
+      USBMUXD_SOCKET_ADDRESS: UNIX:/run/yard-usbmuxd/usbmuxd
     volumes:
       - ./packages/provider/provider.yaml:/etc/yard/provider.yaml:ro
       # adb's keypair. Not a cache: the phone's "Allow USB debugging" grant is
@@ -116,9 +117,12 @@ services:
       # tmpfs so a container recreate does not re-fetch it — and so it can be
       # pre-populated from Xcode's copy to keep the download off a mirror.
       - ddi-cache:/var/lib/yard/ddi
-      # - /var/run/usbmuxd:/var/run/usbmuxd     # Linux: iOS
-      # - /dev/bus/usb:/dev/bus/usb             # Linux: Android
-    # privileged: true                          # Linux: USB access
+      - usbmuxd-socket:/run/yard-usbmuxd
+      # Comment this out on macOS: the path does not exist to bind.
+      - /dev/bus/usb:/dev/bus/usb
+    # Access to the /dev/bus/usb nodes, which are root-owned — the permission,
+    # not the devices. See docs/PROVIDER.md.
+    privileged: true
     tmpfs:
       # Staged APK/IPA uploads only. Nothing here outlives an install.
       - /var/lib/yard/scratch:size=4g
@@ -129,3 +133,5 @@ volumes:
   caddy-config:
   adb-keys:
   ddi-cache:
+  lockdown-keys:
+  usbmuxd-socket:

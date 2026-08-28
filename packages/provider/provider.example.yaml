@@ -79,7 +79,7 @@ metrics:
   app_patterns:
     - "*.demo.*"
 
-# Prefer YARD_PROVIDER_TOKEN or token_file over an inline token.
+# Prefer PROVIDER_TOKEN or token_file over an inline token.
 # Precedence: env var > token_file > token.
 #   token: pft_...
 #   token_file: /run/secrets/yard-provider-token

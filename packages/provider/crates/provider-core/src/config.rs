@@ -60,7 +60,7 @@ pub struct Config {
     pub coordinator_url: String,
 
     /// Bearer credential from `/admin/providers`. Prefer `token_file` or the
-    /// `YARD_PROVIDER_TOKEN` env var so a secret is not sitting in the YAML.
+    /// `PROVIDER_TOKEN` env var so a secret is not sitting in the YAML.
     #[serde(default)]
     pub token: Option<String>,
     #[serde(default)]
@@ -283,7 +283,7 @@ pub enum BackendKind {
 
 impl Config {
     pub fn load(path: &Path) -> Result<Self> {
-        Self::load_with_env(path, std::env::var("YARD_PROVIDER_TOKEN").ok())
+        Self::load_with_env(path, std::env::var("PROVIDER_TOKEN").ok())
     }
 
     /// The env override is a parameter rather than read in here so tests can
@@ -328,7 +328,7 @@ impl Config {
     fn validate(&self) -> Result<()> {
         if self.token.as_deref().unwrap_or("").is_empty() {
             bail!(
-                "no provider token: set YARD_PROVIDER_TOKEN, `token_file`, or `token`. \
+                "no provider token: set PROVIDER_TOKEN, `token_file`, or `token`. \
                  Issue one under /admin/providers in the coordinator."
             );
         }

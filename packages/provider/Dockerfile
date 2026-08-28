@@ -52,10 +52,6 @@ FROM debian:bookworm-slim AS runtime
 
 # ca-certificates is required, not optional: the control plane and the JWKS
 # fetch both use the OS trust store (see reqwest's rustls-native-certs).
-#
-# adb is the Android backend's one host dependency. The scrcpy server needs no
-# install — it is embedded in the binary and pushed to the phone at session
-# start — and iOS needs only usbmuxd, which is the host's.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates adb \
  && rm -rf /var/lib/apt/lists/* \
@@ -65,17 +61,10 @@ COPY --from=builder /build/target/release/yard-provider /usr/local/bin/yard-prov
 COPY packages/provider/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-# Runs as root, unlike the coordinator: on Linux the container owns the USB bus,
-# and the /dev/bus/usb
-# nodes are root-owned — `privileged` grants the device access, not the file
-# permission. The adb server needs to write to them, so it has to be root. The
-# process still has nothing on disk worth reaching: the only writable path is
-# the scratch tmpfs, which nothing outlives an install in.
+# adb needs root access to the USB nodes.
 EXPOSE 7100
-ENV YARD_CONFIG=/etc/yard/provider.yaml
+ENV PROVIDER_CONFIG=/etc/yard/provider.yaml
 
-# Self-probe: the session plane is what browsers depend on, so that is what
-# health means here.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD ["/usr/local/bin/yard-provider", "--config", "/etc/yard/provider.yaml", "--check"]
 

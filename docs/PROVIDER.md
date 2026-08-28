@@ -33,7 +33,7 @@ packages/provider/
 cargo build --release -p yard-provider
 
 # Register a provider and issue a token under /admin/providers first.
-YARD_PROVIDER_TOKEN=pft_… \
+PROVIDER_TOKEN=pft_… \
   ./target/release/yard-provider --config packages/provider/provider.example.yaml
 ```
 
@@ -63,7 +63,7 @@ src/
 
 ### Config
 
-One real YAML file. Token precedence is `YARD_PROVIDER_TOKEN` > `token_file` >
+One real YAML file. Token precedence is `PROVIDER_TOKEN` > `token_file` >
 inline `token`, so a secret need never sit in the file. Unknown keys are
 rejected rather than ignored — a typo in a device stanza should not silently
 mean "no devices".
@@ -678,8 +678,62 @@ The builder uses the stub-source dependency-cache trick from
 
 The runtime stage runs as **root**, unlike the coordinator's. `privileged: true`
 grants access to the USB devices, not permission on them — the `/dev/bus/usb`
-nodes are root-owned, and the adb server has to write to them. The entrypoint
-starts that server; the container's only writable path is the scratch tmpfs.
+nodes are root-owned, and the daemons have to write to them. The container's
+only writable path is the scratch tmpfs.
+
+### The USB daemons
+
+Neither backend owns a USB transport itself. The provider entrypoint starts adb
+for Android. The base Compose file runs usbmuxd in a small sidecar. The provider
+stays on the Docker network that Caddy uses.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `PROVIDER_START_ADB` | `auto` | Start an adb server. `auto` means "if `/dev/bus/usb` is mounted"; `yes`/`no` override it. The macOS overlay sets `no`. |
+
+The sidecar replaces the host usbmuxd, so mask the host service once with
+`systemctl mask --now usbmuxd.service`. This avoids two daemons competing for
+the same devices.
+
+The sidecar runs usbmuxd without `-z`, so it stays up with no devices attached.
+It joins the host network namespace, where libusb receives the host udev
+daemon's hot-plug events. Its socket lives in the `usbmuxd-socket` volume. The
+provider mounts that volume at `/run/yard-usbmuxd` and uses
+`USBMUXD_SOCKET_ADDRESS=UNIX:/run/yard-usbmuxd/usbmuxd`. Sharing the directory
+rather than one socket inode makes a replacement visible after a sidecar
+restart.
+
+The provider remains on the default Compose network, so Caddy can proxy
+`provider:7100`. Only usbmuxd uses host networking, and it exposes no TCP
+listener.
+
+Do not bind-mount the host's `/var/run/usbmuxd` socket. Docker pins the socket
+inode, so the provider keeps a stale mount when the host daemon replaces it. If
+the socket is absent at container creation, Docker may also create a directory
+at that path and prevent the host daemon from binding there.
+
+adb needs none of this. Its server walks `/dev/bus/usb` itself once a second
+rather than asking libusb, so it sees a replug the way it would on a host.
+
+The sidecar's `/var/lib/lockdown` is a volume for the same reason
+`/root/.android` is. It holds the `SystemBUID`/`HostID` this host pairs under and
+one pair record per device, so a container that starts with an empty one is a
+*new* computer to every iPhone in the rack — each of them asking to Trust This
+Computer again, by hand, at the device.
+
+### One provider per platform on a single host
+
+Two providers on one machine — one Android, one iOS — is a supported shape and
+does not fight over the bus. A claim is per USB *interface*, and the two daemons
+open disjoint devices: adb opens what advertises the adb interface, usbmuxd only
+Apple's VID. Disable adb in an iOS-only provider:
+
+```yaml
+environment:
+  PROVIDER_START_ADB: "no"
+```
+
+Give each provider its own `id`, `bind` port and `remote_debug.ports` range.
 
 ## Testing
 
