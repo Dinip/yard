@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.2.0](https://github.com/Dinip/yard/compare/v0.1.2...v0.2.0) (2026-08-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* **provider:** provider environment variables lose the `YARD_` prefix. `YARD_PROVIDER_TOKEN` becomes `PROVIDER_TOKEN`, `YARD_LOG` becomes `PROVIDER_LOG_LEVEL`, and `YARD_CONFIG` becomes `PROVIDER_CONFIG`. Rename these variables before pulling the new provider image.
+
+### Features
+
+* **provider:** isolate usbmuxd in a sidecar ([#46](https://github.com/Dinip/yard/issues/46)) ([6ae4f28](https://github.com/Dinip/yard/commit/6ae4f28b22635edbd8773b45183e49206ec2eafb))
+* **web:** highlight the devices you hold in the list ([#43](https://github.com/Dinip/yard/issues/43)) ([d3c0d5f](https://github.com/Dinip/yard/commit/d3c0d5f3eef08a8cebc32881219b17d17bb55c4a))
+* **web:** put the reserve action in the middle of a free device's page ([#45](https://github.com/Dinip/yard/issues/45)) ([925b094](https://github.com/Dinip/yard/commit/925b094339c925b88fb1fdd93dde3157caf2ed38))
+
+
+### Bug Fixes
+
+* **web:** release lost iOS edge swipes ([#47](https://github.com/Dinip/yard/issues/47)) ([5bfe36d](https://github.com/Dinip/yard/commit/5bfe36df998a8023b513c2064c1c5616373e260a))
+
 ## [0.1.2](https://github.com/Dinip/yard/compare/v0.1.1...v0.1.2) (2026-08-26)
 
 
