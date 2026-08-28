@@ -5,15 +5,17 @@
 //! Not a test: it needs hardware, and it needs the provider **stopped**, since
 //! it builds its own CoreDevice tunnel to the same device.
 //!
-//! It exists because `list_apps` is the one CoreDevice request whose accepted
-//! shape has already changed under us: iOS 26 added a required
-//! `requireContainerAccess` key to the options dictionary and refuses anything
-//! without it (NSCocoaErrorDomain 4865). See `src/app_list.rs`. When a new iOS
-//! breaks app listing again, this is the shortest path from "the audit row has
-//! a plist dump in it" to knowing which key the device wants.
+//! It exists because app listing is the one CoreDevice request whose accepted
+//! shape has already changed under us twice: iOS 26 added required option keys
+//! and refuses anything without them (NSCocoaErrorDomain 4865), and the
+//! one-shot listing hangs on a real app list, so `apps()` streams. See the
+//! app-listing section of docs/PROVIDER.md. When a new iOS breaks it again,
+//! this is the shortest path from "the audit row has a plist dump in it" to
+//! knowing what the device wants.
 
 use std::time::Duration;
 
+use backend_ios::ddi::{DdiCache, DdiConfig};
 use backend_ios::{IosBackend, IosOptions};
 use provider_core::backend::DeviceBackend as _;
 
@@ -30,10 +32,18 @@ async fn main() -> anyhow::Result<()> {
             udid: udid.clone(),
             display_id: 0,
             motion_idr: false,
-            // The probe runs against a device that is already streaming, so it
-            // has no business mounting anything.
-            auto_mount_ddi: false,
-            ddi: None,
+            // `ensure_mounted` looks the image up before it does anything, so
+            // this is a no-op against a device the provider already mounted and
+            // the one step that makes the probe work on a bare machine — an
+            // unmounted phone offers no `com.apple.coredevice.*` service at all.
+            auto_mount_ddi: true,
+            ddi: Some(DdiCache::new(DdiConfig {
+                enabled: true,
+                // Not the packaged default: that is a path a provider host owns,
+                // and the probe is run by hand from a checkout.
+                cache_dir: std::env::temp_dir().join("yard-ddi"),
+                ..DdiConfig::default()
+            })),
         },
         None,
     );

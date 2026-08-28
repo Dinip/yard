@@ -1379,9 +1379,8 @@ dependencies = [
 
 [[package]]
 name = "idevice"
-version = "0.1.65"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7484b3a39a089068167a8ab0b3da6a05b5f6f8969daf1a893da1c7087cb2e09a"
+version = "0.1.66"
+source = "git+https://github.com/jkcoxson/idevice?tag=v0.1.66#c65dfbf17b888c5795f17ea3e3dad60e6737252c"
 dependencies = [
  "aes",
  "async-stream",
@@ -1405,7 +1404,6 @@ dependencies = [
  "plist",
  "plist-macro",
  "rand 0.10.2",
- "reqwest",
  "rsa",
  "rustls",
  "serde",
@@ -1419,6 +1417,7 @@ dependencies = [
  "tracing",
  "uuid",
  "web-time",
+ "webpki-roots",
  "x25519-dalek",
  "x509-cert",
 ]
@@ -1500,9 +1499,9 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "jktcp"
-version = "0.1.6"
+version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "54408d8a86952b9f1cc009782ad7bbb4007a7caaba0599db441e0eae8785288c"
+checksum = "4d3b9e59938be47d261173086c65a9352fe048951bc502109e7595b70b60cd98"
 dependencies = [
  "futures",
  "getrandom 0.3.4",
@@ -3358,6 +3357,15 @@ name = "webpki-root-certs"
 version = "1.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b96554aa2acc8ccdb7e1c9a58a7a68dd5d13bccc69cd124cb09406db612a1c9b"
+dependencies = [
+ "rustls-pki-types",
+]
+
+[[package]]
+name = "webpki-roots"
+version = "1.0.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7dcd9d09a39985f5344844e66b0c530a33843579125f23e21e9f0f220850f22a"
 dependencies = [
  "rustls-pki-types",
 ]

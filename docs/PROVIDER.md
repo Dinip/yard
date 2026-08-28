@@ -270,16 +270,17 @@ crates/backend-ios/src/
 ├── media.rs     RTP in, RTCP out, access units — carried over verbatim
 ├── hevc.rs      RFC 7798 depacketisation, hvcC, codec string, frame size
 ├── hid.rs       touch, keyboard, hardware buttons, rotation
-├── app_list.rs  listing apps on iOS 26+, where idevice cannot
 └── lib.rs       the pointer state machine and the DeviceBackend impl
 ```
 
-### Listing apps needs three keys idevice does not send
+### Listing apps is a stream, not one answer
 
-`AppServiceClient::list_apps` cannot talk to iOS 26 or later. The device decodes
-the request's options dictionary into a struct that gained three required keys,
-and refuses the request outright without them — one at a time, so finding them
-is an iteration:
+`AppServiceClient::list_apps` cannot list apps on a real phone, for two reasons
+that had to be found one at a time.
+
+**iOS 26 added three required option keys.** The device decodes the request's
+options dictionary into a struct that gained them, and refuses the request
+outright without them — one at a time, so finding them was an iteration:
 
 ```text
 NSCocoaErrorDomain 4865 — "Expected to find key requireContainerAccess."
@@ -287,32 +288,27 @@ NSCocoaErrorDomain 4865 — "Expected to find key requireContainerAccess."
                           "Expected to find key includeContainerPaths."
 ```
 
-idevice 0.1.65 sends the five older keys only, and keeps `AppServiceClient`'s
-transport private, so `app_list.rs` is a second, minimal client onto the same
-service that sends all eight. All three additions are sent as `false`: the farm
-wants bundle ids, and it is the *keys* the device requires, not what they ask
-for. Delete the module when the crate sends them itself.
+All three are sent as `false`: the farm wants bundle ids, and it is the *keys*
+the device requires, not what they ask for. idevice sends them as of 0.1.66.
 
-`examples/app_list_probe.rs` is how the three were found, and is the shortest
-path back if a later iOS adds a fourth. It needs the provider stopped, since it
-builds its own tunnel.
+**The one-shot listing never completes.** With the keys correct, an empty-scope
+request comes back instantly and one that would return actual entries hangs —
+`idevice::xpc::format` logs a short read (`Body length is 24856, but received
+bytes is 16374`) and the caller waits out `APPS_TIMEOUT`. The whole array in a
+single XPC body is not how the device wants to send it. `stream_apps`
+(`com.apple.coredevice.feature.streamapplist`) asks for the same entries over an
+XPC side channel, pushed in batches, and that is what `apps()` uses.
 
-**A device can accept the request and never answer.** Seen on an iPhone 13 on
-iOS 27, and not yet solved: with the keys correct, an empty-scope request comes
-back instantly, and one that would return actual entries never completes. Apple's
-own `devicectl device info apps` answers the same device in ~40s, so the device
-is capable of it and something about our request or transport still is not right.
+`examples/app_list_probe.rs` is how both were found, and is the shortest path
+back if a later iOS changes app listing again. It needs the provider stopped,
+since it builds its own tunnel.
 
-`apps()` is bounded at `APPS_TIMEOUT` (12s) for that reason — under the
-coordinator's 15s command timeout, so it surfaces as a device problem rather than
-as an unresponsive provider. **The bound wraps opening the service stream as well
-as the request**, because a timeout around the request alone never fires: on an
+`apps()` is bounded at `APPS_TIMEOUT` (12s) — under the coordinator's 15s
+command timeout, so a slow device surfaces as a device problem rather than as an
+unresponsive provider. **The bound wraps opening the service stream as well as
+the request**, because a timeout around the request alone never fires: on an
 unwell device the future is stuck a step earlier, in `connect_service_stream`,
 and the caller waits forever on a future that never gets polled to the timeout.
-
-The one clue not yet chased: this device's session is also unstable while idle
-(`requested a fresh IDR reason="settled"` every ~1.5s), so the tunnel carrying
-the request is not quiet.
 
 **Not to be confused with a device in the wrong state.** If the RSD handshake
 offers no `com.apple.coredevice.*` services at all — only lockdown shims and
