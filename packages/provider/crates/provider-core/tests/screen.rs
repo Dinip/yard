@@ -173,6 +173,30 @@ async fn a_device_that_fell_over_is_parked_again_when_it_comes_back() {
 }
 
 #[tokio::test]
+async fn a_wake_that_did_not_land_is_tried_again_on_the_next_one() {
+    let (supervisor, backend, _rx) = harness(true).await;
+    assert_eq!(screen_calls(&backend).await, vec![false]);
+
+    // The press fails the way it does when the device's HID surfaces are
+    // rebuilding under it. The screen is still parked, so the belief has to
+    // survive — losing it here hands the holder a black phone with nothing
+    // left that would ever light it.
+    backend
+        .state
+        .screen_power_fails
+        .store(true, Ordering::Relaxed);
+    authorize(&supervisor, "res-1").await;
+    assert_eq!(screen_calls(&backend).await, vec![false]);
+
+    backend
+        .state
+        .screen_power_fails
+        .store(false, Ordering::Relaxed);
+    authorize(&supervisor, "res-1").await;
+    assert_eq!(screen_calls(&backend).await, vec![false, true]);
+}
+
+#[tokio::test]
 async fn a_backend_that_cannot_park_is_asked_exactly_once() {
     let backend = backend_mock::MockBackend::new(DEVICE, Platform::Ios, "Mock iPhone");
     backend.state.no_screen_power.store(true, Ordering::Relaxed);

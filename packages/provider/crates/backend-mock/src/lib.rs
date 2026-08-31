@@ -133,6 +133,9 @@ pub struct MockState {
     /// Answer `set_screen_awake` with `Unsupported`, the way a backend that
     /// cannot reach the display does.
     pub no_screen_power: AtomicBool,
+    /// Fail `set_screen_awake` outright, the way a device whose HID surfaces
+    /// are mid-rebuild does.
+    pub screen_power_fails: AtomicBool,
     /// Every attempt, refusals included — `screen_power` only records the ones
     /// that got through, and "asked an unsupporting backend on every poll" is
     /// exactly the bug that distinction catches.
@@ -507,6 +510,9 @@ impl DeviceBackend for MockBackend {
             .fetch_add(1, Ordering::Relaxed);
         if self.state.no_screen_power.load(Ordering::Relaxed) {
             return Err(BackendError::Unsupported("setting screen power"));
+        }
+        if self.state.screen_power_fails.load(Ordering::Relaxed) {
+            return Err(BackendError::Failed("button: not connected".into()));
         }
         self.state.screen_power.lock().await.push(on);
         Ok(())

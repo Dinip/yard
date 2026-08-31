@@ -374,10 +374,20 @@ everything. That is also why `restart` just closes the adapter: there is no
 finer-grained restart to offer.
 
 `media.rs` is the file to leave alone. Receiver reports are not optional (the
-encoder stalls in ~20 s without them), audio is started and then ignored on
-purpose (iOS throttles a lone video client), corrupt access units are dropped
+encoder stalls in ~20 s without them), audio is started and then drained but
+never decoded (iOS throttles a lone video client, and an unread flow is
+backpressure on the adapter video shares), corrupt access units are dropped
 whole, and keyframe requests are rate-limited because the iOS 26/27 encoder
 wedges under a PLI barrage. Every constant marks a field failure.
+
+**Silence is not a stall.** iOS 27 encodes only when the screen changes, so a
+static device goes quiet for up to a minute at a time and ignores keyframe
+requests until it has something to draw. What separates that from a wedged
+encoder is the device's own RTCP, which keeps arriving through the pause: while
+it does, video gets 90 s (`IDLE_VIDEO_TIMEOUT`); once the device stops
+reporting too, 5 s (`STALL_TIMEOUT`). Keying the watchdog on frame arrival
+alone is what made an idle iPhone rebuild its tunnel every 18 s and flap
+between ready and unhealthy under a live reservation.
 
 Display geometry comes from the SPS. `mobilegestalt` — what `stf-ios-provider`
 read — answers `MobileGestaltDeprecated` on iOS 26/27, so it is a fallback for
