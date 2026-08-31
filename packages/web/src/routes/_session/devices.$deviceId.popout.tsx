@@ -84,6 +84,7 @@ function PopoutPage() {
           deviceId={deviceId}
           platform={device.platform}
           active
+          admin={me?.isAdmin}
           className="flex-1"
           controls="overlay"
           onRevoked={reportEnded}

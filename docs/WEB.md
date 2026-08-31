@@ -184,7 +184,8 @@ one control surface, not two that drift.
 
 ### Controls: one grouped list, two renderings
 
-The actions are built once as three sections — **Device** (Back, Home, Recents),
+The actions are built once as three sections — **Device** (Back, Home, Recents,
+and for an admin Volume up, Volume down, Power),
 **Screen** (Rotate, Screenshot, Record) and **Files** (Install, Files, Copy from
 device, Paste to device) — and the `controls` prop chooses how they are drawn. A
 control that exists in one rendering and not the other is how the popout ends up
@@ -221,6 +222,11 @@ not `Copy`): in the overlay it is the tooltip and the accessible name.
 would leave the key held without the up; iOS presses and releases on the down
 edge and discards the up. One shape satisfies both. Android gets `Back`, `Home`
 and `AppSwitch`; iOS gets `Home` alone, which is all the hardware it has.
+
+`VolumeUp`, `VolumeDown` and `Power` are admin-only (`admin` on `DeviceConsole`,
+in the rail and the popout overlay alike). Power locks an iPhone and blanks an
+Android screen: a device left dark reads as broken to whoever picks it up next,
+so it is offered to the people who can also get it back.
 
 `Home` on the wire is the *hardware button*. The keyboard's Home and End keys go
 as `MoveHome`/`MoveEnd`, because sending them as `Home` mapped to

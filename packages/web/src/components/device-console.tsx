@@ -9,9 +9,12 @@ import {
   House,
   type LucideIcon,
   MoreHorizontal,
+  Power,
   RotateCw,
   Square,
   Upload,
+  Volume1,
+  Volume2,
 } from "lucide-react";
 import {
   type DragEvent,
@@ -59,6 +62,7 @@ export function DeviceConsole({
   deviceId,
   platform,
   active,
+  admin = false,
   className,
   controls = "rail",
   onRevoked,
@@ -71,6 +75,7 @@ export function DeviceConsole({
   platform?: string;
   /** False when the device is not reserved by this user — no session is opened. */
   active: boolean;
+  admin?: boolean;
   className?: string;
   /**
    * `"overlay"` puts the same actions behind a corner handle over the video
@@ -330,6 +335,19 @@ export function DeviceConsole({
         { key: "home", label: "Home", icon: House, run: () => press("Home") },
         ...(platform === "android"
           ? [{ key: "recents", label: "Recents", icon: Square, run: () => press("AppSwitch") }]
+          : []),
+        // Both backends already spoke these; nothing but the buttons is new.
+        ...(admin
+          ? [
+              { key: "volume-up", label: "Volume up", icon: Volume2, run: () => press("VolumeUp") },
+              {
+                key: "volume-down",
+                label: "Volume down",
+                icon: Volume1,
+                run: () => press("VolumeDown"),
+              },
+              { key: "power", label: "Power", icon: Power, run: () => press("Power") },
+            ]
           : []),
       ],
     },

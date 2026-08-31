@@ -204,6 +204,8 @@ The vocabulary the browser sends:
 | `Home` | the **hardware** button | `KEYCODE_HOME` | HID consumer `0x40` |
 | `Back` | the hardware button | `KEYCODE_BACK` | — |
 | `AppSwitch` (or `Recents`) | task switcher | `KEYCODE_APP_SWITCH` | — |
+| `VolumeUp` / `VolumeDown` | the hardware buttons | `KEYCODE_VOLUME_UP/_DOWN` | HID consumer `0xE9`/`0xEA` |
+| `Power` (or `Lock`) | lock / screen off | `KEYCODE_POWER` | HID consumer `0x30`, held 500 ms |
 | `MoveHome` / `MoveEnd` | the **keyboard's** Home/End | `KEYCODE_MOVE_HOME/_END` | HID `0x4A`/`0x4D` |
 | `Enter`, `Backspace`, `Tab`, `Escape`, `Arrow*`, `PageUp`, `PageDown`, `Delete` | as named | ✓ | ✓ |
 
