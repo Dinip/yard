@@ -400,7 +400,10 @@ mod tests {
         let (_, lock, lock_hold) = named_button("Power").unwrap();
         let (_, held, held_hold) = named_button("PowerLongPress").unwrap();
         assert_eq!(lock, held, "the same usage; only the hold differs");
-        assert!(held_hold > lock_hold, "a lock press must not reach power-off");
+        assert!(
+            held_hold > lock_hold,
+            "a lock press must not reach power-off"
+        );
     }
 
     #[test]
