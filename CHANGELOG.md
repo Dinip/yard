@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.0](https://github.com/Dinip/yard/compare/v0.2.0...v0.3.0) (2026-08-31)
+
+
+### Features
+
+* **web:** give admins volume, lock and reboot controls ([#51](https://github.com/Dinip/yard/issues/51)) ([cc173ac](https://github.com/Dinip/yard/commit/cc173ac11e513b0b2c3c3f19bfb10f38a36dce06))
+
+
+### Bug Fixes
+
+* **provider:** stop treating a quiet iOS encoder as a stall ([#49](https://github.com/Dinip/yard/issues/49)) ([04f359a](https://github.com/Dinip/yard/commit/04f359a0e823ff4bf6fd4931dc655c02a9490ce9))
+
 ## [0.2.0](https://github.com/Dinip/yard/compare/v0.1.2...v0.2.0) (2026-08-28)
 
 
