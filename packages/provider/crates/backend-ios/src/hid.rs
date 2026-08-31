@@ -58,6 +58,11 @@ pub fn named_button(name: &str) -> Option<(u64, u64, Duration)> {
     let (usage, hold_ms) = match name.to_ascii_lowercase().as_str() {
         "home" => (0x40, 50),
         "power" | "lock" => (0x30, 500),
+        // Long enough for the device to read it as a power-off hold rather than
+        // a lock, so it puts up its own slide-to-power-off screen. What happens
+        // next is the user's, on the device's own UI — nothing here powers a
+        // phone down, because nothing here could turn it back on.
+        "powerlongpress" | "power_long_press" | "power-long-press" => (0x30, 3000),
         "volumeup" | "volume_up" | "volume-up" => (0xE9, 50),
         "volumedown" | "volume_down" | "volume-down" => (0xEA, 50),
         "mute" => (0xE2, 50),
@@ -388,6 +393,17 @@ mod tests {
     fn hardware_buttons_ignore_case() {
         assert_eq!(named_button("Home"), named_button("home"));
         assert_eq!(named_button("VolumeUp"), named_button("volume_up"));
+    }
+
+    #[test]
+    fn a_held_power_press_is_the_same_button_for_longer() {
+        let (_, lock, lock_hold) = named_button("Power").unwrap();
+        let (_, held, held_hold) = named_button("PowerLongPress").unwrap();
+        assert_eq!(lock, held, "the same usage; only the hold differs");
+        assert!(
+            held_hold > lock_hold,
+            "a lock press must not reach power-off"
+        );
     }
 
     #[test]

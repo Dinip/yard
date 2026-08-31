@@ -432,6 +432,7 @@ function DevicePage() {
             deviceId={deviceId}
             platform={device.platform}
             active
+            admin={me?.isAdmin}
             className="min-w-0 flex-1"
             onRevoked={onRevoked}
           />

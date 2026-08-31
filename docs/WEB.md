@@ -184,7 +184,8 @@ one control surface, not two that drift.
 
 ### Controls: one grouped list, two renderings
 
-The actions are built once as three sections — **Device** (Back, Home, Recents),
+The actions are built once as three sections — **Device** (Back, Home, Recents,
+and for an admin Volume up, Volume down, Lock and Reboot),
 **Screen** (Rotate, Screenshot, Record) and **Files** (Install, Files, Copy from
 device, Paste to device) — and the `controls` prop chooses how they are drawn. A
 control that exists in one rendering and not the other is how the popout ends up
@@ -221,6 +222,21 @@ not `Copy`): in the overlay it is the tooltip and the accessible name.
 would leave the key held without the up; iOS presses and releases on the down
 edge and discards the up. One shape satisfies both. Android gets `Back`, `Home`
 and `AppSwitch`; iOS gets `Home` alone, which is all the hardware it has.
+
+`VolumeUp`, `VolumeDown`, `Lock` and Reboot are admin-only (`admin` on
+`DeviceConsole`, in the rail and the popout overlay alike).
+
+**Lock is named for what it does** — it locks an iPhone and turns an Android
+panel off, both of which the same button undoes. Powering a device *down* is a
+**hold** (`ConsoleAction.hold`, 500 ms, pointer or Space/Enter), which sends
+`PowerLongPress` and leaves the device showing its own power-off UI. The
+decision is then made on the streamed screen rather than by a button here, and
+that is deliberate: nothing in software can turn a phone back on, so a farm
+where one click ends in a walk to the shelf is a farm with a trap in it.
+
+Reboot is the recoverable one, so it is a plain button — the `device.reboot`
+control command, behind a confirm dialog because it ends every session on the
+device.
 
 `Home` on the wire is the *hardware button*. The keyboard's Home and End keys go
 as `MoveHome`/`MoveEnd`, because sending them as `Home` mapped to

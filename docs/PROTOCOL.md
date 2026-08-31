@@ -204,6 +204,9 @@ The vocabulary the browser sends:
 | `Home` | the **hardware** button | `KEYCODE_HOME` | HID consumer `0x40` |
 | `Back` | the hardware button | `KEYCODE_BACK` | — |
 | `AppSwitch` (or `Recents`) | task switcher | `KEYCODE_APP_SWITCH` | — |
+| `VolumeUp` / `VolumeDown` | the hardware buttons | `KEYCODE_VOLUME_UP/_DOWN` | HID consumer `0xE9`/`0xEA` |
+| `Power` (or `Lock`) | lock / screen off | `KEYCODE_POWER` | HID consumer `0x30`, held 500 ms |
+| `PowerLongPress` | hold, so the device offers its own power-off UI | `KEYCODE_POWER` held 1.2 s | HID consumer `0x30`, held 3 s |
 | `MoveHome` / `MoveEnd` | the **keyboard's** Home/End | `KEYCODE_MOVE_HOME/_END` | HID `0x4A`/`0x4D` |
 | `Enter`, `Backspace`, `Tab`, `Escape`, `Arrow*`, `PageUp`, `PageDown`, `Delete` | as named | ✓ | ✓ |
 
@@ -213,7 +216,10 @@ typing threw the device to the launcher. There is a regression test on each side
 
 A hardware button is sent as a **down/up pair**. Android injects a keycode per
 edge and would otherwise leave the key held; iOS presses and releases on the
-down edge and discards the up. Printable characters do not use `key` at all —
+down edge and discards the up. `PowerLongPress` is the exception on Android: the
+hold *is* the message, because the power menu is on a timer between the two
+edges and a network hiccup between them would turn a hold into a tap. The
+backend holds the key itself and drops the browser's up edge. Printable characters do not use `key` at all —
 they go as `text`, which is also what carries IME output and paste.
 
 ## Artifact plane — browser → provider ✅ built

@@ -1,3 +1,4 @@
+import { useMutation } from "@tanstack/react-query";
 import {
   Camera,
   ChevronLeft,
@@ -7,11 +8,15 @@ import {
   ClipboardPaste,
   FolderOpen,
   House,
+  Lock,
   type LucideIcon,
   MoreHorizontal,
+  RefreshCw,
   RotateCw,
   Square,
   Upload,
+  Volume1,
+  Volume2,
 } from "lucide-react";
 import {
   type DragEvent,
@@ -26,6 +31,14 @@ import { DeviceFilesDialog } from "@/components/device-files-dialog";
 import { DeviceScreen } from "@/components/device-screen";
 import { SidePanel } from "@/components/side-panel";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useDeviceSession } from "@/hooks/use-device-session";
 import {
   type Corner,
@@ -44,6 +57,7 @@ import {
 } from "@/lib/screen/recorder";
 import { fetchScreenshot, installApp } from "@/lib/screen/session";
 import { loadPanelOpen, savePanelOpen } from "@/lib/side-panels";
+import { trpc } from "@/lib/trpc";
 import { cn } from "@/lib/utils";
 
 /** How far the handle must travel before a click counts as a drag. */
@@ -59,6 +73,7 @@ export function DeviceConsole({
   deviceId,
   platform,
   active,
+  admin = false,
   className,
   controls = "rail",
   onRevoked,
@@ -71,6 +86,7 @@ export function DeviceConsole({
   platform?: string;
   /** False when the device is not reserved by this user — no session is opened. */
   active: boolean;
+  admin?: boolean;
   className?: string;
   /**
    * `"overlay"` puts the same actions behind a corner handle over the video
@@ -306,6 +322,17 @@ export function DeviceConsole({
     session.send({ type: "key", key, down: false });
   };
 
+  const [rebootOpen, setRebootOpen] = useState(false);
+  const reboot = useMutation(
+    trpc.device.reboot.mutationOptions({
+      onSuccess: () => {
+        setRebootOpen(false);
+        toast.success("Rebooting — the device drops off the farm until it is back");
+      },
+      onError: (error) => toast.error(error.message),
+    }),
+  );
+
   const installInput = useRef<HTMLInputElement | null>(null);
 
   const [railOpen, setRailOpen] = useState(() => loadPanelOpen("controls"));
@@ -330,6 +357,34 @@ export function DeviceConsole({
         { key: "home", label: "Home", icon: House, run: () => press("Home") },
         ...(platform === "android"
           ? [{ key: "recents", label: "Recents", icon: Square, run: () => press("AppSwitch") }]
+          : []),
+        ...(admin
+          ? [
+              { key: "volume-up", label: "Volume up", icon: Volume2, run: () => press("VolumeUp") },
+              {
+                key: "volume-down",
+                label: "Volume down",
+                icon: Volume1,
+                run: () => press("VolumeDown"),
+              },
+              {
+                key: "lock",
+                label: "Lock",
+                icon: Lock,
+                run: () => press("Power"),
+                hold: {
+                  label: "Power menu",
+                  run: () => press("PowerLongPress"),
+                },
+              },
+              {
+                key: "reboot",
+                label: "Reboot",
+                icon: RefreshCw,
+                danger: true,
+                run: () => setRebootOpen(true),
+              },
+            ]
           : []),
       ],
     },
@@ -588,6 +643,30 @@ export function DeviceConsole({
         }}
       />
 
+      <Dialog open={rebootOpen} onOpenChange={setRebootOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Reboot this device?</DialogTitle>
+            <DialogDescription>
+              It goes away while it restarts and comes back on its own. Anyone in this session loses
+              it until then.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setRebootOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={reboot.isPending}
+              onClick={() => reboot.mutate({ deviceId })}
+            >
+              Reboot
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <DeviceFilesDialog
         deviceId={deviceId}
         platform={platform}
@@ -610,7 +689,12 @@ type ConsoleAction = {
   icon: LucideIcon;
   run: () => void;
   danger?: boolean;
+  /** Press and hold instead of clicking; the click does not also fire. */
+  hold?: { label: string; run: () => void };
 };
+
+/** How long a press has to last to count as a hold. */
+const HOLD_MS = 500;
 
 type ConsoleSection = { key: string; label: string; actions: ConsoleAction[] };
 
@@ -630,15 +714,58 @@ function ActionButton({
   /** The rail spells the action out; the popout overlay has no room to. */
   labelled?: boolean;
 }) {
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const held = useRef(false);
+
+  const startHold = () => {
+    if (!action.hold || timer.current) return;
+    held.current = false;
+    timer.current = setTimeout(() => {
+      timer.current = null;
+      held.current = true;
+      action.hold?.run();
+    }, HOLD_MS);
+  };
+
+  const cancelHold = () => {
+    if (!timer.current) return;
+    clearTimeout(timer.current);
+    timer.current = null;
+  };
+
+  useEffect(
+    () => () => {
+      if (timer.current) clearTimeout(timer.current);
+    },
+    [],
+  );
+
+  const title = action.hold ? `${action.label} — hold for ${action.hold.label}` : action.label;
+
   return (
     <Button
       variant="ghost"
       size={labelled ? "sm" : "icon"}
       disabled={disabled}
-      title={action.label}
+      title={title}
       // Redundant where the label is on screen, and a duplicate announcement.
-      aria-label={labelled ? undefined : action.label}
-      onClick={action.run}
+      aria-label={labelled ? undefined : title}
+      onPointerDown={startHold}
+      onPointerUp={cancelHold}
+      onPointerLeave={cancelHold}
+      onPointerCancel={cancelHold}
+      onKeyDown={(event) => {
+        if (!event.repeat && (event.key === " " || event.key === "Enter")) startHold();
+      }}
+      onKeyUp={cancelHold}
+      onClick={() => {
+        cancelHold();
+        if (held.current) {
+          held.current = false;
+          return;
+        }
+        action.run();
+      }}
       className={cn(labelled && "w-full justify-start", action.danger && "text-destructive")}
     >
       <action.icon className="size-4" />

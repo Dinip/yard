@@ -44,6 +44,14 @@ use crate::scrcpy::{ScrcpyOptions, ScrcpySession};
 /// rebooting device does not spin the loop.
 const RECONNECT_DELAY: Duration = Duration::from_secs(5);
 
+/// How long `PowerLongPress` holds KEYCODE_POWER down.
+///
+/// The framework's power menu is on a timer started by the down edge and
+/// cancelled by the up, so holding is the whole mechanism — comfortably past
+/// the 500 ms global-action timeout, and short enough that the session's other
+/// input is not left waiting.
+const POWER_HOLD: Duration = Duration::from_millis(1200);
+
 /// How long a request waits for a session before giving up.
 const SESSION_WAIT: Duration = Duration::from_secs(20);
 
@@ -392,6 +400,16 @@ impl DeviceBackend for AndroidBackend {
             InputEvent::PointerDown { .. }
             | InputEvent::PointerMove { .. }
             | InputEvent::PointerUp { .. } => self.pointer_event(&event).await,
+
+            // Held here rather than sent as two edges from the browser: the
+            // menu depends on the gap between them, and a network hiccup
+            // between a down and an up must not turn a hold into a tap. The up
+            // edge the browser still sends is dropped by the lookup below.
+            InputEvent::Key { key, down: true } if key == "PowerLongPress" => {
+                self.send_control(scrcpy::keycode(0, KEYCODE_POWER)).await?;
+                tokio::time::sleep(POWER_HOLD).await;
+                self.send_control(scrcpy::keycode(1, KEYCODE_POWER)).await
+            }
 
             InputEvent::Key { key, down } => {
                 let Some(code) = keycode_for(key) else {
@@ -1043,6 +1061,8 @@ pub fn parse_battery_state(dump: &str) -> Option<String> {
 ///
 /// Named keys only: printable characters arrive as `text` and go through
 /// `INJECT_TEXT`, which handles anything a keycode table cannot express.
+pub const KEYCODE_POWER: u32 = 26;
+
 pub fn keycode_for(key: &str) -> Option<u32> {
     Some(match key {
         "Enter" => 66,
@@ -1066,7 +1086,7 @@ pub fn keycode_for(key: &str) -> Option<u32> {
         "Home" => 3,
         "Back" => 4,
         "AppSwitch" | "Recents" => 187,
-        "Power" => 26,
+        "Power" => KEYCODE_POWER,
         "VolumeUp" => 24,
         "VolumeDown" => 25,
         _ => return None,
@@ -1260,6 +1280,14 @@ mod tests {
         assert_eq!(keycode_for("End"), None, "the browser sends MoveEnd");
         assert_eq!(keycode_for("Back"), Some(4));
         assert_eq!(keycode_for("AppSwitch"), keycode_for("Recents"));
+    }
+
+    #[test]
+    fn a_held_power_press_is_not_a_keycode() {
+        // It is a down, a wait and an up, so the table must not answer for it —
+        // and the up edge the browser sends alongside must fall through here.
+        assert_eq!(keycode_for("PowerLongPress"), None);
+        assert_eq!(keycode_for("Power"), Some(KEYCODE_POWER));
     }
 
     #[test]
