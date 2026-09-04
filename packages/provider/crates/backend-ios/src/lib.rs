@@ -19,7 +19,6 @@
 //! tunnel unreliable below that, and the backend fails loudly at session
 //! bring-up rather than half-working.
 
-pub mod app_list;
 pub mod ddi;
 pub mod device;
 pub mod hevc;
@@ -33,6 +32,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
+use futures::StreamExt as _;
 use idevice::core_device::{
     AppServiceClient, ImageFormat, PasteboardPayload, PasteboardServiceClient, RotationDirection,
     ScreenCaptureServiceClient, GENERAL_PASTEBOARD,
@@ -52,7 +52,6 @@ use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 use yard_protocol::{AppInfo, Display, FileEntry, FileKind, FileListing, Platform};
 
-use crate::app_list::AppList;
 use crate::device::{connect_service, DeviceHost};
 use crate::hid::Input;
 
@@ -1014,11 +1013,27 @@ impl DeviceBackend for IosBackend {
         let listed = tokio::time::timeout(APPS_TIMEOUT, async {
             let session = self.session().await?;
             let mut adapter = session.adapter;
-            let mut client = connect_service!(AppList, &mut adapter, &session.handshake)?;
-            client
-                .list_apps()
-                .await
-                .map_err(|err| BackendError::Failed(format!("list apps: {err:?}")))
+            let mut client = connect_service!(
+                AppServiceClient<Box<dyn ReadWrite>>,
+                &mut adapter,
+                &session.handshake
+            )?;
+            // Streamed rather than `list_apps`: the one-shot listing answers
+            // with the whole array in a single XPC body, which a phone with a
+            // few hundred apps never finishes sending — the reader logs a
+            // short body and the request hangs until the timeout below. The
+            // streamed feature pushes the same entries in batches instead.
+            // Third-party apps only, which is every caller's question here:
+            // the farm uninstalls what a session installed and clears what it
+            // is told to, and neither can touch a system app.
+            let apps = client.stream_apps(false, true, false, false, false);
+            futures::pin_mut!(apps);
+            let mut listed: Vec<idevice::core_device::AppListEntry> = Vec::new();
+            while let Some(app) = apps.next().await {
+                listed
+                    .push(app.map_err(|err| BackendError::Failed(format!("list apps: {err:?}")))?);
+            }
+            BackendResult::Ok(listed)
         })
         .await;
 

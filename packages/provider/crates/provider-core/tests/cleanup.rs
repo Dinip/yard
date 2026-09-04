@@ -141,7 +141,12 @@ async fn ids(backend: &backend_mock::MockBackend) -> Vec<String> {
 }
 
 async fn install_one(backend: &backend_mock::MockBackend, name: &str) {
-    let path = std::env::temp_dir().join(format!("farm-cleanup-test-{name}"));
+    // Unique per call: these tests run concurrently in one process and several
+    // stage the same file name, so a shared path means one test's cleanup
+    // deletes the staged file another is still installing from.
+    static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let path = std::env::temp_dir().join(format!("farm-cleanup-test-{seq}-{name}"));
     tokio::fs::write(&path, b"apk").await.unwrap();
     backend
         .install(&path, &provider_core::backend::NullProgress)
