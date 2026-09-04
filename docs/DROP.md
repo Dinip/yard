@@ -1,6 +1,9 @@
 # YARD Drop implementation plan
 
-> Status: proposed. The companion app and its web UI do not exist yet.
+> Status: the Android app receives shares and saves them to the device
+> (increments 0 through 7). The browser inbox, its web UI and everything iOS are
+> still plans. The real-device checks in increment 7 are the one part of the
+> Android work that only a provisioned handset can sign off.
 
 YARD Drop is a first-party Flutter companion that appears as an Android share
 target. It accepts file attachments from any app and gives the tester two
@@ -599,8 +602,8 @@ Android instrumentation tests use a test `ContentProvider` that can return:
 - A URI without a read grant.
 - A large generated stream without retaining it in memory.
 
-Run instrumentation tests on API level 29 and a recent Android level used by
-the farm.
+Instrumentation tests live in `apps/yard_drop/android/app/src/androidTest`, and
+CI runs them on API 29 and API 35 under the emulator.
 
 ### Real-device checks
 
@@ -619,7 +622,8 @@ large files and cancellation during ingestion.
 
 - Build an internally signed APK.
 - Install it before a reservation begins so it belongs to the device baseline.
-- Add `/sdcard/Download/YARD Drop` to the device's `cleanup_paths`.
+- Cover `/sdcard/Download/YARD Drop` in the device's `cleanup_paths`, which
+  `/sdcard/Download` already does.
 - Confirm the farm cleanup policy enables folder wiping.
 - Verify that releasing a reservation removes every saved and staged public
   file while leaving the companion installed.

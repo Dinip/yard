@@ -35,6 +35,20 @@ flutter run              # a connected Android device or emulator
 flutter build apk --debug
 ```
 
+The share receiver itself is only true on a device, so it is covered by
+instrumentation tests rather than Dart ones. A fake `ContentProvider` in the
+test APK serves the streams a real sender produces, including the awkward ones:
+no display name, no size, a stream that dies partway, a URI the app may not
+read.
+
+```bash
+flutter build apk --debug        # the Gradle test task needs Flutter's assets
+cd android && ./gradlew :app:connectedDebugAndroidTest
+```
+
+CI runs them on API 29 and API 35. One test stages a 64 MB share to prove the
+copy loop never holds a file in memory, so an emulator needs room for it.
+
 The version comes from the root release: release-please writes the same
 semantic version into `pubspec.yaml` that it writes to the TypeScript packages
 and the Cargo workspace. CI supplies the build number and commit:
@@ -48,3 +62,43 @@ flutter build apk \
 ```
 
 A local build shows `dev+0 (local)` on the About screen instead.
+
+## Farm provisioning
+
+YARD Drop belongs to a device's baseline, not to a session. Install it before a
+reservation begins:
+
+```bash
+adb install -r build/app/outputs/flutter-apk/app-release.apk
+```
+
+Installing it during a session makes it an app the session installed, and
+cleanup uninstalls it on release along with everything else the user added.
+
+Saved files go to `Download/YARD Drop/Saved`, which is user-visible and outlives
+a reservation on its own. Add it to the device's `cleanup_paths` in the
+provider's YAML so a release wipes it, unless the device already wipes all of
+`/sdcard/Download`:
+
+```yaml
+devices:
+  - udid: R5CT30XXXXX
+    backend: android
+    cleanup_paths:
+      - /sdcard/Download/YARD Drop
+```
+
+Wiping folders is off by default farm-wide, so also enable `cleanup.wipeFolders`
+in `/admin/settings`. Without it the path is configured and never used. See
+[docs/CLEANUP.md](../../docs/CLEANUP.md).
+
+Staged files never reach that folder. They live in the app's private cache and
+are removed when a share is answered for, or 24 hours later at the latest, so a
+reservation ending mid-share leaves nothing readable to the next user.
+
+After provisioning a device, confirm on it that:
+
+- The share sheet offers `YARD - Device Farm` from Files, Photos and a browser
+  download.
+- A saved file appears under `Download/YARD Drop/Saved` in the Files app.
+- Releasing the reservation empties that folder and leaves the app installed.

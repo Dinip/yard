@@ -197,11 +197,16 @@ configured to wipe `/system` fails at startup rather than on a device:
 devices:
   - udid: R5CT30XXXXX
     backend: android
-    options:
-      cleanup_paths:
-        - /sdcard/Download
-        - /sdcard/DCIM/Camera
+    cleanup_paths:
+      - /sdcard/Download
+      - /sdcard/DCIM/Camera
 ```
+
+A device running the YARD Drop companion needs its saved folder covered, which
+`/sdcard/Download` already does. A farm that wipes something narrower has to
+name `/sdcard/Download/YARD Drop` itself, or a tester's files wait there for
+whoever reserves the device next. See
+[apps/yard_drop/README.md](../apps/yard_drop/README.md).
 
 The provider intersects the coordinator's step set with what its backend
 supports and what its own config allows. A step nobody configured is a no-op,
