@@ -411,10 +411,15 @@ function Detail({ entry }: { entry: AuditEntry }) {
   const metadata = entry.metadata as Record<string, unknown> | null;
   if (!metadata) return <span className="text-muted-foreground">—</span>;
 
-  if (entry.action === "device.install") {
+  if (
+    entry.action === "device.install" ||
+    entry.action === "device.preload" ||
+    entry.action === "device.preload.remove" ||
+    entry.action === "device.file_pull"
+  ) {
     return (
       <span className="text-xs">
-        {String(metadata.filename ?? "unknown")}
+        {String(metadata.filename ?? metadata.path ?? "unknown")}
         {typeof metadata.size === "number" && ` · ${formatBytes(metadata.size)}`}
         {metadata.ok === false && <span className="ml-1 text-destructive">failed</span>}
       </span>
@@ -432,9 +437,9 @@ function Detail({ entry }: { entry: AuditEntry }) {
 /**
  * The whole record, for when the row's one line was not enough.
  *
- * Every value here is shown in full and is selectable: an install's sha256 is
- * the only surviving trace of a file that was deleted after it was installed,
- * so it must be copyable, not merely visible.
+ * Every value here is shown in full and is selectable: an install's sha256
+ * identifies the exact package, whether it was a transient session install or
+ * a retained preload, so it must be copyable, not merely visible.
  */
 function AuditEntryDialog({ entry, onClose }: { entry: AuditEntry | null; onClose: () => void }) {
   const metadata = entry?.metadata as Record<string, unknown> | null | undefined;
@@ -465,7 +470,7 @@ function AuditEntryDialog({ entry, onClose }: { entry: AuditEntry | null; onClos
             <Row label="Detail">
               {metadata ? (
                 <pre className="max-h-80 overflow-auto rounded bg-muted p-3 font-mono text-xs">
-                  {JSON.stringify(metadata, null, 2)}
+                  {JSON.stringify(formatAuditMetadata(metadata), null, 2)}
                 </pre>
               ) : (
                 <span className="text-muted-foreground">—</span>
@@ -485,6 +490,23 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
       <div className="min-w-0">{children}</div>
     </div>
   );
+}
+
+/** Keep byte counts readable in the audit dialog. */
+function formatAuditMetadata(value: unknown, key?: string): unknown {
+  if (key === "size" && typeof value === "number") {
+    return formatBytes(value);
+  }
+  if (Array.isArray(value)) return value.map((item) => formatAuditMetadata(item));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([entryKey, entryValue]) => [
+        entryKey,
+        formatAuditMetadata(entryValue, entryKey),
+      ]),
+    );
+  }
+  return value;
 }
 
 function formatBytes(size: number) {

@@ -59,8 +59,8 @@ export const SETTINGS = {
   },
 
   /**
-   * Resetting a device between users. Off until an admin turns it on, because
-   * what counts as "clean" depends on what the devices are for — see
+   * Ordinary device reset steps between users. Protected preload verification
+   * still runs on every provider cleanup pass, even when this is off — see
    * docs/CLEANUP.md.
    */
   "cleanup.enabled": { schema: z.boolean(), default: () => false },

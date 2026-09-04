@@ -3,6 +3,8 @@ import { calculateJwkThumbprint, exportJWK, generateKeyPair, importPKCS8, SignJW
 import { env } from "../env.ts";
 
 const ALG = "EdDSA";
+/** Bulk deployment can queue many providers behind the browser's concurrency limit. */
+const PRELOAD_TOKEN_TTL = 10 * 60;
 
 /**
  * Ed25519 signer for session tokens (browser → provider).
@@ -55,6 +57,13 @@ export interface SessionTokenInput {
   providerId: string;
 }
 
+export interface PreloadTokenInput {
+  deviceId: string;
+  userId: string;
+  providerId: string;
+  platform: "ios" | "android";
+}
+
 export async function signSessionToken(input: SessionTokenInput): Promise<{
   token: string;
   expiresAt: Date;
@@ -68,6 +77,45 @@ export async function signSessionToken(input: SessionTokenInput): Promise<{
     reservationId: input.reservationId,
     providerId: input.providerId,
   } satisfies Omit<SessionTokenClaims, "iss" | "sub" | "aud" | "exp" | "iat">)
+    .setProtectedHeader({ alg: ALG, kid: keys.publicJwk.kid })
+    .setIssuer(env.PUBLIC_URL)
+    .setSubject(input.userId)
+    .setAudience(SESSION_TOKEN_AUDIENCE)
+    .setIssuedAt(now)
+    .setExpirationTime(exp)
+    .sign(keys.privateKey);
+
+  return { token, expiresAt: new Date(exp * 1000) };
+}
+
+/**
+ * Signs a grant for the provider's idle-device preload endpoint.
+ *
+ * It deliberately has no reservation. The provider checks the `preload` scope
+ * and refuses the request whenever a session is active, so an admin can deploy
+ * to a free device without creating a reservation that cleanup would remove.
+ */
+export async function signPreloadToken(input: PreloadTokenInput): Promise<{
+  token: string;
+  expiresAt: Date;
+}> {
+  const now = Math.floor(Date.now() / 1000);
+  // Longer than a session token because a large deployment receives grants in
+  // one batch but uploads them with bounded parallelism. It is still short
+  // lived, admin-only, device-scoped, and accepted only while the device is
+  // idle.
+  const exp = now + Math.max(env.SESSION_TOKEN_TTL, PRELOAD_TOKEN_TTL);
+
+  const token = await new SignJWT({
+    deviceId: input.deviceId,
+    userId: input.userId,
+    // The claim remains present because providers share the session-claims
+    // decoder. It has no meaning for a preload grant.
+    reservationId: "",
+    providerId: input.providerId,
+    scope: "preload",
+    platform: input.platform,
+  })
     .setProtectedHeader({ alg: ALG, kid: keys.publicJwk.kid })
     .setIssuer(env.PUBLIC_URL)
     .setSubject(input.userId)

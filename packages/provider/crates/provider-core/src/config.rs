@@ -17,6 +17,9 @@ fn default_bind() -> String {
 fn default_scratch() -> PathBuf {
     PathBuf::from("/var/lib/yard/scratch")
 }
+fn default_preload_dir() -> PathBuf {
+    PathBuf::from("/var/lib/yard/preloads")
+}
 fn default_max_upload_mb() -> u64 {
     2048
 }
@@ -79,6 +82,11 @@ pub struct Config {
     /// a good choice — nothing here is meant to outlive an install.
     #[serde(default = "default_scratch")]
     pub scratch_dir: PathBuf,
+
+    /// Durable packages and the manifest for farm-protected preloads. This
+    /// directory must live on storage that survives provider restarts.
+    #[serde(default = "default_preload_dir")]
+    pub preload_dir: PathBuf,
 
     #[serde(default = "default_max_upload_mb")]
     pub max_upload_mb: u64,

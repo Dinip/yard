@@ -4,10 +4,13 @@ A device released by one user must not arrive at the next one carrying their
 apps, their signed-in accounts, their files and their rotated screen. Cleanup is
 the step between `busy` and `ready`.
 
-It is **off by default**. Turning it on is a farm-wide policy decision made in
-`/admin/settings`, because what counts as "clean" depends on what the devices
-are for — a farm of scratch handsets wants everything wiped, a farm with a
-preinstalled test harness on every phone does not.
+The configurable reset steps are **off by default as a group**. Turning them
+on is a farm-wide policy decision made in `/admin/settings`, because what counts
+as "clean" depends on what the devices are for — a farm of scratch handsets
+wants everything wiped, a farm with a preinstalled test harness on every phone
+does not. The provider still receives a cleanup pass for every connected device
+so it can verify and restore protected preloads before the device is offered to
+the next user.
 
 ## What STF does
 
@@ -97,8 +100,10 @@ A device stuck in `cleaning` is worse than a dirty device: it is invisible
 inventory. Two independent guards, either of which is sufficient:
 
 - **On the provider**, the cleanup task runs under a `tokio::time::timeout`.
-  Success, step failure, or deadline, it ends by setting the device `ready` —
-  or `unhealthy`, if the backend says so. The task cannot exit any other way.
+  Ordinary step failure is reported and the device can return to `ready` if the
+  backend is healthy. A protected preload that cannot be checked or restored
+  instead leaves the device `unhealthy`, so the farm does not offer a device
+  without its required app. The task cannot exit without a final status.
 - **On the coordinator**, a reaper sweep alongside the three reservation sweeps
   forces any device that has sat in `cleaning` for longer than the configured
   timeout plus a minute back to `ready`, with a warning. This covers a provider
@@ -134,8 +139,10 @@ if that turns out to matter in practice.
 | Clear data of surviving third-party apps | `cleanup.clearAppData` | **off** | `pm clear` | unsupported |
 | Wipe configured scratch directories | `cleanup.wipeFolders` | **off** | `rm -rf` per entry | staged `.ipa` |
 
-Plus `cleanup.enabled` (off), `cleanup.timeoutSeconds` (120), and the two
-pattern lists that scope `clearAppData` below.
+Plus `cleanup.enabled` (off), which enables the ordinary reset steps,
+`cleanup.timeoutSeconds` (120), and the two pattern lists that scope
+`clearAppData` below. Protected preload verification is not controlled by this
+toggle.
 
 `clearAppData` is off by default because `pm list packages -3` includes anything
 the organisation preinstalled — a test harness, an MDM agent — and wiping its
@@ -180,9 +187,12 @@ the remaining steps still run.
 
 ## Where configuration lives, and why it is split
 
-**Which steps run** is farm-wide policy, so it lives in the coordinator's
-settings table and is edited in `/admin/settings` like the reservation policy
-next to it. The coordinator sends the enabled set with each `device.cleanup`.
+**Which ordinary steps run** is farm-wide policy, so it lives in the
+coordinator's settings table and is edited in `/admin/settings` like the
+reservation policy next to it. The coordinator sends the enabled set with each
+`device.cleanup`; it sends that pass even when the ordinary steps are disabled,
+because protected preload verification is part of the provider's release
+boundary.
 The `clearAppData` patterns go with it: the worst a wrong pattern can do is
 clear an app's data or fail to, which is the step's own blast radius and not a
 wider one.
@@ -211,9 +221,9 @@ not an error.
 
 Every completed cleanup writes one `device.cleanup` audit row, visible under
 Devices in `/admin/audit`, carrying what was removed, what was cleared, what was
-wiped, and any step errors. Since there is no artifact storage anywhere in this
-system, that row is the only record a cleanup ever happened — the same
-arrangement as installs.
+wiped, and any step errors. Cleanup does not copy packages into coordinator
+storage, and the row is the record that the reset happened — the same
+arrangement as session installs.
 
 ## See also
 

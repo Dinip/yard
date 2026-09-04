@@ -15,6 +15,7 @@ use provider_core::control::ControlClient;
 use provider_core::metrics::{self, MetricsCache, MetricsState};
 use provider_core::origins::WebOrigins;
 use provider_core::ports::PortPool;
+use provider_core::preload::PreloadStore;
 use provider_core::server::{self, ServerState};
 use provider_core::session::SessionRegistry;
 use provider_core::supervisor::Supervisor;
@@ -75,7 +76,10 @@ async fn main() -> Result<()> {
     }
 
     let sessions = SessionRegistry::new();
-    let mut supervisor = Supervisor::new(sessions.clone());
+    let preload_store = PreloadStore::open(config.preload_dir.clone())
+        .await
+        .context("opening the durable preload store")?;
+    let mut supervisor = Supervisor::with_preload_store(sessions.clone(), preload_store);
     supervisor.set_blank_idle_screens(config.blank_idle_screens);
 
     let debug_ports = PortPool::new(config.remote_debug.range()?);

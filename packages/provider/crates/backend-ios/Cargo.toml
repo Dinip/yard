@@ -18,6 +18,7 @@ reqwest.workspace = true
 tokio.workspace = true
 futures.workspace = true
 async-trait.workspace = true
+async_zip.workspace = true
 
 serde_json.workspace = true
 uuid.workspace = true

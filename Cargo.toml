@@ -31,6 +31,9 @@ futures = "0.3"
 # Streaming HTTP bodies for the fallback video path.
 async-stream = "0.3"
 async-trait = "0.1"
+async_zip = { version = "0.0.18", features = ["tokio", "deflate"] }
+apk-info-axml = "1.0.12"
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 # iOS device services: lockdown, CoreDevice, RSD. Pinned exactly — upstream
 # warns of breaking changes at every point release until 0.2.0

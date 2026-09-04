@@ -123,6 +123,17 @@ pub struct AppInfo {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct PreloadInfo {
+    pub device_id: String,
+    pub app_id: String,
+    pub platform: Platform,
+    pub filename: String,
+    pub size: i64,
+    pub sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CleanupSteps {
     pub uninstall_apps: bool,
     pub reset_screen: bool,
@@ -135,6 +146,14 @@ pub struct CleanupSteps {
 pub struct AppFilter {
     pub allow: Vec<String>,
     pub deny: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum InstallMode {
+    #[serde(rename = "preload")]
+    Preload,
+    #[serde(rename = "preload.repair")]
+    PreloadRepair,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -179,6 +198,8 @@ pub enum CommandPayload {
     },
     #[serde(rename = "device.uninstall", rename_all = "camelCase")]
     DeviceUninstall { device_id: String, app_id: String },
+    #[serde(rename = "device.preload.remove", rename_all = "camelCase")]
+    DevicePreloadRemove { device_id: String, app_id: String },
     #[serde(rename = "device.cleanup", rename_all = "camelCase")]
     DeviceCleanup {
         device_id: String,
@@ -222,6 +243,8 @@ pub enum ProviderMessage {
         #[serde(skip_serializing_if = "Option::is_none", default)]
         hostname: Option<String>,
         devices: Vec<DeviceSnapshot>,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        preloads: Option<Vec<PreloadInfo>>,
     },
     #[serde(rename = "heartbeat", rename_all = "camelCase")]
     Heartbeat { at: i64 },
@@ -270,6 +293,12 @@ pub enum ProviderMessage {
         ok: bool,
         #[serde(skip_serializing_if = "Option::is_none", default)]
         error: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        mode: Option<InstallMode>,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        app_id: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        platform: Option<Platform>,
     },
     #[serde(rename = "cleanup.finished", rename_all = "camelCase")]
     CleanupFinished {

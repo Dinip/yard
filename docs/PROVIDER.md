@@ -57,7 +57,8 @@ src/
 ├── control.rs     the outbound WSS to the coordinator
 ├── metrics.rs     device sampling + the Prometheus exposition
 ├── origins.rs     browser origins allowed on the browser-facing planes
-├── supervisor.rs  owns every device, routes commands
+├── preload.rs     durable protected-preload manifest and artifacts
+├── supervisor.rs  owns every device, routes commands and repairs preloads
 └── server.rs      session plane (WS) + artifact plane (HTTP)
 ```
 
@@ -70,6 +71,11 @@ mean "no devices".
 
 Validation happens at load: a missing token is a startup error, not a 401 an
 hour later.
+
+`preload_dir` defaults to `/var/lib/yard/preloads`. It contains the provider's
+durable preload manifest and package copies; put it on persistent storage. The
+ordinary `scratch_dir` can remain a tmpfs because session uploads and pulled
+files are deleted after use.
 
 ### Control plane (`control.rs`)
 
@@ -118,7 +124,7 @@ deploy. That is not hypothetical — it is exactly what happened when
 
 axum. `GET /s/:id` (WebSocket), `GET /s/:id/screenshot.png`,
 `GET /s/:id/mjpeg`, `GET /s/:id/files`, `GET /s/:id/file`,
-`POST /s/:id/install`, `GET /health`. The Prometheus exposition is deliberately
+`POST /s/:id/install`, `POST /s/:id/preload`, `GET /health`. The Prometheus exposition is deliberately
 **not** here — it gets a listener of its own; see [Metrics](#metrics).
 
 Per-viewer fanout with backlog shedding, ported in spirit from `screen_ws.rs`:
@@ -137,8 +143,14 @@ never allowed: the token is in the query string, never a cookie.
 
 Uploads stream to the scratch dir as they arrive, so a 200 MB APK never sits in
 memory, and a `Drop` guard deletes the staged file however the install turns
-out. The filename comes from a client header and is reduced to a single path
-component — there are tests asserting `../../etc/passwd` cannot escape.
+out. A session install remains transient. A preload first copies the package to
+the durable `preload_dir`, records its package id in `manifest.json`, and then
+installs it. The cleanup run after a session compares those ids with the device
+app list and reinstalls any missing protected preload before the device returns
+to the pool. An admin can remove the policy from an idle device; the provider
+uninstalls the app and removes its manifest entry and unreferenced artifact. The
+filename comes from a client header and is reduced to a single path component;
+there are tests asserting `../../etc/passwd` cannot escape.
 
 ### Supervisor (`supervisor.rs`)
 
@@ -594,6 +606,7 @@ pub trait DeviceBackend: Send + Sync + 'static {
     async fn clipboard_set(&self, text: &str) -> Result<()>;
     async fn apps(&self) -> Result<Vec<AppInfo>>;
     async fn install(&self, staged: &Path, progress: &dyn ProgressSink) -> Result<()>;
+    async fn artifact_app_id(&self, staged: &Path) -> Result<String>;
     async fn uninstall(&self, app_id: &str) -> Result<()>;
     async fn launch(&self, app_id: &str, args: &[String]) -> Result<()>;
     fn files_root(&self) -> Option<&'static str>;              // None = no file access

@@ -94,11 +94,20 @@ function dropProvider() {
 }
 
 async function clearCleanupSettings() {
-  await db.delete(setting).where(eq(setting.key, "cleanup.enabled"));
-  await db.delete(setting).where(eq(setting.key, "cleanup.clearAppData"));
-  await db.delete(setting).where(eq(setting.key, "cleanup.timeoutSeconds"));
-  await db.delete(setting).where(eq(setting.key, "cleanup.clearAppDataAllow"));
-  await db.delete(setting).where(eq(setting.key, "cleanup.clearAppDataDeny"));
+  await db
+    .delete(setting)
+    .where(
+      inArray(setting.key, [
+        "cleanup.enabled",
+        "cleanup.uninstallApps",
+        "cleanup.resetScreen",
+        "cleanup.clearAppData",
+        "cleanup.timeoutSeconds",
+        "cleanup.clearAppDataAllow",
+        "cleanup.clearAppDataDeny",
+        "cleanup.wipeFolders",
+      ]),
+    );
   invalidateSettings();
 }
 
@@ -118,14 +127,22 @@ async function status() {
 const cleanupCommands = () => sent.filter((cmd) => cmd.kind === "device.cleanup");
 
 describe("cleanup on release", () => {
-  test("is off until an admin turns it on", async () => {
+  test("always checks protected preloads even when ordinary cleanup is off", async () => {
     await clearCleanupSettings();
     const caller = callerFor(USERS[0]);
     await caller.device.reserve({ deviceId: DEVICE_ID });
     await caller.device.release({ deviceId: DEVICE_ID });
 
-    expect(await status()).toBe("ready");
-    expect(cleanupCommands()).toHaveLength(0);
+    expect(await status()).toBe("cleaning");
+    const [cmd] = cleanupCommands();
+    expect(cmd).toBeDefined();
+    if (cmd?.kind !== "device.cleanup") throw new Error("unreachable");
+    expect(cmd.steps).toEqual({
+      uninstallApps: false,
+      resetScreen: false,
+      clearAppData: false,
+      wipeFolders: false,
+    });
     // Revocation is unconditional: it is what drops live viewers.
     expect(sent.some((cmd) => cmd.kind === "session.revoke")).toBe(true);
   });

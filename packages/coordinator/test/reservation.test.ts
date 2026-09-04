@@ -68,6 +68,11 @@ async function resetDevice() {
   await db.update(device).set({ status: "ready" }).where(eq(device.id, DEVICE_ID));
 }
 
+/** The real provider sends this after its asynchronous cleanup pass finishes. */
+async function providerFinishedCleanup() {
+  await db.update(device).set({ status: "ready" }).where(eq(device.id, DEVICE_ID));
+}
+
 describe("reservations", () => {
   test("concurrent reserves produce exactly one winner", async () => {
     await resetDevice();
@@ -107,6 +112,7 @@ describe("reservations", () => {
     ).rejects.toMatchObject({ code: "CONFLICT" });
 
     await callerFor(USERS[0]!).device.release({ deviceId: DEVICE_ID });
+    await providerFinishedCleanup();
     const taken = await callerFor(USERS[1]!).device.reserve({ deviceId: DEVICE_ID });
     expect(taken.userId).toBe(USERS[1]);
   });
@@ -175,6 +181,9 @@ describe("the reaper", () => {
     // Nobody released it, so nobody is recorded as having done so.
     expect(row?.releasedBy).toBeNull();
 
+    // The release is asynchronous: emulate the provider's ready status after
+    // its cleanup pass, then assert the device is available to the next user.
+    await providerFinishedCleanup();
     const [freed] = await db.select().from(device).where(eq(device.id, DEVICE_ID)).limit(1);
     expect(freed?.status).toBe("ready");
 

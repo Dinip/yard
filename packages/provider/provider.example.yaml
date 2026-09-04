@@ -25,6 +25,10 @@ bind: 0.0.0.0:7100
 # Staged uploads land here and are deleted after every install, successful or
 # not. A tmpfs is a good choice — nothing here is meant to survive.
 scratch_dir: /var/lib/yard/scratch
+# Durable copies and desired-state manifest for admin preloads. Keep this on
+# storage that survives provider restarts; it is intentionally separate from
+# scratch_dir, which can be a tmpfs.
+preload_dir: /var/lib/yard/preloads
 max_upload_mb: 2048
 
 # Ports `adb connect` reaches an exposed device on. A device claims one while it

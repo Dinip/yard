@@ -131,6 +131,95 @@ describe("provider gateway", () => {
     await fake.close();
   });
 
+  test("hello preload metadata is only visible on the admin preload page", async () => {
+    const target = devices[1]!.id;
+    const fake = connectFake({
+      preloads: [
+        {
+          deviceId: target,
+          appId: "com.example.preloaded",
+          platform: "android",
+          filename: "preloaded.apk",
+          size: 1_572_864,
+          sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        },
+      ],
+    });
+    await fake.connect();
+
+    const listed = await caller(USER_A).device.list();
+    expect("preloadedApps" in listed.find((d) => d.id === target)!).toBe(false);
+    await expect(caller(USER_A).device.preloads()).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(await caller(USER_A, "admin").device.preloads()).toEqual([
+      {
+        deviceId: target,
+        appId: "com.example.preloaded",
+        platform: "android",
+        filename: "preloaded.apk",
+        size: 1_572_864,
+        sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      },
+    ]);
+
+    await fake.close();
+  });
+
+  test("an admin can remove a preload from an idle device", async () => {
+    const target = devices[1]!.id;
+    const fake = connectFake({
+      preloads: [
+        {
+          deviceId: target,
+          appId: "com.example.preloaded",
+          platform: "android",
+          filename: "preloaded.apk",
+          size: 1_572_864,
+          sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        },
+      ],
+    });
+    await fake.connect();
+
+    await expect(
+      caller(USER_B).device.removePreload({ deviceId: target, appId: "com.example.preloaded" }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await caller(USER_A, "admin").device.removePreload({
+      deviceId: target,
+      appId: "com.example.preloaded",
+    });
+
+    expect(fake.received).toContainEqual({
+      kind: "device.preload.remove",
+      deviceId: target,
+      appId: "com.example.preloaded",
+    });
+    expect(await caller(USER_A, "admin").device.preloads()).toEqual([]);
+
+    await fake.close();
+  });
+
+  test("only an admin can mint idle-device preload grants", async () => {
+    const fake = connectFake();
+    await fake.connect();
+
+    const target = devices[0]!.id;
+    const grant = await caller(USER_A, "admin").device.preloadTokens({
+      deviceIds: [target],
+    });
+
+    expect(grant.grants).toHaveLength(1);
+    expect(grant.grants[0]).toMatchObject({
+      deviceId: target,
+      providerBaseUrl: PUBLIC_BASE,
+    });
+    expect(grant.skipped).toHaveLength(0);
+    await expect(
+      caller(USER_B).device.preloadTokens({ deviceIds: [target] }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+    await fake.close();
+  });
+
   test("reconnecting with a smaller inventory marks the missing devices absent", async () => {
     const fake = connectFake({ devices: devices.slice(0, 1) });
     await fake.connect();
