@@ -67,6 +67,39 @@ void main() {
     expect(share.files.last.reportedSize, isNull);
   });
 
+  test('per-file state and saved names decode', () async {
+    answer(
+      (_) async => [
+        {
+          'id': 's1',
+          'receivedAt': 1774000000000,
+          'state': 'failed',
+          'error': '1 of 2 files are in Download/YARD Drop/Saved.',
+          'files': [
+            {
+              'id': 'f1',
+              'displayName': 'one.png',
+              'state': 'saved',
+              'savedName': 'one (1).png',
+            },
+            {
+              'id': 'f2',
+              'displayName': 'two.png',
+              'state': 'failed',
+              'error': 'It could not be written to the YARD Drop folder.',
+            },
+          ],
+        },
+      ],
+    );
+
+    final share = (await gateway.pendingShares()).single;
+
+    expect(share.savedFiles.single.savedName, 'one (1).png');
+    expect(share.failedFiles.single.displayName, 'two.png');
+    expect(share.pendingFiles, isEmpty);
+  });
+
   test('a rejected text share arrives as a failure with no files', () async {
     answer(
       (_) async => [

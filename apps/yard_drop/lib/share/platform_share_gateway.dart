@@ -68,6 +68,12 @@ IncomingFile _decodeFile(Map<Object?, Object?> wire) {
     displayName: wire['displayName']! as String,
     mimeType: wire['mimeType'] as String?,
     reportedSize: (wire['reportedSize'] as num?)?.toInt(),
+    state: IncomingFileState.values.firstWhere(
+      (state) => state.name == wire['state'],
+      orElse: () => IncomingFileState.pending,
+    ),
+    error: wire['error'] as String?,
+    savedName: wire['savedName'] as String?,
   );
 }
 

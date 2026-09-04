@@ -32,7 +32,7 @@ void main() {
 
     expect(find.text('Receiving'), findsOneWidget);
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
-    expect(find.text('Save to Downloads'), findsNothing);
+    expect(find.text('Save on this device'), findsNothing);
   });
 
   testWidgets('one ready file shows its name, size and type', (tester) async {
@@ -42,7 +42,7 @@ void main() {
     expect(find.text('File ready'), findsOneWidget);
     expect(find.text('build.apk'), findsOneWidget);
     expect(find.textContaining('4.2 MB'), findsOneWidget);
-    expect(find.text('Save to Downloads'), findsOneWidget);
+    expect(find.text('Save on this device'), findsOneWidget);
   });
 
   testWidgets('a batch lists every file', (tester) async {
@@ -84,7 +84,7 @@ void main() {
 
     final gate = Completer<SaveResult>();
     gateway.onSave = (_, _) => gate.future;
-    await tester.tap(find.text('Save to Downloads'));
+    await tester.tap(find.text('Save on this device'));
     await tester.pump();
 
     expect(find.text('Saving'), findsOneWidget);
@@ -111,7 +111,7 @@ void main() {
 
     final gate = Completer<SaveResult>();
     gateway.onSave = (_, _) => gate.future;
-    await tester.tap(find.text('Save to Downloads'));
+    await tester.tap(find.text('Save on this device'));
     await tester.pump();
 
     gateway.emit(shareFixture(state: IncomingShareState.saving, progress: 0.5));
@@ -131,7 +131,7 @@ void main() {
     gateway.emit(shareFixture());
     await pumpApp(tester);
 
-    await tester.tap(find.text('Save to Downloads'));
+    await tester.tap(find.text('Save on this device'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Done'));
     await tester.pumpAndSettle();
@@ -146,7 +146,7 @@ void main() {
     gateway.onSave = (_, destination) async =>
         SaveResult.failure(destination, 'no space left on device');
 
-    await tester.tap(find.text('Save to Downloads'));
+    await tester.tap(find.text('Save on this device'));
     await tester.pumpAndSettle();
 
     expect(find.text('Not saved'), findsOneWidget);
@@ -157,9 +157,96 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('File ready'), findsOneWidget);
 
-    await tester.tap(find.text('Save to Downloads'));
+    await tester.tap(find.text('Save on this device'));
     await tester.pumpAndSettle();
     expect(find.text('Saved'), findsOneWidget);
+  });
+
+  testWidgets('a renamed duplicate is named on the saved screen', (
+    tester,
+  ) async {
+    gateway.emit(shareFixture());
+    await pumpApp(tester);
+    gateway.onSave = (_, destination) async =>
+        SaveResult.success(destination, location: 'Download/YARD Drop/Saved');
+
+    await tester.tap(find.text('Save on this device'));
+    await tester.pumpAndSettle();
+    gateway.emit(
+      shareFixture(
+        state: IncomingShareState.saved,
+        files: const [
+          IncomingFile(
+            id: 'f1',
+            displayName: 'build.apk',
+            state: IncomingFileState.saved,
+            savedName: 'build (1).apk',
+          ),
+        ],
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Saved as build (1).apk'), findsOneWidget);
+  });
+
+  testWidgets('a batch shows what saved and what did not', (tester) async {
+    gateway.emit(
+      shareFixture(
+        state: IncomingShareState.failed,
+        error: '2 of 3 files are in Download/YARD Drop/Saved.',
+        files: const [
+          IncomingFile(
+            id: 'f1',
+            displayName: 'one.png',
+            state: IncomingFileState.saved,
+          ),
+          IncomingFile(
+            id: 'f2',
+            displayName: 'two.png',
+            state: IncomingFileState.saved,
+            savedName: 'two (1).png',
+          ),
+          IncomingFile(
+            id: 'f3',
+            displayName: 'three.png',
+            state: IncomingFileState.failed,
+            error: 'It could not be written to the YARD Drop folder.',
+          ),
+        ],
+      ),
+    );
+    await pumpApp(tester);
+
+    expect(find.text('one.png'), findsOneWidget);
+    expect(find.text('Saved'), findsOneWidget);
+    expect(find.text('Saved as two (1).png'), findsOneWidget);
+    expect(
+      find.text('It could not be written to the YARD Drop folder.'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('a batch counts only what is still to save', (tester) async {
+    gateway.emit(
+      shareFixture(
+        files: const [
+          IncomingFile(id: 'f1', displayName: 'one.png'),
+          IncomingFile(id: 'f2', displayName: 'two.png'),
+          IncomingFile(
+            id: 'f3',
+            displayName: 'three.png',
+            state: IncomingFileState.failed,
+            error: 'The file could not be read from the app that shared it.',
+          ),
+        ],
+      ),
+    );
+    await pumpApp(tester);
+
+    expect(find.text('2 files ready'), findsOneWidget);
+    expect(find.text('three.png'), findsOneWidget);
+    expect(find.text('Save on this device'), findsOneWidget);
   });
 
   testWidgets('a share that never arrived cannot be retried', (tester) async {

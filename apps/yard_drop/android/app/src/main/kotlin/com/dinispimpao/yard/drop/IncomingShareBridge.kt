@@ -199,6 +199,9 @@ private fun IncomingShare.toWire(): Map<String, Any?> = mapOf(
             "displayName" to file.displayName,
             "mimeType" to file.mimeType,
             "reportedSize" to file.reportedSize,
+            "state" to file.state.wireName,
+            "error" to file.error,
+            "savedName" to file.savedName,
         )
     },
 )

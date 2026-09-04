@@ -150,7 +150,7 @@ class _ReadyState extends StatelessWidget {
       children: [
         Text(
           share.isBatch
-              ? '${_fileCount(share.files.length)} ready'
+              ? '${_fileCount(share.pendingFiles.length)} ready'
               : 'File ready',
           style: theme.textTheme.headlineSmall,
         ),
@@ -167,7 +167,14 @@ class _ReadyState extends StatelessWidget {
         FilledButton.icon(
           onPressed: onSave,
           icon: const Icon(Icons.download),
-          label: const Text('Save to Downloads'),
+          label: const Text('Save on this device'),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Files go to $savedFolder, so a session cleanup can remove all of '
+          'them at once.',
+          style: theme.textTheme.bodySmall,
+          textAlign: TextAlign.center,
         ),
         const SizedBox(height: 8),
         TextButton(onPressed: onDiscard, child: const Text('Cancel')),
@@ -188,8 +195,8 @@ class _SavingState extends StatelessWidget {
       progressValue: share.progress,
       title: 'Saving',
       message: share.isBatch
-          ? 'Writing ${_fileCount(share.files.length)} to Downloads.'
-          : 'Writing ${share.files.first.displayName} to Downloads.',
+          ? 'Writing ${_fileCount(share.pendingFiles.length)} to $savedFolder.'
+          : 'Writing ${share.files.first.displayName} to $savedFolder.',
     );
   }
 }
@@ -206,8 +213,13 @@ class _SavedState extends StatelessWidget {
       icon: Icons.check_circle_outline,
       title: 'Saved',
       message: share.isBatch
-          ? '${_fileCount(share.files.length)} are in ${_location(share)}.'
+          ? '${_fileCount(share.savedFiles.length)} are in ${_location(share)}.'
           : '${share.files.first.displayName} is in ${_location(share)}.',
+      // A renamed duplicate is only visible in the list, and the user needs to
+      // know the name their file actually has.
+      detail: share.files.any((file) => file.savedName != file.displayName)
+          ? _FileList(files: share.files)
+          : null,
       action: FilledButton(onPressed: onDone, child: const Text('Done')),
     );
   }
@@ -232,7 +244,10 @@ class _FailedState extends StatelessWidget {
       icon: Icons.error_outline,
       danger: true,
       title: attemptedSave ? 'Not saved' : 'Share not received',
-      message: share.error ?? 'The files could not be written to Downloads.',
+      message: share.error ?? 'The files could not be written to $savedFolder.',
+      // A file that did reach Downloads must not disappear behind the failure
+      // of another one.
+      detail: share.files.isEmpty ? null : _FileList(files: share.files),
       action: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -260,9 +275,19 @@ class _FileList extends StatelessWidget {
       separatorBuilder: (_, _) => const Divider(height: 1),
       itemBuilder: (context, index) {
         final file = files[index];
+        final theme = Theme.of(context);
         return ListTile(
           contentPadding: EdgeInsets.zero,
-          leading: const Icon(Icons.insert_drive_file_outlined),
+          leading: Icon(
+            switch (file.state) {
+              IncomingFileState.pending => Icons.insert_drive_file_outlined,
+              IncomingFileState.saved => Icons.check_circle_outline,
+              IncomingFileState.failed => Icons.error_outline,
+            },
+            color: file.state == IncomingFileState.failed
+                ? theme.colorScheme.error
+                : null,
+          ),
           title: Text(file.displayName, overflow: TextOverflow.ellipsis),
           subtitle: Text(_describe(file)),
         );
@@ -279,6 +304,7 @@ class _Panel extends StatelessWidget {
     this.progress = false,
     this.progressValue,
     this.danger = false,
+    this.detail,
     this.action,
   });
 
@@ -288,6 +314,7 @@ class _Panel extends StatelessWidget {
   final bool progress;
   final double? progressValue;
   final bool danger;
+  final Widget? detail;
   final Widget? action;
 
   @override
@@ -318,6 +345,10 @@ class _Panel extends StatelessWidget {
           style: theme.textTheme.bodyMedium,
           textAlign: TextAlign.center,
         ),
+        if (detail != null) ...[
+          const SizedBox(height: 16),
+          Flexible(child: detail!),
+        ],
         if (action != null) ...[const SizedBox(height: 24), action!],
       ],
     );
@@ -326,15 +357,26 @@ class _Panel extends StatelessWidget {
 
 String _fileCount(int count) => count == 1 ? '1 file' : '$count files';
 
-String _location(IncomingShare share) =>
-    share.savedLocation ?? 'Download/YARD Drop/Saved';
+/// Everything YARD Drop writes lives under one folder, so releasing a
+/// reservation can wipe the lot without touching the user's own downloads.
+const savedFolder = 'Download/YARD Drop/Saved';
+
+String _location(IncomingShare share) => share.savedLocation ?? savedFolder;
 
 String _describe(IncomingFile file) {
-  final parts = [
-    if (file.reportedSize != null) formatBytes(file.reportedSize!),
-    file.mimeType ?? 'unknown type',
-  ];
-  return parts.join(' · ');
+  return switch (file.state) {
+    IncomingFileState.failed => file.error ?? 'This file could not be handled.',
+    // Downloads renames a duplicate, and the user needs the name it actually
+    // has, not the one that was asked for.
+    IncomingFileState.saved
+        when file.savedName != null && file.savedName != file.displayName =>
+      'Saved as ${file.savedName}',
+    IncomingFileState.saved => 'Saved',
+    IncomingFileState.pending => [
+      if (file.reportedSize != null) formatBytes(file.reportedSize!),
+      file.mimeType ?? 'unknown type',
+    ].join(' · '),
+  };
 }
 
 /// Metadata is what the sharing app claimed, so this is a hint, not a promise.

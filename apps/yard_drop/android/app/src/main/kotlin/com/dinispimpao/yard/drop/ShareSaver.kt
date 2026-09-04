@@ -9,7 +9,9 @@ private const val SAVED_FOLDER = "YARD Drop/Saved"
  * Turns a user's choice into files on the device.
  *
  * Progress is published through [IncomingShareStore] rather than returned, so
- * the screen can follow a long batch instead of waiting on one call.
+ * the screen can follow a long batch instead of waiting on one call. A file
+ * that already reached Downloads is never rewritten and never withdrawn because
+ * a later one failed.
  */
 class ShareSaver(
     private val stager: ShareStager,
@@ -23,46 +25,63 @@ class ShareSaver(
             return SaveOutcome.Failure("unsupported_destination", "That destination is not available yet.")
         }
 
-        val total = share.files.sumOf { it.stagedSize ?: 0L }.coerceAtLeast(1L)
+        val pending = share.files.filter { it.state == FileState.PENDING }
+        if (pending.isEmpty()) {
+            return SaveOutcome.Failure("nothing_to_save", "There is nothing left to save.")
+        }
+
+        val total = pending.sumOf { it.stagedSize ?: 0L }.coerceAtLeast(1L)
         var written = 0L
-        var saved = 0
+        val results = share.files.associateBy({ it.id }, { it }).toMutableMap()
 
         IncomingShareStore.put(share.copy(state = ShareState.SAVING, progress = 0.0, error = null))
 
-        for (file in share.files) {
+        for (file in pending) {
             val staged = file.stagedPath?.let(::File)
-            if (staged == null || !staged.exists()) {
-                return fail(share, saved, "The file is no longer on this device.")
+
+            results[file.id] = if (staged == null || !staged.exists()) {
+                file.copy(state = FileState.FAILED, error = "The file is no longer on this device.")
+            } else {
+                try {
+                    val savedName = writer.publish(staged, file.displayName, file.mimeType, SAVED_FOLDER)
+                    staged.delete()
+                    file.copy(state = FileState.SAVED, savedName = savedName, error = null)
+                } catch (error: Throwable) {
+                    // The message may name a path or a URI, neither of which is
+                    // ours to show. The staged copy stays, so a retry is real.
+                    ShareLog.warn("saving a file in share ${share.id} failed", error)
+                    file.copy(state = FileState.FAILED, error = "It could not be written to Downloads.")
+                }
             }
 
-            try {
-                writer.publish(staged, file.displayName, file.mimeType, SAVED_FOLDER)
-            } catch (error: Throwable) {
-                // The message may name a path or a URI, neither of which is
-                // ours to show.
-                return fail(share, saved, "The file could not be written to Downloads.")
-            }
-
-            staged.delete()
-            saved++
             written += file.stagedSize ?: 0L
             IncomingShareStore.put(
-                share.copy(state = ShareState.SAVING, progress = written.toDouble() / total),
+                share.copy(
+                    files = share.files.map { results.getValue(it.id) },
+                    state = ShareState.SAVING,
+                    progress = written.toDouble() / total,
+                ),
             )
         }
 
-        stager.discard(share.id)
-        IncomingShareStore.put(share.copy(state = ShareState.SAVED, progress = 1.0, error = null))
-        return SaveOutcome.Success
-    }
+        val files = share.files.map { results.getValue(it.id) }
+        val failed = files.count { it.state == FileState.FAILED }
+        val saved = files.count { it.state == FileState.SAVED }
 
-    private fun fail(share: IncomingShare, saved: Int, reason: String): SaveOutcome {
-        val message = if (saved == 0) {
-            reason
-        } else {
-            "$reason ${saved} of ${share.files.size} files were already saved to $savedLocation."
+        if (failed == 0) {
+            stager.discard(share.id)
+            IncomingShareStore.put(
+                share.copy(files = files, state = ShareState.SAVED, progress = 1.0, error = null),
+            )
+            return SaveOutcome.Success
         }
-        IncomingShareStore.put(share.copy(state = ShareState.FAILED, error = message))
+
+        val message = if (saved == 0) {
+            "No files could be written to $savedLocation."
+        } else {
+            "$saved of ${files.size} files are in $savedLocation. The rest could not be written."
+        }
+        IncomingShareStore.put(share.copy(files = files, state = ShareState.FAILED, error = message))
         return SaveOutcome.Failure("save_failed", message)
     }
 }

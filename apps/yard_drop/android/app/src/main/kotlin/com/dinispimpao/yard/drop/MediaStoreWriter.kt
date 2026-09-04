@@ -1,5 +1,6 @@
 package com.dinispimpao.yard.drop
 
+import android.content.ContentResolver
 import android.content.ContentValues
 import android.content.Context
 import android.net.Uri
@@ -18,11 +19,13 @@ import java.io.IOException
 class MediaStoreWriter(private val context: Context) {
 
     /**
-     * Copies [staged] into `Download/<folder>` and returns its MediaStore URI.
+     * Copies [staged] into `Download/<folder>` and returns the name it ended up
+     * with, which a duplicate makes differ from [displayName].
+     *
      * A failure leaves nothing behind: the pending row is deleted, so a partial
      * file is never visible to the Files app or to a farm cleanup pass.
      */
-    fun publish(staged: File, displayName: String, mimeType: String?, folder: String): Uri {
+    fun publish(staged: File, displayName: String, mimeType: String?, folder: String): String {
         val values = ContentValues().apply {
             put(MediaStore.Downloads.DISPLAY_NAME, sanitize(displayName))
             put(MediaStore.Downloads.MIME_TYPE, mimeType ?: "application/octet-stream")
@@ -49,7 +52,18 @@ class MediaStoreWriter(private val context: Context) {
             throw error
         }
 
-        return target
+        // Downloads uniquifies a name that already exists, so what the user is
+        // told is what the row says, not what was asked for.
+        return savedName(resolver, target) ?: sanitize(displayName)
+    }
+
+    private fun savedName(resolver: ContentResolver, target: Uri): String? {
+        return runCatching {
+            resolver.query(target, arrayOf(MediaStore.Downloads.DISPLAY_NAME), null, null, null)
+                ?.use { cursor ->
+                    if (cursor.moveToFirst()) cursor.getString(0) else null
+                }
+        }.getOrNull()
     }
 
     /**

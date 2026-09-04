@@ -31,7 +31,9 @@ data class SharedFileMetadata(
  */
 object ShareIntentParser {
     fun parse(intent: Intent): ShareIntent {
-        if (intent.action != Intent.ACTION_SEND) return ShareIntent.Ignored
+        if (intent.action != Intent.ACTION_SEND && intent.action != Intent.ACTION_SEND_MULTIPLE) {
+            return ShareIntent.Ignored
+        }
 
         val uris = streamUris(intent)
         if (uris.isNotEmpty()) return ShareIntent.Files(uris)
@@ -40,20 +42,32 @@ object ShareIntentParser {
     }
 
     /**
-     * `EXTRA_STREAM` is the documented carrier, but an app may put the
-     * attachment only in [Intent.getClipData], so both are read.
+     * `EXTRA_STREAM` is the documented carrier and [Intent.getClipData] is what
+     * some apps actually fill in, so both are read. Order is the sender's, and
+     * a URI carried in both places is one attachment, not two.
      */
     private fun streamUris(intent: Intent): List<Uri> {
-        val extra = intent.extraStream()
-        if (extra != null) return listOf(extra)
+        val uris = LinkedHashSet<Uri>()
+        uris += intent.extraStreams()
 
-        val clip = intent.clipData ?: return emptyList()
-        return (0 until clip.itemCount).mapNotNull { clip.getItemAt(it).uri }
+        val clip = intent.clipData
+        if (clip != null) {
+            for (index in 0 until clip.itemCount) {
+                clip.getItemAt(index).uri?.let(uris::add)
+            }
+        }
+
+        return uris.toList()
     }
 
-    private fun Intent.extraStream(): Uri? {
+    private fun Intent.extraStreams(): List<Uri> {
         @Suppress("DEPRECATION")
-        return getParcelableExtra(Intent.EXTRA_STREAM)
+        val list = getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)
+        if (list != null) return list.filterNotNull()
+
+        @Suppress("DEPRECATION")
+        val single = getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+        return listOfNotNull(single)
     }
 
     /**

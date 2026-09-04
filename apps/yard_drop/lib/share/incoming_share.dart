@@ -2,18 +2,29 @@ enum IncomingShareState { receiving, ready, saving, saved, failed }
 
 enum ShareDestination { downloads, browserInbox }
 
+/// Where one attachment in a batch got to.
+enum IncomingFileState { pending, saved, failed }
+
 final class IncomingFile {
   const IncomingFile({
     required this.id,
     required this.displayName,
     this.mimeType,
     this.reportedSize,
+    this.state = IncomingFileState.pending,
+    this.error,
+    this.savedName,
   });
 
   final String id;
   final String displayName;
   final String? mimeType;
   final int? reportedSize;
+  final IncomingFileState state;
+  final String? error;
+
+  /// The name Downloads gave it, which a duplicate makes differ.
+  final String? savedName;
 }
 
 final class IncomingShare {
@@ -40,6 +51,15 @@ final class IncomingShare {
   final String? savedLocation;
 
   bool get isBatch => files.length > 1;
+
+  Iterable<IncomingFile> get pendingFiles =>
+      files.where((file) => file.state == IncomingFileState.pending);
+
+  Iterable<IncomingFile> get savedFiles =>
+      files.where((file) => file.state == IncomingFileState.saved);
+
+  Iterable<IncomingFile> get failedFiles =>
+      files.where((file) => file.state == IncomingFileState.failed);
 
   // A retry has to be able to clear the previous failure, which `error: null`
   // alone cannot express.

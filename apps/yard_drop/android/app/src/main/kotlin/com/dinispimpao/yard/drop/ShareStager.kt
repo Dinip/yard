@@ -40,39 +40,35 @@ class ShareStager(private val context: Context) {
         var batchBytes = 0L
 
         for (file in share.files) {
-            val source = file.source
-            if (source == null) {
-                fail(share, "The share arrived without a readable attachment.")
-                directory.deleteRecursively()
-                return
-            }
-
             val target = File(directory, file.id)
             val partial = File(directory, "${file.id}.part")
+            val source = file.source
+
+            if (source == null) {
+                staged += file.failed("The share arrived without a readable attachment.")
+                continue
+            }
 
             val bytes = try {
                 copy(source, partial, remaining = ShareLimits.MAX_BATCH_BYTES - batchBytes)
             } catch (error: Throwable) {
-                // Anything at all: a withdrawn URI grant surfaces as a
-                // SecurityException, a vanished provider as an IOException, and
-                // neither is worth taking the process down for. The message may
-                // name the URI, so only our own wording reaches the user.
+                // One bad attachment does not condemn the batch: a sender can
+                // mix a URI it no longer owns in with files that are fine, and
+                // the user should still get those. The message may name the
+                // URI, so only our own wording reaches the user.
                 partial.delete()
-                directory.deleteRecursively()
-                ShareLog.warn("staging failed for share ${share.id}", error)
-                fail(
-                    share,
+                ShareLog.warn("staging failed for a file in share ${share.id}", error)
+                staged += file.failed(
                     (error as? StagingException)?.userMessage
                         ?: "The file could not be read from the app that shared it.",
                 )
-                return
+                continue
             }
 
             if (!partial.renameTo(target)) {
                 partial.delete()
-                directory.deleteRecursively()
-                fail(share, "The file could not be stored on this device.")
-                return
+                staged += file.failed("The file could not be stored on this device.")
+                continue
             }
 
             batchBytes += bytes
@@ -80,8 +76,24 @@ class ShareStager(private val context: Context) {
         }
 
         writeManifest(directory, share, staged)
-        ShareLog.info("staged share ${share.id}: $batchBytes byte(s)")
-        IncomingShareStore.put(share.copy(files = staged, state = ShareState.READY, error = null))
+
+        // Every attachment failing is a failed share; one surviving file is
+        // still worth offering.
+        val anyStaged = staged.any { it.state == FileState.PENDING }
+        ShareLog.info("staged share ${share.id}: $batchBytes byte(s), usable=$anyStaged")
+
+        IncomingShareStore.put(
+            if (anyStaged) {
+                share.copy(files = staged, state = ShareState.READY, error = null)
+            } else {
+                share.copy(
+                    files = staged,
+                    state = ShareState.FAILED,
+                    error = staged.firstNotNullOfOrNull { it.error }
+                        ?: "The share had nothing that could be read.",
+                )
+            },
+        )
     }
 
     /** Bounded memory, and the reported size is never trusted as a length. */
@@ -174,3 +186,6 @@ class ShareStager(private val context: Context) {
 }
 
 private class StagingException(val userMessage: String) : RuntimeException(userMessage)
+
+private fun IncomingFile.failed(message: String) =
+    copy(source = null, state = FileState.FAILED, error = message)

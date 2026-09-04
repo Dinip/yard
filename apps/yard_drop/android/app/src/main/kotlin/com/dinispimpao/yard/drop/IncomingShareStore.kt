@@ -3,6 +3,14 @@ package com.dinispimpao.yard.drop
 import android.net.Uri
 import java.util.UUID
 
+/** Where one attachment in a batch got to. */
+enum class FileState(val wireName: String) {
+    /** Staged privately, waiting for a destination. */
+    PENDING("pending"),
+    SAVED("saved"),
+    FAILED("failed"),
+}
+
 enum class ShareState(val wireName: String) {
     RECEIVING("receiving"),
     READY("ready"),
@@ -22,6 +30,10 @@ data class IncomingFile(
     val stagedPath: String? = null,
     /** Bytes actually copied. This is the one that is true. */
     val stagedSize: Long? = null,
+    val state: FileState = FileState.PENDING,
+    val error: String? = null,
+    /** The name Downloads gave it, which a duplicate makes differ. */
+    val savedName: String? = null,
 )
 
 data class IncomingShare(
