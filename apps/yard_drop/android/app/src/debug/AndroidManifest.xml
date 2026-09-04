@@ -4,4 +4,15 @@
          to allow setting breakpoints, to provide hot reload, etc.
     -->
     <uses-permission android:name="android.permission.INTERNET"/>
+
+    <application>
+        <!-- Stands in for the app on the other side of a share, for the
+             instrumentation tests. It lives in the debug app rather than in the
+             test APK because the system hosts a provider in its own package's
+             process, and the test APK carries no Kotlin runtime of its own. -->
+        <provider
+            android:name="com.dinispimpao.yard.drop.FakeFilesProvider"
+            android:authorities="com.dinispimpao.yard.drop.test.files"
+            android:exported="false" />
+    </application>
 </manifest>

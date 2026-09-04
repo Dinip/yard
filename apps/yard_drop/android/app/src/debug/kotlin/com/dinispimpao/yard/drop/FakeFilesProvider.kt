@@ -17,8 +17,11 @@ private const val AUTHORITY = "com.dinispimpao.yard.drop.test.files"
  * the app is not allowed to read.
  *
  * Bytes come out of a pipe rather than a file, so a test can ask for a stream
- * larger than the emulator's storage and describe its length as unknown, which
- * is what a real streaming provider does.
+ * larger than the device's storage and describe its length as unknown, which is
+ * what a real streaming provider does.
+ *
+ * Debug-only: it is declared in `src/debug/AndroidManifest.xml` and never
+ * reaches a release build.
  */
 class FakeFilesProvider : ContentProvider() {
 

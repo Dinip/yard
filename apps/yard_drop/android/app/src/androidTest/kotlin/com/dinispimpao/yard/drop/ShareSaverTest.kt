@@ -15,7 +15,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 
-private const val SAVED_PATH = "${Environment.DIRECTORY_DOWNLOADS}/YARD Drop/Saved/"
+private val SAVED_PATH = "${Environment.DIRECTORY_DOWNLOADS}/YARD Drop/Saved/"
 
 @RunWith(AndroidJUnit4::class)
 class ShareSaverTest {
