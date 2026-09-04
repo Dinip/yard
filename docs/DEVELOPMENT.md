@@ -5,6 +5,8 @@
 - [Bun](https://bun.sh) ≥ 1.3
 - Docker (for Postgres; also for the full stack)
 - Rust toolchain — phases 3+ only
+- [Flutter](https://docs.flutter.dev/get-started/install) ≥ 3.35 — the YARD Drop
+  Android companion only; nothing else in the repository needs it
 
 ## First run
 
@@ -215,6 +217,20 @@ cargo fmt --check
 bun run protocol:check    # tests + regen + diff, as CI runs it
 ```
 
+The Android companion, from `apps/yard_drop`:
+
+```bash
+flutter pub get
+flutter analyze
+flutter test
+flutter build apk --debug
+```
+
+These deliberately stay out of the root Bun scripts: a contributor who never
+touches the app should not need a Flutter toolchain, and `flutter.yml` is the
+only workflow that installs one. See
+[apps/yard_drop/README.md](../apps/yard_drop/README.md).
+
 `protocol:check` is the drift guard: `generated.rs` is committed, so a zod schema
 edit that wasn't regenerated fails here rather than shipping to a provider as a
 silent no-op.
@@ -264,6 +280,7 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml \
 | `release.yml` | push to `main` | grooms the release PR; on merge, publishes `1.2.3`, `1.2` and `latest` |
 | `usbmuxd-image.yml` | manual | publishes the requested multi-platform sidecar tags |
 | `rust-cache.yml` | push to `main` touching Rust | rebuilds the Rust cache that pull requests restore |
+| `flutter.yml` | pull requests and `main` touching `apps/yard_drop` | analyzes, tests and debug-builds the Android companion |
 
 `pr.yml`, `edge.yml` and `release.yml` call `images.yml`, which builds each
 architecture on its own native runner (`ubuntu-24.04` and `ubuntu-24.04-arm`)
@@ -314,8 +331,10 @@ in the config, not from bumping the manifest — with no release tag to find,
 release-please bootstraps rather than bumping, and its default first version is
 `1.0.0`.
 
-One version covers everything — the four `package.json` files and the Cargo
-workspace all move together, since they only ever ship as a set. Two mechanical
+One version covers everything — the four `package.json` files, the Cargo
+workspace and the Flutter `pubspec.yaml` all move together, since they only ever
+ship as a set. The companion is versioned with the farm rather than on its own
+because it depends on browser and provider behaviour from the same commit. Two mechanical
 notes on how that is kept true:
 
 - `Cargo.lock` records each workspace member's version, and release-please can't

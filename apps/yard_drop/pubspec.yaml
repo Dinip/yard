@@ -1,0 +1,22 @@
+name: yard_drop
+description: "YARD Drop: the YARD - Device Farm share companion."
+publish_to: "none"
+
+# Kept in step with the root release by release-please. The build number is
+# supplied by CI with --build-number; the +1 here is only for local builds.
+version: 0.3.0+1
+
+environment:
+  sdk: ^3.9.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
