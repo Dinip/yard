@@ -11,7 +11,9 @@ final class FakeShareGateway implements ShareGateway {
   final savedDestinations = <String, ShareDestination>{};
   final discarded = <String>[];
 
-  SaveResult Function(String shareId, ShareDestination destination)? onSave;
+  /// Lets a test decide the outcome, and control when it arrives.
+  Future<SaveResult> Function(String shareId, ShareDestination destination)?
+  onSave;
 
   @override
   Stream<IncomingShare> get changes => _controller.stream;
@@ -22,7 +24,8 @@ final class FakeShareGateway implements ShareGateway {
   @override
   Future<SaveResult> save(String shareId, ShareDestination destination) async {
     final result =
-        onSave?.call(shareId, destination) ?? SaveResult.success(destination);
+        await onSave?.call(shareId, destination) ??
+        SaveResult.success(destination);
     if (result.succeeded) {
       savedDestinations[shareId] = destination;
       emit(_shares[shareId]!.copyWith(state: IncomingShareState.saved));

@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 
 import 'app.dart';
+import 'share/platform_share_gateway.dart';
 
 void main() {
-  runApp(const YardDropApp());
+  runApp(YardDropApp(gateway: PlatformShareGateway()));
 }

@@ -31,13 +31,21 @@ final class IncomingShare {
   final IncomingShareState state;
   final String? error;
 
-  IncomingShare copyWith({IncomingShareState? state, String? error}) {
+  bool get isBatch => files.length > 1;
+
+  // A retry has to be able to clear the previous failure, which `error: null`
+  // alone cannot express.
+  IncomingShare copyWith({
+    IncomingShareState? state,
+    String? error,
+    bool clearError = false,
+  }) {
     return IncomingShare(
       id: id,
       receivedAt: receivedAt,
       files: files,
       state: state ?? this.state,
-      error: error ?? this.error,
+      error: clearError ? null : error ?? this.error,
     );
   }
 }

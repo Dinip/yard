@@ -40,7 +40,7 @@ void main() {
 
   test('an injected failure surfaces the error', () async {
     gateway.emit(share('s1'));
-    gateway.onSave = (_, destination) =>
+    gateway.onSave = (_, destination) async =>
         SaveResult.failure(destination, 'no space left');
 
     final result = await gateway.save('s1', ShareDestination.browserInbox);

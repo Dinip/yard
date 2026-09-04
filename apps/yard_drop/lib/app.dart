@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 
-import 'home_page.dart';
+import 'share/share_gateway.dart';
+import 'share/share_page.dart';
 import 'theme.dart';
 
 class YardDropApp extends StatelessWidget {
-  const YardDropApp({super.key});
+  const YardDropApp({required this.gateway, super.key});
+
+  final ShareGateway gateway;
 
   @override
   Widget build(BuildContext context) {
@@ -12,7 +15,7 @@ class YardDropApp extends StatelessWidget {
       title: 'YARD - Device Farm',
       theme: yardTheme(Brightness.light),
       darkTheme: yardTheme(Brightness.dark),
-      home: const HomePage(),
+      home: SharePage(gateway: gateway),
     );
   }
 }
