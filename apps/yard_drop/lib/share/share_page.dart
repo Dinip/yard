@@ -232,7 +232,9 @@ class _FailedState extends StatelessWidget {
       action: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          FilledButton(onPressed: onRetry, child: const Text('Try again')),
+          // A rejected share — text with no attachment — has nothing to retry.
+          if (share.files.isNotEmpty)
+            FilledButton(onPressed: onRetry, child: const Text('Try again')),
           TextButton(onPressed: onDiscard, child: const Text('Discard')),
         ],
       ),
