@@ -57,10 +57,20 @@ final class ShareController extends ChangeNotifier {
       return;
     }
 
+    // The share may have gained progress from native events since the snapshot.
+    final latest = _queue.firstWhere(
+      (queued) => queued.id == share.id,
+      orElse: () => share,
+    );
+
     _replace(
       result.succeeded
-          ? share.copyWith(state: IncomingShareState.saved, clearError: true)
-          : share.copyWith(
+          ? latest.copyWith(
+              state: IncomingShareState.saved,
+              clearError: true,
+              savedLocation: result.location,
+            )
+          : latest.copyWith(
               state: IncomingShareState.failed,
               error: result.error,
             ),

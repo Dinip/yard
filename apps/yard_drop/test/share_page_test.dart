@@ -90,11 +90,41 @@ void main() {
     expect(find.text('Saving'), findsOneWidget);
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
 
-    gate.complete(const SaveResult.success(ShareDestination.downloads));
+    gate.complete(
+      const SaveResult.success(
+        ShareDestination.downloads,
+        location: 'Download/YARD Drop/Saved',
+      ),
+    );
     await tester.pumpAndSettle();
 
     expect(find.text('Saved'), findsOneWidget);
-    expect(find.textContaining('build.apk is in Downloads'), findsOneWidget);
+    expect(
+      find.textContaining('build.apk is in Download/YARD Drop/Saved'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('a batch save shows how far it has got', (tester) async {
+    gateway.emit(shareFixture());
+    await pumpApp(tester);
+
+    final gate = Completer<SaveResult>();
+    gateway.onSave = (_, _) => gate.future;
+    await tester.tap(find.text('Save to Downloads'));
+    await tester.pump();
+
+    gateway.emit(shareFixture(state: IncomingShareState.saving, progress: 0.5));
+    await tester.pump();
+
+    final indicator = tester.widget<CircularProgressIndicator>(
+      find.byType(CircularProgressIndicator),
+    );
+    expect(indicator.value, 0.5);
+
+    gate.complete(const SaveResult.success(ShareDestination.downloads));
+    await tester.pumpAndSettle();
+    expect(find.text('Saved'), findsOneWidget);
   });
 
   testWidgets('done clears the share and returns to empty', (tester) async {

@@ -30,6 +30,7 @@ class IncomingShareBridge(
     private var observer: ((IncomingShare) -> Unit)? = null
 
     private val stager = ShareStager(context)
+    private val saver = ShareSaver(stager, MediaStoreWriter(context))
     // One worker: batches stage in the order they were shared, and a second
     // share cannot race the first through the same directory.
     private val worker = Executors.newSingleThreadExecutor()
@@ -102,11 +103,25 @@ class IncomingShareBridge(
                 }
             }
 
-            "saveShare" -> result.error(
-                "unimplemented",
-                "Saving to Downloads lands in a later increment.",
-                null,
-            )
+            "saveShare" -> {
+                val id = call.argument<String>("shareId")
+                val destination = call.argument<String>("destination")
+                val share = id?.let(IncomingShareStore::get)
+                if (share == null || destination == null) {
+                    result.error("unknown_share", "That share is no longer pending.", null)
+                } else {
+                    worker.execute {
+                        val outcome = saver.save(share, destination)
+                        main.post {
+                            when (outcome) {
+                                is SaveOutcome.Success -> result.success(saver.savedLocation)
+                                is SaveOutcome.Failure ->
+                                    result.error(outcome.code, outcome.message, null)
+                            }
+                        }
+                    }
+                }
+            }
 
             "purgeExpiredShares" -> {
                 worker.execute { stager.purge() }
@@ -151,6 +166,7 @@ private fun IncomingShare.toWire(): Map<String, Any?> = mapOf(
     "receivedAt" to receivedAtMillis,
     "state" to state.wireName,
     "error" to error,
+    "progress" to progress,
     "files" to files.map { file ->
         mapOf(
             "id" to file.id,

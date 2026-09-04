@@ -169,7 +169,7 @@ class _ReadyState extends StatelessWidget {
           label: const Text('Save to Downloads'),
         ),
         const SizedBox(height: 8),
-        TextButton(onPressed: onDiscard, child: const Text('Discard')),
+        TextButton(onPressed: onDiscard, child: const Text('Cancel')),
       ],
     );
   }
@@ -184,6 +184,7 @@ class _SavingState extends StatelessWidget {
   Widget build(BuildContext context) {
     return _Panel(
       progress: true,
+      progressValue: share.progress,
       title: 'Saving',
       message: share.isBatch
           ? 'Writing ${_fileCount(share.files.length)} to Downloads.'
@@ -204,8 +205,8 @@ class _SavedState extends StatelessWidget {
       icon: Icons.check_circle_outline,
       title: 'Saved',
       message: share.isBatch
-          ? '${_fileCount(share.files.length)} are in Downloads.'
-          : '${share.files.first.displayName} is in Downloads.',
+          ? '${_fileCount(share.files.length)} are in ${_location(share)}.'
+          : '${share.files.first.displayName} is in ${_location(share)}.',
       action: FilledButton(onPressed: onDone, child: const Text('Done')),
     );
   }
@@ -272,6 +273,7 @@ class _Panel extends StatelessWidget {
     required this.message,
     this.icon,
     this.progress = false,
+    this.progressValue,
     this.danger = false,
     this.action,
   });
@@ -280,6 +282,7 @@ class _Panel extends StatelessWidget {
   final String message;
   final IconData? icon;
   final bool progress;
+  final double? progressValue;
   final bool danger;
   final Widget? action;
 
@@ -292,10 +295,10 @@ class _Panel extends StatelessWidget {
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         if (progress)
-          const SizedBox(
+          SizedBox(
             width: 48,
             height: 48,
-            child: CircularProgressIndicator(),
+            child: CircularProgressIndicator(value: progressValue),
           )
         else if (icon != null)
           Icon(icon, size: 64, color: tint),
@@ -318,6 +321,9 @@ class _Panel extends StatelessWidget {
 }
 
 String _fileCount(int count) => count == 1 ? '1 file' : '$count files';
+
+String _location(IncomingShare share) =>
+    share.savedLocation ?? 'Download/YARD Drop/Saved';
 
 String _describe(IncomingFile file) {
   final parts = [

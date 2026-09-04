@@ -30,6 +30,8 @@ data class IncomingShare(
     val files: List<IncomingFile>,
     val state: ShareState,
     val error: String? = null,
+    /** 0..1 while saving, when the staged sizes make it knowable. */
+    val progress: Double? = null,
 ) {
     companion object {
         fun newId(): String = UUID.randomUUID().toString()

@@ -6,6 +6,7 @@ IncomingShare shareFixture({
   List<IncomingFile>? files,
   String? error,
   DateTime? receivedAt,
+  double? progress,
 }) {
   return IncomingShare(
     id: id,
@@ -22,5 +23,6 @@ IncomingShare shareFixture({
         ],
     state: state,
     error: error,
+    progress: progress,
   );
 }

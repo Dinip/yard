@@ -29,11 +29,11 @@ final class PlatformShareGateway implements ShareGateway {
   @override
   Future<SaveResult> save(String shareId, ShareDestination destination) async {
     try {
-      await _methodChannel.invokeMethod<void>('saveShare', {
+      final location = await _methodChannel.invokeMethod<String>('saveShare', {
         'shareId': shareId,
         'destination': destination.name,
       });
-      return SaveResult.success(destination);
+      return SaveResult.success(destination, location: location);
     } on PlatformException catch (error) {
       return SaveResult.failure(destination, error.message ?? error.code);
     }
@@ -58,6 +58,7 @@ IncomingShare _decodeShare(Map<Object?, Object?> wire) {
     files: files,
     state: _decodeState(wire['state']! as String),
     error: wire['error'] as String?,
+    progress: (wire['progress'] as num?)?.toDouble(),
   );
 }
 
