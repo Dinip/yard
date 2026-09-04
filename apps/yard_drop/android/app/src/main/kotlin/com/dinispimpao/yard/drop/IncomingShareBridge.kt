@@ -123,6 +123,10 @@ class IncomingShareBridge(
                 if (id == null) {
                     result.error("invalid_argument", "shareId is required", null)
                 } else {
+                    // Ahead of the queue on purpose: the worker is single-threaded,
+                    // so a discard that waited its turn would run only after the
+                    // staging it is meant to stop had already finished.
+                    stager.cancel(id)
                     IncomingShareStore.remove(id)
                     background("discard") { stager.discard(id) }
                     result.success(null)

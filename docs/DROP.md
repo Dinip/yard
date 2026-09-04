@@ -1,9 +1,8 @@
 # YARD Drop implementation plan
 
-> Status: the Android app receives shares and saves them to the device
+> Status: Android save-to-device is done and signed off on hardware
 > (increments 0 through 7). The browser inbox, its web UI and everything iOS are
-> still plans. The real-device checks in increment 7 are the one part of the
-> Android work that only a provisioned handset can sign off.
+> still plans.
 
 YARD Drop is a first-party Flutter companion that appears as an Android share
 target. It accepts file attachments from any app and gives the tester two
@@ -601,22 +600,41 @@ Android instrumentation tests use a test `ContentProvider` that can return:
 - A stream that fails partway through.
 - A URI without a read grant.
 - A large generated stream without retaining it in memory.
+- A copy cancelled partway, which must leave no staged batch and no prompt.
 
 Instrumentation tests live in `apps/yard_drop/android/app/src/androidTest`, and
 CI runs them on API 29 and API 35 under the emulator.
 
+### Cancelling a share that is still arriving
+
+A 512 MB attachment takes long enough that leaving is a real answer, so the
+receiving screen offers `Cancel`. Two things make it work:
+
+- The stager keeps a set of cancelled share ids and checks it between copy
+  buffers, so a cancel costs at most one 64 KB read rather than the rest of the
+  file.
+- `discardShare` marks the cancellation on the calling thread, ahead of the
+  bridge's single worker. A cancel that queued behind the staging it means to
+  stop would arrive only once that staging had finished, and the share would
+  come back as a ready prompt holding bytes nobody asked to keep.
+
 ### Real-device checks
 
-Test shares from:
+Signed off on an SM-S901B running Android 16, with the 26 instrumentation tests
+green on the same handset. Shares came from Samsung My Files (one file, and four
+at once), the gallery, and a Chrome download. Also checked: cold and warm
+launches, a duplicate filename, a 400 MB file, a 3 GB file, and a cancel during
+ingestion.
 
-- The company app.
-- Android Files.
-- Photos or the device gallery.
-- A browser download.
-- An app that supplies attachments through `ClipData`.
+- A duplicate is written as `name (1).ext` and the screen names what it became.
+- A 400 MB file round-trips byte-identical. The app's native and Java heaps stay
+  flat during it; the only growth is the Flutter renderer's graphics memory.
+- A 3 GB file is refused before anything is staged, naming the 512 MB limit.
+- A cancel mid-ingestion empties `cache/incoming` and returns the screen to its
+  empty state, with no ready prompt appearing afterwards.
 
-Test cold and warm application launches, low free space, duplicate filenames,
-large files and cancellation during ingestion.
+Low free space is the one case not exercised on hardware: filling a handset's
+storage to force it is worth doing on a farm device, not a personal one.
 
 ### Farm provisioning
 

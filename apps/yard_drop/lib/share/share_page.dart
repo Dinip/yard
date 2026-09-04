@@ -71,7 +71,10 @@ class _SharePageState extends State<SharePage> {
     if (share == null) return const _EmptyState();
 
     return switch (share.state) {
-      IncomingShareState.receiving => _ReceivingState(share: share),
+      IncomingShareState.receiving => _ReceivingState(
+        share: share,
+        onCancel: _controller.dismiss,
+      ),
       IncomingShareState.ready => _ReadyState(
         share: share,
         waiting: _controller.waiting,
@@ -110,9 +113,10 @@ class _EmptyState extends StatelessWidget {
 }
 
 class _ReceivingState extends StatelessWidget {
-  const _ReceivingState({required this.share});
+  const _ReceivingState({required this.share, required this.onCancel});
 
   final IncomingShare share;
+  final VoidCallback onCancel;
 
   @override
   Widget build(BuildContext context) {
@@ -123,6 +127,9 @@ class _ReceivingState extends StatelessWidget {
           ? 'Copying the attachment from the app that shared it.'
           : 'Copying ${_fileCount(share.files.length)} from the app that '
                 'shared them.',
+      // A 512 MB attachment takes long enough that leaving is a real answer,
+      // and the copy stops rather than finishing into a prompt nobody wants.
+      action: TextButton(onPressed: onCancel, child: const Text('Cancel')),
     );
   }
 }

@@ -133,6 +133,49 @@ class ShareStagerTest {
         assertTrue("heap grew by ${after - before} bytes", after - before < 16L * 1024 * 1024)
     }
 
+    /**
+     * The reason cancellation is a flag and not a thread interrupt: staging
+     * runs on the bridge's single worker, so a cancel that queued behind it
+     * would arrive only once the copy it means to stop had already finished.
+     */
+    @Test
+    fun cancellingDuringACopyLeavesNothingStagedAndNoPrompt() {
+        val source = FakeFile(bytes = 256L * 1024 * 1024, displayName = "big.bin")
+        val share = pending(source)
+
+        val staging = Thread { stager.stage(share) }
+        staging.start()
+        waitForBytes(share.id)
+        stager.cancel(share.id)
+        staging.join(30_000)
+
+        assertFalse(staging.isAlive)
+        assertNull(IncomingShareStore.get(share.id))
+        assertFalse(File(incomingRoot(context), share.id).exists())
+    }
+
+    @Test
+    fun cancellingBeforeStagingStartsNeverReadsTheAttachment() {
+        val share = pending(FakeFile(bytes = 1_000, displayName = "queued.bin"))
+
+        stager.cancel(share.id)
+        stager.stage(share)
+
+        assertNull(IncomingShareStore.get(share.id))
+        assertFalse(File(incomingRoot(context), share.id).exists())
+    }
+
+    /** A cancelled id must not poison the next share that reuses the stager. */
+    @Test
+    fun aLaterShareStagesNormallyAfterACancel() {
+        val cancelled = pending(FakeFile(bytes = 1_000, displayName = "gone.bin"))
+        stager.cancel(cancelled.id)
+        stager.stage(cancelled)
+        stager.discard(cancelled.id)
+
+        assertEquals(ShareState.READY, stage(FakeFile(bytes = 500, displayName = "next.bin")).state)
+    }
+
     @Test
     fun purgeDropsAnAbandonedBatchAndKeepsALiveOne() {
         val live = stage(FakeFile(bytes = 100, displayName = "live.bin"))
@@ -162,7 +205,25 @@ class ShareStagerTest {
         assertTrue(directory.exists())
     }
 
+    /** Blocks until the copy has put something on disk, so a cancel lands mid-file. */
+    private fun waitForBytes(shareId: String) {
+        val directory = File(incomingRoot(context), shareId)
+        val deadline = System.currentTimeMillis() + 30_000
+        while (System.currentTimeMillis() < deadline) {
+            val part = directory.listFiles()?.firstOrNull { it.name.endsWith(".part") }
+            if (part != null && part.length() > 0) return
+            Thread.sleep(10)
+        }
+        throw AssertionError("staging never started writing for $shareId")
+    }
+
     private fun stage(vararg sources: FakeFile): IncomingShare {
+        val share = pending(*sources)
+        stager.stage(share)
+        return IncomingShareStore.get(share.id)!!
+    }
+
+    private fun pending(vararg sources: FakeFile): IncomingShare {
         val share = IncomingShare(
             id = IncomingShare.newId(),
             receivedAtMillis = System.currentTimeMillis(),
@@ -179,8 +240,7 @@ class ShareStagerTest {
             state = ShareState.RECEIVING,
         )
         IncomingShareStore.put(share)
-        stager.stage(share)
-        return IncomingShareStore.get(share.id)!!
+        return share
     }
 }
 

@@ -3,6 +3,7 @@ package com.dinispimpao.yard.drop
 import android.content.Context
 import android.net.Uri
 import java.io.File
+import java.util.Collections
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -19,11 +20,31 @@ class ShareStager(private val context: Context) {
     private val root: File
         get() = File(context.cacheDir, "incoming")
 
+    /**
+     * Shares the user walked away from while they were still being copied.
+     *
+     * Staging runs on a worker and a cancel arrives on the main thread, so the
+     * copy has to be told to stop rather than be waited for. Without this a
+     * cancelled share would finish staging and reappear as ready, holding bytes
+     * nobody asked to keep.
+     */
+    private val cancelled = Collections.synchronizedSet(mutableSetOf<String>())
+
     /** On-disk names are share and file ids, never a name the sender chose. */
     private fun batchDir(shareId: String) = File(root, shareId)
 
+    /** Stops an in-flight or queued [stage] for [shareId]. Safe from any thread. */
+    fun cancel(shareId: String) {
+        cancelled += shareId
+    }
+
     fun stage(share: IncomingShare) {
         ShareLog.info("staging share ${share.id} with ${share.files.size} file(s)")
+
+        if (share.id in cancelled) {
+            abandon(share.id)
+            return
+        }
 
         if (share.files.size > ShareLimits.MAX_FILES) {
             fail(share, "A share is limited to ${ShareLimits.MAX_FILES} files.")
@@ -40,6 +61,11 @@ class ShareStager(private val context: Context) {
         var batchBytes = 0L
 
         for (file in share.files) {
+            if (share.id in cancelled) {
+                abandon(share.id)
+                return
+            }
+
             val target = File(directory, file.id)
             val partial = File(directory, "${file.id}.part")
             val source = file.source
@@ -50,7 +76,11 @@ class ShareStager(private val context: Context) {
             }
 
             val bytes = try {
-                copy(source, partial, remaining = ShareLimits.MAX_BATCH_BYTES - batchBytes)
+                copy(share.id, source, partial, remaining = ShareLimits.MAX_BATCH_BYTES - batchBytes)
+            } catch (_: StagingCancelled) {
+                partial.delete()
+                abandon(share.id)
+                return
             } catch (error: Throwable) {
                 // One bad attachment does not condemn the batch: a sender can
                 // mix a URI it no longer owns in with files that are fine, and
@@ -75,6 +105,11 @@ class ShareStager(private val context: Context) {
             staged += file.copy(source = null, stagedPath = target.absolutePath, stagedSize = bytes)
         }
 
+        if (share.id in cancelled) {
+            abandon(share.id)
+            return
+        }
+
         writeManifest(directory, share, staged)
 
         // Every attachment failing is a failed share; one surviving file is
@@ -97,7 +132,7 @@ class ShareStager(private val context: Context) {
     }
 
     /** Bounded memory, and the reported size is never trusted as a length. */
-    private fun copy(source: Uri, target: File, remaining: Long): Long {
+    private fun copy(shareId: String, source: Uri, target: File, remaining: Long): Long {
         val input = context.contentResolver.openInputStream(source)
             ?: throw StagingException("The app that shared the file withdrew access to it.")
 
@@ -106,6 +141,10 @@ class ShareStager(private val context: Context) {
             target.outputStream().use { output ->
                 val buffer = ByteArray(ShareLimits.COPY_BUFFER_BYTES)
                 while (true) {
+                    // Between buffers, so a cancel during a 512 MB copy costs at
+                    // most one buffer rather than the rest of the file.
+                    if (shareId in cancelled) throw StagingCancelled()
+
                     val read = stream.read(buffer)
                     if (read == -1) break
 
@@ -151,6 +190,18 @@ class ShareStager(private val context: Context) {
 
     fun discard(shareId: String) {
         batchDir(shareId).deleteRecursively()
+        cancelled -= shareId
+    }
+
+    /**
+     * Leaves nothing on disk and nothing in the store: the share the user
+     * cancelled must not come back as a prompt when staging unwinds.
+     */
+    private fun abandon(shareId: String) {
+        ShareLog.info("share $shareId was cancelled while it was being received")
+        batchDir(shareId).deleteRecursively()
+        IncomingShareStore.remove(shareId)
+        cancelled -= shareId
     }
 
     /**
@@ -186,6 +237,9 @@ class ShareStager(private val context: Context) {
 }
 
 private class StagingException(val userMessage: String) : RuntimeException(userMessage)
+
+/** Not a failure: the user answered the prompt by walking away from it. */
+private class StagingCancelled : RuntimeException()
 
 private fun IncomingFile.failed(message: String) =
     copy(source = null, state = FileState.FAILED, error = message)

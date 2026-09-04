@@ -35,6 +35,18 @@ void main() {
     expect(find.text('Save on this device'), findsNothing);
   });
 
+  testWidgets('a share still arriving can be cancelled', (tester) async {
+    final share = shareFixture(state: IncomingShareState.receiving);
+    gateway.emit(share);
+    await pumpApp(tester);
+
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+
+    expect(gateway.discarded, [share.id]);
+    expect(find.text('Nothing to drop yet'), findsOneWidget);
+  });
+
   testWidgets('one ready file shows its name, size and type', (tester) async {
     gateway.emit(shareFixture());
     await pumpApp(tester);
