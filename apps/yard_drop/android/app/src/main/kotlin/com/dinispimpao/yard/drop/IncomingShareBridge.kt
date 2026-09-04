@@ -79,7 +79,7 @@ class IncomingShareBridge(
                         receivedAtMillis = System.currentTimeMillis(),
                         files = emptyList(),
                         state = ShareState.FAILED,
-                        error = "YARD Drop needs a file attachment. Shared text has nothing to save.",
+                        error = "YARD - Device Farm needs a file attachment. Shared text has nothing to save.",
                     ),
                 )
             }

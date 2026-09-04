@@ -107,7 +107,7 @@ void main() {
           'id': 's1',
           'receivedAt': 1774000000000,
           'state': 'failed',
-          'error': 'YARD Drop needs a file attachment.',
+          'error': 'YARD - Device Farm needs a file attachment.',
           'files': <Object?>[],
         },
       ],
@@ -117,7 +117,7 @@ void main() {
 
     expect(share.state, IncomingShareState.failed);
     expect(share.files, isEmpty);
-    expect(share.error, 'YARD Drop needs a file attachment.');
+    expect(share.error, 'YARD - Device Farm needs a file attachment.');
   });
 
   test('an unknown state does not crash an older screen', () async {
