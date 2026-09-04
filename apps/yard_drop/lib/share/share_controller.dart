@@ -17,11 +17,17 @@ final class ShareController extends ChangeNotifier {
   final ShareGateway _gateway;
   StreamSubscription<IncomingShare>? _subscription;
   final List<IncomingShare> _queue = [];
+  final Set<String> _attempted = {};
 
   /// The share the user is answering for, oldest first.
   IncomingShare? get current => _queue.isEmpty ? null : _queue.first;
 
   int get waiting => _queue.length;
+
+  /// Whether the user already chose a destination for [current]. A failure
+  /// before that is an ingestion failure, which reads differently and cannot be
+  /// retried: the URI grant it needed is gone.
+  bool get attemptedSave => _attempted.contains(current?.id);
 
   Future<void> start() async {
     // Subscribe before the query: an event that lands during it is then a
@@ -43,6 +49,7 @@ final class ShareController extends ChangeNotifier {
     final share = current;
     if (share == null || share.state != IncomingShareState.ready) return;
 
+    _attempted.add(share.id);
     _replace(
       share.copyWith(state: IncomingShareState.saving, clearError: true),
     );
@@ -92,6 +99,7 @@ final class ShareController extends ChangeNotifier {
     if (share == null) return;
 
     _queue.removeAt(0);
+    _attempted.remove(share.id);
     notifyListeners();
     await _gateway.discard(share.id);
   }

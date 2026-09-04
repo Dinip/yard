@@ -39,7 +39,22 @@ class IncomingShareBridge(
     init {
         methodChannel.setMethodCallHandler(this)
         eventChannel.setStreamHandler(this)
-        worker.execute { stager.purge() }
+        background("purge") { stager.purge() }
+    }
+
+    /**
+     * Every background task is wrapped: an uncaught throw on a pool thread ends
+     * the process, and a share that cannot be handled is a message on screen,
+     * not a crash.
+     */
+    private fun background(name: String, task: () -> Unit) {
+        worker.execute {
+            try {
+                task()
+            } catch (error: Throwable) {
+                ShareLog.warn("$name failed", error)
+            }
+        }
     }
 
     /**
@@ -51,17 +66,23 @@ class IncomingShareBridge(
         intent.putExtra(EXTRA_CONSUMED, true)
 
         when (val parsed = ShareIntentParser.parse(intent)) {
-            is ShareIntent.Ignored -> return
+            is ShareIntent.Ignored -> {
+                ShareLog.info("ignoring intent with action ${intent.action}")
+                return
+            }
 
-            is ShareIntent.TextOnly -> IncomingShareStore.put(
-                IncomingShare(
-                    id = IncomingShare.newId(),
-                    receivedAtMillis = System.currentTimeMillis(),
-                    files = emptyList(),
-                    state = ShareState.FAILED,
-                    error = "YARD Drop needs a file attachment. Shared text has nothing to save.",
-                ),
-            )
+            is ShareIntent.TextOnly -> {
+                ShareLog.info("rejecting a share with no attachment")
+                IncomingShareStore.put(
+                    IncomingShare(
+                        id = IncomingShare.newId(),
+                        receivedAtMillis = System.currentTimeMillis(),
+                        files = emptyList(),
+                        state = ShareState.FAILED,
+                        error = "YARD Drop needs a file attachment. Shared text has nothing to save.",
+                    ),
+                )
+            }
 
             is ShareIntent.Files -> {
                 val files = parsed.uris.map { uri ->
@@ -82,15 +103,20 @@ class IncomingShareBridge(
                 )
                 // Ready means staged. The screen shows the receiving state until
                 // the bytes are ours and the URI grant no longer matters.
+                ShareLog.info("received share ${share.id} with ${files.size} file(s)")
                 IncomingShareStore.put(share)
-                worker.execute { stager.stage(share) }
+                background("stage") { stager.stage(share) }
             }
         }
     }
 
     override fun onMethodCall(call: io.flutter.plugin.common.MethodCall, result: MethodChannel.Result) {
         when (call.method) {
-            "listPendingShares" -> result.success(IncomingShareStore.all().map { it.toWire() })
+            "listPendingShares" -> {
+                val pending = IncomingShareStore.all()
+                ShareLog.info("Dart asked for pending shares: ${pending.size}")
+                result.success(pending.map { it.toWire() })
+            }
 
             "discardShare" -> {
                 val id = call.argument<String>("shareId")
@@ -98,7 +124,7 @@ class IncomingShareBridge(
                     result.error("invalid_argument", "shareId is required", null)
                 } else {
                     IncomingShareStore.remove(id)
-                    worker.execute { stager.discard(id) }
+                    background("discard") { stager.discard(id) }
                     result.success(null)
                 }
             }
@@ -110,7 +136,7 @@ class IncomingShareBridge(
                 if (share == null || destination == null) {
                     result.error("unknown_share", "That share is no longer pending.", null)
                 } else {
-                    worker.execute {
+                    background("save") {
                         val outcome = saver.save(share, destination)
                         main.post {
                             when (outcome) {
@@ -124,7 +150,7 @@ class IncomingShareBridge(
             }
 
             "purgeExpiredShares" -> {
-                worker.execute { stager.purge() }
+                background("purge") { stager.purge() }
                 result.success(null)
             }
 

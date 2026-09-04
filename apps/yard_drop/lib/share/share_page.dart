@@ -85,6 +85,7 @@ class _SharePageState extends State<SharePage> {
       ),
       IncomingShareState.failed => _FailedState(
         share: share,
+        attemptedSave: _controller.attemptedSave,
         onRetry: _controller.retry,
         onDiscard: _controller.dismiss,
       ),
@@ -215,11 +216,13 @@ class _SavedState extends StatelessWidget {
 class _FailedState extends StatelessWidget {
   const _FailedState({
     required this.share,
+    required this.attemptedSave,
     required this.onRetry,
     required this.onDiscard,
   });
 
   final IncomingShare share;
+  final bool attemptedSave;
   final VoidCallback onRetry;
   final VoidCallback onDiscard;
 
@@ -228,13 +231,14 @@ class _FailedState extends StatelessWidget {
     return _Panel(
       icon: Icons.error_outline,
       danger: true,
-      title: 'Not saved',
+      title: attemptedSave ? 'Not saved' : 'Share not received',
       message: share.error ?? 'The files could not be written to Downloads.',
       action: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // A rejected share — text with no attachment — has nothing to retry.
-          if (share.files.isNotEmpty)
+          // Retrying only makes sense for a save. A share that never made it
+          // this far lost the URI grant it would need to try again.
+          if (attemptedSave)
             FilledButton(onPressed: onRetry, child: const Text('Try again')),
           TextButton(onPressed: onDiscard, child: const Text('Discard')),
         ],

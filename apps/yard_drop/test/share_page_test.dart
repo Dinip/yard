@@ -162,6 +162,22 @@ void main() {
     expect(find.text('Saved'), findsOneWidget);
   });
 
+  testWidgets('a share that never arrived cannot be retried', (tester) async {
+    gateway.emit(
+      shareFixture(
+        state: IncomingShareState.failed,
+        files: const [],
+        error: 'YARD Drop needs a file attachment.',
+      ),
+    );
+    await pumpApp(tester);
+
+    expect(find.text('Share not received'), findsOneWidget);
+    expect(find.text('YARD Drop needs a file attachment.'), findsOneWidget);
+    expect(find.text('Try again'), findsNothing);
+    expect(find.text('Discard'), findsOneWidget);
+  });
+
   testWidgets('about shows the build identity', (tester) async {
     await pumpApp(tester);
     await tester.tap(find.byIcon(Icons.info_outline));

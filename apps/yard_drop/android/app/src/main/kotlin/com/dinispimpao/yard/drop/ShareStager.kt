@@ -3,7 +3,6 @@ package com.dinispimpao.yard.drop
 import android.content.Context
 import android.net.Uri
 import java.io.File
-import java.io.IOException
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -24,6 +23,8 @@ class ShareStager(private val context: Context) {
     private fun batchDir(shareId: String) = File(root, shareId)
 
     fun stage(share: IncomingShare) {
+        ShareLog.info("staging share ${share.id} with ${share.files.size} file(s)")
+
         if (share.files.size > ShareLimits.MAX_FILES) {
             fail(share, "A share is limited to ${ShareLimits.MAX_FILES} files.")
             return
@@ -51,16 +52,19 @@ class ShareStager(private val context: Context) {
 
             val bytes = try {
                 copy(source, partial, remaining = ShareLimits.MAX_BATCH_BYTES - batchBytes)
-            } catch (error: StagingException) {
+            } catch (error: Throwable) {
+                // Anything at all: a withdrawn URI grant surfaces as a
+                // SecurityException, a vanished provider as an IOException, and
+                // neither is worth taking the process down for. The message may
+                // name the URI, so only our own wording reaches the user.
                 partial.delete()
                 directory.deleteRecursively()
-                fail(share, error.userMessage)
-                return
-            } catch (error: IOException) {
-                // The message may name the URI, which is not ours to surface.
-                partial.delete()
-                directory.deleteRecursively()
-                fail(share, "The file could not be read from the app that shared it.")
+                ShareLog.warn("staging failed for share ${share.id}", error)
+                fail(
+                    share,
+                    (error as? StagingException)?.userMessage
+                        ?: "The file could not be read from the app that shared it.",
+                )
                 return
             }
 
@@ -76,6 +80,7 @@ class ShareStager(private val context: Context) {
         }
 
         writeManifest(directory, share, staged)
+        ShareLog.info("staged share ${share.id}: $batchBytes byte(s)")
         IncomingShareStore.put(share.copy(files = staged, state = ShareState.READY, error = null))
     }
 
@@ -159,6 +164,7 @@ class ShareStager(private val context: Context) {
     }
 
     private fun fail(share: IncomingShare, message: String) {
+        ShareLog.warn("share ${share.id} failed to stage")
         IncomingShareStore.put(share.copy(state = ShareState.FAILED, error = message))
     }
 
