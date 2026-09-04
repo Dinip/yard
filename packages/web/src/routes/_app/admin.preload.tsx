@@ -1,7 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, redirect } from "@tanstack/react-router";
+import type { PreloadInfo } from "@yard/protocol";
 import { Check, FileArchive, LoaderCircle, Search, Trash2, Upload, X } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { type ReactNode, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -30,6 +31,7 @@ export const Route = createFileRoute("/_app/admin/preload")({
 
 type AppPlatform = "ios" | "android";
 type DeploymentState = "queued" | "uploading" | "success" | "failed" | "skipped";
+type PreloadGrouping = "app" | "device";
 
 type DeploymentResult = {
   state: DeploymentState;
@@ -48,6 +50,7 @@ function AdminPreloadPage() {
   const [search, setSearch] = useState("");
   const [dragging, setDragging] = useState(false);
   const [deploying, setDeploying] = useState(false);
+  const [preloadGrouping, setPreloadGrouping] = useState<PreloadGrouping>("app");
   const [results, setResults] = useState<Record<string, DeploymentResult>>({});
   const [removeTarget, setRemoveTarget] = useState<{
     deviceId: string;
@@ -96,6 +99,19 @@ function AdminPreloadPage() {
   );
   const allAvailableSelected =
     availableDevices.length > 0 && availableDevices.every((device) => selected.has(device.id));
+
+  const deviceById = useMemo(
+    () => new Map((devices ?? []).map((device) => [device.id, device])),
+    [devices],
+  );
+  const preloadsByApp = useMemo(
+    () => groupPreloadsByApp(preloads ?? [], deviceById),
+    [preloads, deviceById],
+  );
+  const preloadsByDevice = useMemo(
+    () => groupPreloadsByDevice(preloads ?? [], deviceById),
+    [preloads, deviceById],
+  );
 
   const updateResult = (deviceId: string, result: Partial<DeploymentResult>) => {
     setResults((current) => ({
@@ -237,12 +253,40 @@ function AdminPreloadPage() {
       </div>
 
       <Card>
-        <CardHeader>
-          <CardTitle>Installed preloads</CardTitle>
-          <CardDescription>
-            These apps stay installed between sessions. Removing one also deletes it from the
-            selected device.
-          </CardDescription>
+        <CardHeader className="gap-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <CardTitle>Installed preloads</CardTitle>
+              <CardDescription className="mt-1">
+                {(preloads?.length ?? 0).toLocaleString()} installed{" "}
+                {countNoun(preloads?.length ?? 0, "copy", "copies")} across{" "}
+                {preloadsByApp.length.toLocaleString()}{" "}
+                {countNoun(preloadsByApp.length, "app", "apps")} and{" "}
+                {preloadsByDevice.length.toLocaleString()}{" "}
+                {countNoun(preloadsByDevice.length, "device", "devices")}.
+              </CardDescription>
+            </div>
+            {(preloads?.length ?? 0) > 0 && (
+              <div className="flex rounded-md border p-0.5">
+                {(["app", "device"] as const).map((grouping) => (
+                  <button
+                    key={grouping}
+                    type="button"
+                    aria-pressed={preloadGrouping === grouping}
+                    onClick={() => setPreloadGrouping(grouping)}
+                    className={cn(
+                      "rounded px-3 py-1 text-sm transition-colors",
+                      preloadGrouping === grouping
+                        ? "bg-accent text-foreground"
+                        : "text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    By {grouping}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </CardHeader>
         <CardContent>
           {preloadsLoading ? (
@@ -253,65 +297,75 @@ function AdminPreloadPage() {
             </p>
           ) : (
             <div className="grid gap-2">
-              {preloads?.map((preload) => {
-                const target = devices?.find((device) => device.id === preload.deviceId);
-                const deviceName = target?.name ?? target?.model ?? preload.deviceId;
-                const unavailableReason = target?.reservation
-                  ? "Device is in use"
-                  : target?.provider.status !== "online"
-                    ? "Provider is offline"
-                    : !target || !DEPLOYABLE_STATUSES.has(target.status)
-                      ? `Device is ${target?.status ?? "unavailable"}`
-                      : null;
-                const isRemoving =
-                  removePreload.isPending &&
-                  removePreload.variables?.deviceId === preload.deviceId &&
-                  removePreload.variables.appId === preload.appId;
-
-                return (
-                  <div
-                    key={`${preload.deviceId}:${preload.appId}`}
-                    className="flex flex-wrap items-center gap-3 rounded-lg border px-4 py-3"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate font-medium" title={preload.appId}>
-                        {preload.appId}
-                      </p>
-                      <p className="truncate text-muted-foreground text-xs">
-                        {preload.filename} · {formatBytes(preload.size)}
-                      </p>
-                    </div>
-                    <div className="min-w-0 text-right">
-                      <p className="max-w-56 truncate text-sm" title={deviceName}>
-                        {deviceName}
-                      </p>
-                      <p className="text-muted-foreground text-xs">{target?.provider.name}</p>
-                    </div>
-                    <Badge variant="outline">{platformLabel(preload.platform)}</Badge>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-sm"
-                      disabled={Boolean(unavailableReason) || removePreload.isPending}
-                      aria-label={`Remove ${preload.appId} from ${deviceName}`}
-                      title={unavailableReason ?? "Remove preload"}
-                      onClick={() =>
-                        setRemoveTarget({
-                          deviceId: preload.deviceId,
-                          appId: preload.appId,
-                          deviceName,
-                        })
-                      }
+              {preloadGrouping === "app"
+                ? preloadsByApp.map((group) => (
+                    <PreloadGroup
+                      key={group.key}
+                      title={group.appId}
+                      detail={packageSummary(group.preloads)}
+                      count={`${group.preloads.length} ${countNoun(group.preloads.length, "device", "devices")}`}
+                      platform={group.platform}
                     >
-                      {isRemoving ? (
-                        <LoaderCircle className="size-4 animate-spin" />
-                      ) : (
-                        <Trash2 className="size-4 text-destructive" />
-                      )}
-                    </Button>
-                  </div>
-                );
-              })}
+                      {group.preloads.map((preload) => {
+                        const target = deviceById.get(preload.deviceId);
+                        const deviceName = deviceDisplayName(target, preload.deviceId);
+                        return (
+                          <PreloadChip
+                            key={`${preload.deviceId}:${preload.appId}`}
+                            label={deviceName}
+                            detail={[
+                              target?.provider.name,
+                              preload.filename,
+                              formatBytes(preload.size),
+                            ]
+                              .filter(Boolean)
+                              .join(" · ")}
+                            preload={preload}
+                            deviceName={deviceName}
+                            target={target}
+                            removing={removePreload.isPending}
+                            isRemoving={
+                              removePreload.isPending &&
+                              removePreload.variables?.deviceId === preload.deviceId &&
+                              removePreload.variables.appId === preload.appId
+                            }
+                            onRemove={setRemoveTarget}
+                          />
+                        );
+                      })}
+                    </PreloadGroup>
+                  ))
+                : preloadsByDevice.map((group) => {
+                    const target = deviceById.get(group.deviceId);
+                    const deviceName = deviceDisplayName(target, group.deviceId);
+                    return (
+                      <PreloadGroup
+                        key={group.deviceId}
+                        title={deviceName}
+                        detail={target?.provider.name ?? group.deviceId}
+                        count={`${group.preloads.length} ${countNoun(group.preloads.length, "app", "apps")}`}
+                        platform={group.platform}
+                      >
+                        {group.preloads.map((preload) => (
+                          <PreloadChip
+                            key={`${preload.deviceId}:${preload.appId}`}
+                            label={preload.appId}
+                            detail={`${preload.filename} · ${formatBytes(preload.size)}`}
+                            preload={preload}
+                            deviceName={deviceName}
+                            target={target}
+                            removing={removePreload.isPending}
+                            isRemoving={
+                              removePreload.isPending &&
+                              removePreload.variables?.deviceId === preload.deviceId &&
+                              removePreload.variables.appId === preload.appId
+                            }
+                            onRemove={setRemoveTarget}
+                          />
+                        ))}
+                      </PreloadGroup>
+                    );
+                  })}
             </div>
           )}
         </CardContent>
@@ -576,6 +630,190 @@ function AdminPreloadPage() {
       </Dialog>
     </div>
   );
+}
+
+function PreloadGroup({
+  title,
+  detail,
+  count,
+  platform,
+  children,
+}: {
+  title: string;
+  detail: string;
+  count: string;
+  platform: PreloadInfo["platform"];
+  children: ReactNode;
+}) {
+  return (
+    <section className="overflow-hidden rounded-lg border">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b bg-muted/30 px-3 py-2">
+        <div className="min-w-48 flex-1">
+          <p className="truncate font-medium text-sm" title={title}>
+            {title}
+          </p>
+          <p className="truncate text-muted-foreground text-xs" title={detail}>
+            {detail}
+          </p>
+        </div>
+        <span className="text-muted-foreground text-xs tabular-nums">{count}</span>
+        <Badge variant="outline">{platformLabel(platform)}</Badge>
+      </div>
+      <div className="flex flex-wrap gap-1.5 px-3 py-2">{children}</div>
+    </section>
+  );
+}
+
+function PreloadChip({
+  label,
+  detail,
+  preload,
+  deviceName,
+  target,
+  removing,
+  isRemoving,
+  onRemove,
+}: {
+  label: string;
+  detail: string;
+  preload: PreloadInfo;
+  deviceName: string;
+  target: DeviceListItem | undefined;
+  removing: boolean;
+  isRemoving: boolean;
+  onRemove: (target: { deviceId: string; appId: string; deviceName: string }) => void;
+}) {
+  const unavailableReason = preloadUnavailableReason(target);
+  const removeTitle =
+    unavailableReason ??
+    (removing && !isRemoving ? "Another preload is being removed" : "Remove preload");
+
+  return (
+    <div
+      className="flex h-8 min-w-0 max-w-full items-center rounded-md border bg-background pl-2 shadow-xs"
+      title={detail}
+    >
+      <span className="max-w-64 truncate text-sm">{label}</span>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-xs"
+        className="ml-1 rounded-l-none border-l text-muted-foreground hover:text-destructive"
+        disabled={Boolean(unavailableReason) || removing}
+        aria-label={`Remove ${preload.appId} from ${deviceName}`}
+        title={removeTitle}
+        onClick={() =>
+          onRemove({
+            deviceId: preload.deviceId,
+            appId: preload.appId,
+            deviceName,
+          })
+        }
+      >
+        {isRemoving ? (
+          <LoaderCircle className="size-3 animate-spin" />
+        ) : (
+          <Trash2 className="size-3" />
+        )}
+      </Button>
+    </div>
+  );
+}
+
+function groupPreloadsByApp(
+  preloads: readonly PreloadInfo[],
+  deviceById: ReadonlyMap<string, DeviceListItem>,
+) {
+  const groups = new Map<
+    string,
+    {
+      key: string;
+      appId: string;
+      platform: PreloadInfo["platform"];
+      preloads: PreloadInfo[];
+    }
+  >();
+
+  for (const preload of preloads) {
+    const key = `${preload.platform}:${preload.appId}`;
+    const existing = groups.get(key);
+    if (existing) existing.preloads.push(preload);
+    else {
+      groups.set(key, {
+        key,
+        appId: preload.appId,
+        platform: preload.platform,
+        preloads: [preload],
+      });
+    }
+  }
+
+  return [...groups.values()]
+    .sort((a, b) => a.appId.localeCompare(b.appId))
+    .map((group) => ({
+      ...group,
+      preloads: group.preloads.sort((a, b) =>
+        deviceDisplayName(deviceById.get(a.deviceId), a.deviceId).localeCompare(
+          deviceDisplayName(deviceById.get(b.deviceId), b.deviceId),
+        ),
+      ),
+    }));
+}
+
+function groupPreloadsByDevice(
+  preloads: readonly PreloadInfo[],
+  deviceById: ReadonlyMap<string, DeviceListItem>,
+) {
+  const groups = new Map<
+    string,
+    { deviceId: string; platform: PreloadInfo["platform"]; preloads: PreloadInfo[] }
+  >();
+
+  for (const preload of preloads) {
+    const existing = groups.get(preload.deviceId);
+    if (existing) existing.preloads.push(preload);
+    else {
+      groups.set(preload.deviceId, {
+        deviceId: preload.deviceId,
+        platform: preload.platform,
+        preloads: [preload],
+      });
+    }
+  }
+
+  return [...groups.values()]
+    .sort((a, b) =>
+      deviceDisplayName(deviceById.get(a.deviceId), a.deviceId).localeCompare(
+        deviceDisplayName(deviceById.get(b.deviceId), b.deviceId),
+      ),
+    )
+    .map((group) => ({
+      ...group,
+      preloads: group.preloads.sort((a, b) => a.appId.localeCompare(b.appId)),
+    }));
+}
+
+function packageSummary(preloads: readonly PreloadInfo[]): string {
+  const variants = new Map(preloads.map((preload) => [preload.sha256, preload]));
+  if (variants.size !== 1) return `${variants.size} package variants`;
+  const preload = variants.values().next().value;
+  return preload ? `${preload.filename} · ${formatBytes(preload.size)}` : "";
+}
+
+function deviceDisplayName(device: DeviceListItem | undefined, fallback: string): string {
+  return device?.name ?? device?.model ?? fallback;
+}
+
+function preloadUnavailableReason(device: DeviceListItem | undefined): string | null {
+  if (!device) return "Device is unavailable";
+  if (device.reservation) return "Device is in use";
+  if (device.provider.status !== "online") return "Provider is offline";
+  if (!DEPLOYABLE_STATUSES.has(device.status)) return `Device is ${device.status}`;
+  return null;
+}
+
+function countNoun(count: number, singular: string, plural: string): string {
+  return count === 1 ? singular : plural;
 }
 
 function appPlatform(filename: string): AppPlatform | null {
