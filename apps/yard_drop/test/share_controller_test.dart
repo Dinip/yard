@@ -156,6 +156,36 @@ void main() {
     expect(controller.current?.state, IncomingShareState.saved);
   });
 
+  test('a share still being received can be cancelled', () async {
+    await controller.start();
+    gateway.emit(shareFixture(state: IncomingShareState.receiving));
+    await pumpEventQueue();
+
+    await controller.dismiss();
+
+    expect(controller.current, isNull);
+    expect(gateway.discarded, ['s1']);
+  });
+
+  test(
+    'discarding a failed share does not leave the next one attempted',
+    () async {
+      await controller.start();
+      gateway.emit(shareFixture(id: 's1'));
+      gateway.emit(shareFixture(id: 's2'));
+      await pumpEventQueue();
+      gateway.onSave = (_, destination) async =>
+          SaveResult.failure(destination, 'no space left');
+      await controller.save(ShareDestination.downloads);
+      expect(controller.attemptedSave, isTrue);
+
+      await controller.dismiss();
+
+      expect(controller.current?.id, 's2');
+      expect(controller.attemptedSave, isFalse);
+    },
+  );
+
   test('refresh reconciles a share missed while backgrounded', () async {
     await controller.start();
     await controller.dismiss();

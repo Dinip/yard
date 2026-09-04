@@ -1,0 +1,12 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Exported because instrumentation code runs under the app's UID
+             while the provider belongs to the test APK. It is only ever built
+             into that APK, never into a release. -->
+        <provider
+            android:name="com.dinispimpao.yard.drop.FakeFilesProvider"
+            android:authorities="com.dinispimpao.yard.drop.test.files"
+            android:exported="true"
+            android:grantUriPermissions="true" />
+    </application>
+</manifest>
