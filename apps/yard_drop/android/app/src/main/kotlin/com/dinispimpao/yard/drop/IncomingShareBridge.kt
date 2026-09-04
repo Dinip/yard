@@ -2,9 +2,12 @@ package com.dinispimpao.yard.drop
 
 import android.content.Context
 import android.content.Intent
+import android.os.Handler
+import android.os.Looper
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
+import java.util.concurrent.Executors
 
 private const val METHOD_CHANNEL = "com.dinispimpao.yard.drop/share"
 private const val EVENT_CHANNEL = "com.dinispimpao.yard.drop/share_events"
@@ -24,10 +27,18 @@ class IncomingShareBridge(
     private val methodChannel = MethodChannel(messenger, METHOD_CHANNEL)
     private val eventChannel = EventChannel(messenger, EVENT_CHANNEL)
     private var events: EventChannel.EventSink? = null
+    private var observer: ((IncomingShare) -> Unit)? = null
+
+    private val stager = ShareStager(context)
+    // One worker: batches stage in the order they were shared, and a second
+    // share cannot race the first through the same directory.
+    private val worker = Executors.newSingleThreadExecutor()
+    private val main = Handler(Looper.getMainLooper())
 
     init {
         methodChannel.setMethodCallHandler(this)
         eventChannel.setStreamHandler(this)
+        worker.execute { stager.purge() }
     }
 
     /**
@@ -62,14 +73,16 @@ class IncomingShareBridge(
                         source = uri,
                     )
                 }
-                IncomingShareStore.put(
-                    IncomingShare(
-                        id = IncomingShare.newId(),
-                        receivedAtMillis = System.currentTimeMillis(),
-                        files = files,
-                        state = ShareState.READY,
-                    ),
+                val share = IncomingShare(
+                    id = IncomingShare.newId(),
+                    receivedAtMillis = System.currentTimeMillis(),
+                    files = files,
+                    state = ShareState.RECEIVING,
                 )
+                // Ready means staged. The screen shows the receiving state until
+                // the bytes are ours and the URI grant no longer matters.
+                IncomingShareStore.put(share)
+                worker.execute { stager.stage(share) }
             }
         }
     }
@@ -84,6 +97,7 @@ class IncomingShareBridge(
                     result.error("invalid_argument", "shareId is required", null)
                 } else {
                     IncomingShareStore.remove(id)
+                    worker.execute { stager.discard(id) }
                     result.success(null)
                 }
             }
@@ -94,7 +108,10 @@ class IncomingShareBridge(
                 null,
             )
 
-            "purgeExpiredShares" -> result.success(null)
+            "purgeExpiredShares" -> {
+                worker.execute { stager.purge() }
+                result.success(null)
+            }
 
             else -> result.notImplemented()
         }
@@ -102,16 +119,27 @@ class IncomingShareBridge(
 
     override fun onListen(arguments: Any?, sink: EventChannel.EventSink?) {
         events = sink
-        IncomingShareStore.observe { share -> events?.success(share.toWire()) }
+        // Staging reports from the worker thread; an event sink is main-thread
+        // only.
+        val observer: (IncomingShare) -> Unit = { share ->
+            val wire = share.toWire()
+            main.post { events?.success(wire) }
+        }
+        this.observer = observer
+        IncomingShareStore.observe(observer)
     }
 
     override fun onCancel(arguments: Any?) {
-        IncomingShareStore.observe(null)
+        observer?.let(IncomingShareStore::stopObserving)
+        observer = null
         events = null
     }
 
     fun dispose() {
-        IncomingShareStore.observe(null)
+        observer?.let(IncomingShareStore::stopObserving)
+        observer = null
+        main.removeCallbacksAndMessages(null)
+        worker.shutdown()
         events = null
         methodChannel.setMethodCallHandler(null)
         eventChannel.setStreamHandler(null)

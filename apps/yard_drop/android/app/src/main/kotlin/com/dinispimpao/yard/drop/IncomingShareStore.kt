@@ -15,8 +15,13 @@ data class IncomingFile(
     val id: String,
     val displayName: String,
     val mimeType: String?,
+    /** What the sending app claimed, which may be absent or wrong. */
     val reportedSize: Long?,
+    /** Non-null only until the file has been copied out of its URI grant. */
     val source: Uri?,
+    val stagedPath: String? = null,
+    /** Bytes actually copied. This is the one that is true. */
+    val stagedSize: Long? = null,
 )
 
 data class IncomingShare(
@@ -63,7 +68,16 @@ object IncomingShareStore {
      * the queue is the source of truth and an event is only a nudge.
      */
     @Synchronized
-    fun observe(listener: ((IncomingShare) -> Unit)?) {
+    fun observe(listener: (IncomingShare) -> Unit) {
         this.listener = listener
+    }
+
+    /**
+     * Identity-checked, because a rotation can destroy the old activity after
+     * the new one has already subscribed, and a blind clear would silence it.
+     */
+    @Synchronized
+    fun stopObserving(listener: (IncomingShare) -> Unit) {
+        if (this.listener === listener) this.listener = null
     }
 }
