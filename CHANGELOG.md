@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.0](https://github.com/Dinip/yard/compare/v0.3.1...v0.4.0) (2026-09-05)
+
+
+### Features
+
+* add managed app preloads ([#54](https://github.com/Dinip/yard/issues/54)) ([9219173](https://github.com/Dinip/yard/commit/92191736e93fa8bad5a98314a27fcc97eaf53bf1))
+
+
+### Bug Fixes
+
+* **web:** normalize session button styles ([#53](https://github.com/Dinip/yard/issues/53)) ([6e590ae](https://github.com/Dinip/yard/commit/6e590aeec1527bcb3197e6c35db343fe80bbc0cf))
+
 ## [0.3.1](https://github.com/Dinip/yard/compare/v0.3.0...v0.3.1) (2026-09-04)
 
 
