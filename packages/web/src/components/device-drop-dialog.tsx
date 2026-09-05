@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Download, Inbox, Loader2, TriangleAlert } from "lucide-react";
-import { useRef, useState } from "react";
+import { useRef } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -10,9 +10,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { formatBytes, saveBlob } from "@/lib/download";
+import { formatBytes } from "@/lib/download";
 import { type DropBatch, type DropFile, readInbox } from "@/lib/drop-inbox";
-import { fetchDeviceFile, listDeviceFiles } from "@/lib/screen/session";
+import { fetchDeviceFile, listDeviceFiles, streamDeviceFile } from "@/lib/screen/session";
 
 /** Slow enough to be free, fast enough that a share feels like it arrives. */
 const POLL_MS = 2000;
@@ -34,7 +34,6 @@ export function DeviceDropDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const [downloading, setDownloading] = useState<string | null>(null);
   // Survives the polls, not the dialog: reading a manifest is an audited file
   // pull, and a batch never changes once it is complete.
   const seen = useRef(new Map<string, DropBatch>());
@@ -57,14 +56,15 @@ export function DeviceDropDialog({
     retry: false,
   });
 
+  // A share is whatever the tester had on the phone, so it is sized like a
+  // build artifact rather than a screenshot: the browser streams it to disk
+  // instead of assembling it in a tab. That leaves nothing to report here —
+  // failing to mint a token is the only part still ours.
   const download = async (file: DropFile) => {
-    setDownloading(file.path);
     try {
-      saveBlob(await fetchDeviceFile(deviceId, file.path), file.name);
+      await streamDeviceFile(deviceId, file.path);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Download failed");
-    } finally {
-      setDownloading(null);
     }
   };
 
@@ -122,14 +122,9 @@ export function DeviceDropDialog({
                             className="size-7 shrink-0"
                             title={`Download ${file.name}`}
                             aria-label={`Download ${file.name}`}
-                            disabled={downloading !== null}
                             onClick={() => void download(file)}
                           >
-                            {downloading === file.path ? (
-                              <Loader2 className="size-4 animate-spin" />
-                            ) : (
-                              <Download className="size-4" />
-                            )}
+                            <Download className="size-4" />
                           </Button>
                         </li>
                       ))}

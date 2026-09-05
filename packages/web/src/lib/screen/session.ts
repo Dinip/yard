@@ -198,6 +198,40 @@ export async function fetchDeviceFile(deviceId: string, path: string): Promise<B
   return response.blob();
 }
 
+/**
+ * `GET /s/:deviceId/file` — the same bytes, but never held in the browser.
+ *
+ * [fetchDeviceFile] reads a whole response into a `Blob` first, which is fine
+ * for a screenshot and wrong for a 2 GB attachment: the tab holds the entire
+ * file in memory before the user has anywhere to put it. Handing the URL to the
+ * browser instead lets it stream straight to disk, and the provider's
+ * `Content-Disposition` names the file, so the browser never has to be told.
+ *
+ * A hidden iframe rather than an anchor. On the happy path either works — an
+ * `attachment` response downloads without navigating — but a provider that
+ * answers an error sends no disposition, and an anchor would then navigate the
+ * whole tab to it, throwing away a live session over a file that had been
+ * deleted. The iframe absorbs that.
+ *
+ * The cost is that nothing here can observe the download: no progress, no
+ * completion, no error. The browser owns it from this point, which is the whole
+ * point.
+ */
+export async function streamDeviceFile(deviceId: string, path: string): Promise<void> {
+  const grant = await mintToken(deviceId);
+  const url = new URL(`${grant.providerBaseUrl}/s/${deviceId}/file`);
+  url.searchParams.set("token", grant.token);
+  url.searchParams.set("path", path);
+
+  const frame = document.createElement("iframe");
+  frame.hidden = true;
+  frame.src = url.toString();
+  document.body.append(frame);
+  // Long enough for the request to be on the wire; removing it earlier can
+  // cancel the download in some browsers.
+  setTimeout(() => frame.remove(), 60_000);
+}
+
 export interface InstallResult {
   ok: boolean;
   filename?: string;

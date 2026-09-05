@@ -846,6 +846,29 @@ Add a download helper that:
 Use it for YARD Drop first. Decide separately whether the generic Files dialog
 should adopt it.
 
+`streamDeviceFile` in `packages/web/src/lib/screen/session.ts` mints a token,
+builds the provider URL and hands it to the browser. The provider already
+answered with `Content-Disposition: attachment` and a `Content-Length`, so
+nothing changed on that side — the browser names the file and streams it to
+disk, and the tab never holds it.
+
+**A hidden iframe, not an anchor.** On the happy path either works, because an
+`attachment` response downloads without navigating. But a provider that answers
+an error sends no disposition, and an anchor would then navigate the whole tab
+to it — throwing away a live session over a file that cleanup had already
+removed. The iframe absorbs that.
+
+The cost is that the browser owns the transfer from that point: no progress, no
+completion, no error. The per-file spinner went with it. Minting the token is
+the only part still worth reporting, and it is the only part that still can be.
+
+The generic Files dialog still assembles a `Blob`. It browses a device rather
+than collecting what somebody deliberately sent, and losing its error reporting
+buys less there; that is a separate decision, deliberately not taken here.
+
+`fetchDeviceFile` stays for `batch.json`, which is a few hundred bytes and is
+parsed rather than saved.
+
 Acceptance criteria:
 
 - The browser does not construct a `Blob` for a YARD Drop download.
