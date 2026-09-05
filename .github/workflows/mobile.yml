@@ -1,0 +1,82 @@
+# The YARD Drop release build. Called by the root release workflow, never on its
+# own: the version comes from the caller, so a build can never invent one.
+#
+# Separate from images.yml because a Flutter toolchain has nothing to do with a
+# container build, and a farm installs this APK by hand rather than pulling it.
+
+name: Mobile
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: The released semantic version, without a leading v.
+        type: string
+        required: true
+    secrets:
+      keystore:
+        description: Base64 of the farm's signing keystore. Absent means debug keys.
+        required: false
+      keystore_password:
+        required: false
+      key_alias:
+        required: false
+      key_password:
+        required: false
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: apps/yard_drop
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    # Lifted to env because the secrets context is not readable from a step's
+    # `if`, and whether the farm key is configured decides how this signs.
+    env:
+      KEYSTORE: ${{ secrets.keystore }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.35.6
+          channel: stable
+          cache: true
+      - run: flutter pub get
+
+      - name: Restore the signing keystore
+        if: env.KEYSTORE != ''
+        run: |
+          echo "$KEYSTORE" | base64 -d > "$RUNNER_TEMP/farm.jks"
+          echo "YARD_KEYSTORE_PATH=$RUNNER_TEMP/farm.jks" >> "$GITHUB_ENV"
+
+      # The three things a bug report needs: which release, which CI run built
+      # it, and which commit it came from. They reach Dart through BuildInfo and
+      # end up in every batch manifest the app writes, so a file pulled off a
+      # device names the build that put it there.
+      - name: Build the release APK
+        env:
+          YARD_KEYSTORE_PASSWORD: ${{ secrets.keystore_password }}
+          YARD_KEY_ALIAS: ${{ secrets.key_alias }}
+          YARD_KEY_PASSWORD: ${{ secrets.key_password }}
+        run: |
+          flutter build apk --release \
+            --build-name="${{ inputs.version }}" \
+            --build-number="${{ github.run_number }}" \
+            --dart-define=YARD_VERSION="${{ inputs.version }}" \
+            --dart-define=YARD_BUILD_NUMBER="${{ github.run_number }}" \
+            --dart-define=YARD_COMMIT="${GITHUB_SHA:0:7}"
+          mv build/app/outputs/flutter-apk/app-release.apk \
+             "$RUNNER_TEMP/yard-drop-${{ inputs.version }}.apk"
+
+      - name: Attach it to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "v${{ inputs.version }}" "$RUNNER_TEMP/yard-drop-${{ inputs.version }}.apk" --clobber

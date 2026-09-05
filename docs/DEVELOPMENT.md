@@ -281,6 +281,7 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml \
 | `usbmuxd-image.yml` | manual | publishes the requested multi-platform sidecar tags |
 | `rust-cache.yml` | push to `main` touching Rust | rebuilds the Rust cache that pull requests restore |
 | `flutter.yml` | pull requests and `main` touching `apps/yard_drop` | analyzes, tests and debug-builds the Android companion |
+| `mobile.yml` | called by `release.yml` | builds the YARD Drop release APK and attaches it to the release |
 
 `pr.yml`, `edge.yml` and `release.yml` call `images.yml`, which builds each
 architecture on its own native runner (`ubuntu-24.04` and `ubuntu-24.04-arm`)
@@ -316,7 +317,10 @@ You don't tag by hand. [release-please](https://github.com/googleapis/release-pl
 keeps a PR titled `chore(main): release 0.2.0` open against `main`, rewriting it
 on every push. It contains the version bump, an updated `CHANGELOG.md`, and
 nothing else. **Merging that PR is the release** — it creates the tag and the
-GitHub release, and `release.yml` publishes the images for it.
+GitHub release, and `release.yml` publishes the images for it and attaches the
+YARD Drop APK, stamped with the version, the CI run number and the commit. See
+[DROP.md](./DROP.md) for the signing secrets that APK expects; without them it
+is signed with debug keys.
 
 The version comes from the commits since the last release, which is the reason
 the [Conventional Commits](https://www.conventionalcommits.org) rule is

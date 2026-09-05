@@ -638,7 +638,7 @@ storage to force it is worth doing on a farm device, not a personal one.
 
 ### Farm provisioning
 
-- Build an internally signed APK.
+- Take the APK attached to the release, built and signed by `mobile.yml`.
 - Install it before a reservation begins so it belongs to the device baseline.
 - Cover `/sdcard/Download/YARD Drop` in the device's `cleanup_paths`, which
   `/sdcard/Download` already does.
@@ -868,6 +868,28 @@ buys less there; that is a separate decision, deliberately not taken here.
 
 `fetchDeviceFile` stays for `batch.json`, which is a few hundred bytes and is
 parsed rather than saved.
+
+## Releasing the APK
+
+`.github/workflows/mobile.yml` builds the release APK and attaches it to the
+GitHub release. It is a reusable workflow called by `release.yml`, so the
+version comes from release-please rather than from anything the build decides
+for itself, and the same file gains the iOS job later.
+
+The build stamps three things through `--dart-define`, which `BuildInfo` reads:
+the released version, the CI run number as the build number, and the short
+commit. They end up in the About screen and in every `batch.json` the app
+writes, so a file pulled off a device names the build that put it there.
+
+Signing is optional and degrades on purpose. With `YARD_DROP_KEYSTORE` and its
+three companion secrets set, the APK is signed with the farm's key; without
+them Gradle falls back to debug keys, which is the difference between something
+you can sideload onto your own handset and something a farm will accept as an
+upgrade. The secrets are the farm operator's to add — nothing in the repository
+can create them.
+
+`Mobile` does not run on a pull request. `Flutter` does, and it is the one that
+analyses, tests and runs the instrumentation matrix.
 
 Acceptance criteria:
 

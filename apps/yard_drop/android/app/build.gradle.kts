@@ -30,11 +30,26 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    // The farm's own signing key, supplied by the release workflow through the
+    // environment. A locally built release APK falls back to debug keys, which
+    // is the difference between something you can install on your own handset
+    // and something the farm will accept as an upgrade.
+    val keystore = System.getenv("YARD_KEYSTORE_PATH")
+
+    signingConfigs {
+        if (keystore != null) {
+            create("farm") {
+                storeFile = file(keystore)
+                storePassword = System.getenv("YARD_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("YARD_KEY_ALIAS")
+                keyPassword = System.getenv("YARD_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // Release signing arrives with the release workflow; debug keys keep
-            // `flutter run --release` working until then.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName(if (keystore != null) "farm" else "debug")
         }
     }
 }
