@@ -276,6 +276,13 @@ pub trait DeviceBackend: Send + Sync + 'static {
     /// cannot leak disk.
     async fn install(&self, staged: &Path, progress: &dyn ProgressSink) -> Result<()>;
 
+    /// Reads the application identifier from a package before a protected
+    /// preload is installed. Cleanup uses it to notice a later uninstall
+    /// without relying on the upload filename.
+    async fn artifact_app_id(&self, _staged: &Path) -> Result<String> {
+        Err(BackendError::Unsupported("identifying an app package"))
+    }
+
     async fn uninstall(&self, app_id: &str) -> Result<()>;
     async fn launch(&self, app_id: &str, args: &[String]) -> Result<()>;
 

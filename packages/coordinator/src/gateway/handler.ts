@@ -218,21 +218,49 @@ export class GatewaySession {
       case "install.finished":
         // The uploaded file is already deleted by the time this arrives — this
         // row is the only record that the install ever happened.
-        await audit(db, msg.userId, "device.install", "device", msg.deviceId, {
-          filename: msg.filename,
-          size: msg.size,
-          sha256: msg.sha256,
-          ok: msg.ok,
-          error: msg.error,
-          providerId: this.auth.providerId,
-        });
+        if (
+          (msg.mode === "preload" || msg.mode === "preload.repair") &&
+          msg.appId &&
+          msg.platform
+        ) {
+          this.conn?.upsertPreload({
+            deviceId: msg.deviceId,
+            appId: msg.appId,
+            platform: msg.platform,
+            filename: msg.filename,
+            size: msg.size,
+            sha256: msg.sha256,
+          });
+          deviceEvents.publish();
+        }
+        await audit(
+          db,
+          msg.userId,
+          msg.mode === "preload" || msg.mode === "preload.repair"
+            ? "device.preload"
+            : "device.install",
+          "device",
+          msg.deviceId,
+          {
+            filename: msg.filename,
+            size: msg.size,
+            sha256: msg.sha256,
+            ok: msg.ok,
+            error: msg.error,
+            mode: msg.mode ?? "session",
+            protected: msg.mode === "preload" || msg.mode === "preload.repair",
+            repair: msg.mode === "preload.repair",
+            appId: msg.appId,
+            platform: msg.platform,
+            providerId: this.auth.providerId,
+          },
+        );
         break;
 
       case "cleanup.finished":
         // Nobody's action: the reservation ending is what caused it, and the
         // person who released the device did not choose any of this. The row
-        // is the only record a device was ever reset — there is no artifact
-        // store, exactly as with installs.
+        // is the record of the reset; preload packages remain provider-local.
         await audit(db, null, "device.cleanup", "device", msg.deviceId, {
           removed: msg.removed,
           cleared: msg.cleared,
@@ -290,7 +318,12 @@ export class GatewaySession {
 
     await this.reconcile(msg.devices);
 
-    this.conn = new ProviderConnection(this.auth.providerId, msg.publicBaseUrl, this.send);
+    this.conn = new ProviderConnection(
+      this.auth.providerId,
+      msg.publicBaseUrl,
+      this.send,
+      msg.preloads ?? [],
+    );
     providers.add(this.conn);
 
     this.send({

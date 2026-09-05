@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/Dinip/yard/compare/v0.3.0...v0.3.1) (2026-09-04)
+
+
+### Bug Fixes
+
+* **provider:** list iOS apps over the streaming feature ([#48](https://github.com/Dinip/yard/issues/48)) ([1e50542](https://github.com/Dinip/yard/commit/1e505427cff4a96708b0ff21339b12f0f5a89706))
+
 ## [0.3.0](https://github.com/Dinip/yard/compare/v0.2.0...v0.3.0) (2026-08-31)
 
 

@@ -57,8 +57,9 @@ Lifecycle: `absent` → `present` → `preparing` → `ready` → `busy` → `cl
 - `ready` — reservable
 - `busy` — an active reservation exists
 - `cleaning` — released, being reset by its provider before it is offered again.
-  Only reached when cleanup policy is on; `updatedAt` is when it started, which
-  is what the reaper measures against. See [CLEANUP.md](CLEANUP.md)
+  Reached while a connected provider checks the device after release, even when
+  ordinary cleanup steps are off; `updatedAt` is when it started, which is what
+  the reaper measures against. See [CLEANUP.md](CLEANUP.md)
 
 `busy` is the coordinator's alone. A provider has no notion of reservations and
 reports a device somebody is driving as `ready`, so the gateway resolves an
@@ -155,16 +156,19 @@ issues a token and verifies a signature over it.
 
 `actorUserId`, `action`, `targetType`/`targetId`, `metadata` (jsonb), `at`.
 
-Installs are recorded here (device, filename, size, sha256, outcome) because
-**there is no artifact table** — the uploaded file is already deleted by the time
-the row is written.
+Installs are recorded here (device, filename, size, sha256, outcome). Session
+uploads are deleted after installation; protected preload packages are retained
+by the provider rather than copied into Postgres.
 
 ## What is deliberately absent
 
-**No `app` / artifact table.** Uploads are per-install and transient. An install
-is a *request against a device*, not a row that outlives it. This removes object
-storage, artifact GC, quota management, and a whole class of "which build is
-this?" confusion from the system.
+**No `app` / artifact table in the coordinator.** Session uploads are per-install
+and transient. Protected preloads are provider-local desired state: each provider
+stores a manifest and package copy under `preload_dir`, then repairs missing apps
+during session cleanup. This keeps package bytes out of Postgres while allowing
+preload state to survive provider restarts. Removing a preload updates that
+provider-local manifest and deletes its package when no other device references
+the same artifact.
 
 **No table of pending ADB approvals.** A holder being asked to approve an
 unknown key is answering about a TCP connection parked on a provider right now.

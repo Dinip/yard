@@ -93,9 +93,23 @@ export const AppInfo = named(
   }),
 );
 
+/** A provider-retained preload, reported as desired state rather than bytes. */
+export const PreloadInfo = named(
+  "PreloadInfo",
+  z.object({
+    deviceId: z.string(),
+    appId: z.string(),
+    platform: Platform,
+    filename: z.string(),
+    size: z.number().int(),
+    sha256: z.string(),
+  }),
+);
+
 export type Platform = z.infer<typeof Platform>;
 export type DeviceStatus = z.infer<typeof DeviceStatus>;
 export type Display = z.infer<typeof Display>;
 export type Battery = z.infer<typeof Battery>;
 export type DeviceSnapshot = z.infer<typeof DeviceSnapshot>;
 export type AppInfo = z.infer<typeof AppInfo>;
+export type PreloadInfo = z.infer<typeof PreloadInfo>;

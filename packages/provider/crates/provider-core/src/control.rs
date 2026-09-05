@@ -18,7 +18,7 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
 use tracing::{debug, error, info, warn};
 use yard_protocol::{
-    CommandData, CommandPayload, CoordinatorMessage, DeviceSnapshot, ProviderMessage,
+    CommandData, CommandPayload, CoordinatorMessage, DeviceSnapshot, PreloadInfo, ProviderMessage,
     PROTOCOL_VERSION,
 };
 
@@ -33,6 +33,11 @@ pub trait CommandHandler: Send + Sync + 'static {
 
     /// The full inventory to send in `hello`, gathered fresh on every connect.
     async fn inventory(&self) -> Vec<DeviceSnapshot>;
+
+    /// Provider-local protected preload metadata to send in `hello`.
+    async fn preload_inventory(&self) -> Vec<PreloadInfo> {
+        Vec::new()
+    }
 
     /// Called whenever the socket drops, so per-device state that the
     /// coordinator is the source of truth for can be cleared.
@@ -190,6 +195,7 @@ impl ControlClient {
             public_base_url: self.config.public_base().to_owned(),
             hostname: hostname(),
             devices: self.handler.inventory().await,
+            preloads: Some(self.handler.preload_inventory().await),
         };
         sink.send(Message::Text(serde_json::to_string(&hello)?.into()))
             .await

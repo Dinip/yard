@@ -16,6 +16,7 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as AppProvidersRouteImport } from './routes/_app/providers'
 import { Route as AppSettingsRouteImport } from './routes/_app/settings'
 import { Route as AppAdminAuditRouteImport } from './routes/_app/admin.audit'
+import { Route as AppAdminPreloadRouteImport } from './routes/_app/admin.preload'
 import { Route as AppAdminProvidersRouteImport } from './routes/_app/admin.providers'
 import { Route as AppAdminSettingsRouteImport } from './routes/_app/admin.settings'
 import { Route as AppAdminUsersRouteImport } from './routes/_app/admin.users'
@@ -56,6 +57,11 @@ const AppAdminAuditRoute = AppAdminAuditRouteImport.update({
   path: '/admin/audit',
   getParentRoute: () => AppRoute,
 } as any)
+const AppAdminPreloadRoute = AppAdminPreloadRouteImport.update({
+  id: '/admin/preload',
+  path: '/admin/preload',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppAdminProvidersRoute = AppAdminProvidersRouteImport.update({
   id: '/admin/providers',
   path: '/admin/providers',
@@ -94,6 +100,7 @@ export interface FileRoutesByFullPath {
   '/providers': typeof AppProvidersRoute
   '/settings': typeof AppSettingsRoute
   '/admin/audit': typeof AppAdminAuditRoute
+  '/admin/preload': typeof AppAdminPreloadRoute
   '/admin/providers': typeof AppAdminProvidersRoute
   '/admin/settings': typeof AppAdminSettingsRoute
   '/admin/users': typeof AppAdminUsersRoute
@@ -107,6 +114,7 @@ export interface FileRoutesByTo {
   '/providers': typeof AppProvidersRoute
   '/settings': typeof AppSettingsRoute
   '/admin/audit': typeof AppAdminAuditRoute
+  '/admin/preload': typeof AppAdminPreloadRoute
   '/admin/providers': typeof AppAdminProvidersRoute
   '/admin/settings': typeof AppAdminSettingsRoute
   '/admin/users': typeof AppAdminUsersRoute
@@ -123,6 +131,7 @@ export interface FileRoutesById {
   '/_app/providers': typeof AppProvidersRoute
   '/_app/settings': typeof AppSettingsRoute
   '/_app/admin/audit': typeof AppAdminAuditRoute
+  '/_app/admin/preload': typeof AppAdminPreloadRoute
   '/_app/admin/providers': typeof AppAdminProvidersRoute
   '/_app/admin/settings': typeof AppAdminSettingsRoute
   '/_app/admin/users': typeof AppAdminUsersRoute
@@ -138,6 +147,7 @@ export interface FileRouteTypes {
     | '/providers'
     | '/settings'
     | '/admin/audit'
+    | '/admin/preload'
     | '/admin/providers'
     | '/admin/settings'
     | '/admin/users'
@@ -151,6 +161,7 @@ export interface FileRouteTypes {
     | '/providers'
     | '/settings'
     | '/admin/audit'
+    | '/admin/preload'
     | '/admin/providers'
     | '/admin/settings'
     | '/admin/users'
@@ -166,6 +177,7 @@ export interface FileRouteTypes {
     | '/_app/providers'
     | '/_app/settings'
     | '/_app/admin/audit'
+    | '/_app/admin/preload'
     | '/_app/admin/providers'
     | '/_app/admin/settings'
     | '/_app/admin/users'
@@ -232,6 +244,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppAdminAuditRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/admin/preload': {
+      id: '/_app/admin/preload'
+      path: '/admin/preload'
+      fullPath: '/admin/preload'
+      preLoaderRoute: typeof AppAdminPreloadRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/admin/providers': {
       id: '/_app/admin/providers'
       path: '/admin/providers'
@@ -281,6 +300,7 @@ interface AppRouteChildren {
   AppProvidersRoute: typeof AppProvidersRoute
   AppSettingsRoute: typeof AppSettingsRoute
   AppAdminAuditRoute: typeof AppAdminAuditRoute
+  AppAdminPreloadRoute: typeof AppAdminPreloadRoute
   AppAdminProvidersRoute: typeof AppAdminProvidersRoute
   AppAdminSettingsRoute: typeof AppAdminSettingsRoute
   AppAdminUsersRoute: typeof AppAdminUsersRoute
@@ -292,6 +312,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppProvidersRoute: AppProvidersRoute,
   AppSettingsRoute: AppSettingsRoute,
   AppAdminAuditRoute: AppAdminAuditRoute,
+  AppAdminPreloadRoute: AppAdminPreloadRoute,
   AppAdminProvidersRoute: AppAdminProvidersRoute,
   AppAdminSettingsRoute: AppAdminSettingsRoute,
   AppAdminUsersRoute: AppAdminUsersRoute,

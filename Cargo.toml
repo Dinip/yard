@@ -3,7 +3,7 @@ resolver = "2"
 members = ["packages/provider/crates/*"]
 
 [workspace.package]
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 rust-version = "1.85"
 license = "MIT"
@@ -31,12 +31,17 @@ futures = "0.3"
 # Streaming HTTP bodies for the fallback video path.
 async-stream = "0.3"
 async-trait = "0.1"
+async_zip = { version = "0.0.18", features = ["tokio", "deflate"] }
+apk-info-axml = "1.0.12"
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 # iOS device services: lockdown, CoreDevice, RSD. Pinned exactly — upstream
 # warns of breaking changes at every point release until 0.2.0
 # (../idevice/README.md), and the ported device layer is written against this
-# API surface.
-idevice = { version = "=0.1.65", features = ["full"] }
+# API surface. 0.1.66 is tagged but not on crates.io yet, and its streamed app
+# listing is the only way to list apps on iOS 26; swap this for a version
+# requirement the day it publishes.
+idevice = { git = "https://github.com/jkcoxson/idevice", tag = "v0.1.66", features = ["full"] }
 # Lockdown and mobilegestalt answer in plists.
 plist = "1"
 

@@ -57,7 +57,8 @@ src/
 ├── control.rs     the outbound WSS to the coordinator
 ├── metrics.rs     device sampling + the Prometheus exposition
 ├── origins.rs     browser origins allowed on the browser-facing planes
-├── supervisor.rs  owns every device, routes commands
+├── preload.rs     durable protected-preload manifest and artifacts
+├── supervisor.rs  owns every device, routes commands and repairs preloads
 └── server.rs      session plane (WS) + artifact plane (HTTP)
 ```
 
@@ -70,6 +71,11 @@ mean "no devices".
 
 Validation happens at load: a missing token is a startup error, not a 401 an
 hour later.
+
+`preload_dir` defaults to `/var/lib/yard/preloads`. It contains the provider's
+durable preload manifest and package copies; put it on persistent storage. The
+ordinary `scratch_dir` can remain a tmpfs because session uploads and pulled
+files are deleted after use.
 
 ### Control plane (`control.rs`)
 
@@ -118,7 +124,7 @@ deploy. That is not hypothetical — it is exactly what happened when
 
 axum. `GET /s/:id` (WebSocket), `GET /s/:id/screenshot.png`,
 `GET /s/:id/mjpeg`, `GET /s/:id/files`, `GET /s/:id/file`,
-`POST /s/:id/install`, `GET /health`. The Prometheus exposition is deliberately
+`POST /s/:id/install`, `POST /s/:id/preload`, `GET /health`. The Prometheus exposition is deliberately
 **not** here — it gets a listener of its own; see [Metrics](#metrics).
 
 Per-viewer fanout with backlog shedding, ported in spirit from `screen_ws.rs`:
@@ -137,8 +143,14 @@ never allowed: the token is in the query string, never a cookie.
 
 Uploads stream to the scratch dir as they arrive, so a 200 MB APK never sits in
 memory, and a `Drop` guard deletes the staged file however the install turns
-out. The filename comes from a client header and is reduced to a single path
-component — there are tests asserting `../../etc/passwd` cannot escape.
+out. A session install remains transient. A preload first copies the package to
+the durable `preload_dir`, records its package id in `manifest.json`, and then
+installs it. The cleanup run after a session compares those ids with the device
+app list and reinstalls any missing protected preload before the device returns
+to the pool. An admin can remove the policy from an idle device; the provider
+uninstalls the app and removes its manifest entry and unreferenced artifact. The
+filename comes from a client header and is reduced to a single path component;
+there are tests asserting `../../etc/passwd` cannot escape.
 
 ### Supervisor (`supervisor.rs`)
 
@@ -270,16 +282,17 @@ crates/backend-ios/src/
 ├── media.rs     RTP in, RTCP out, access units — carried over verbatim
 ├── hevc.rs      RFC 7798 depacketisation, hvcC, codec string, frame size
 ├── hid.rs       touch, keyboard, hardware buttons, rotation
-├── app_list.rs  listing apps on iOS 26+, where idevice cannot
 └── lib.rs       the pointer state machine and the DeviceBackend impl
 ```
 
-### Listing apps needs three keys idevice does not send
+### Listing apps is a stream, not one answer
 
-`AppServiceClient::list_apps` cannot talk to iOS 26 or later. The device decodes
-the request's options dictionary into a struct that gained three required keys,
-and refuses the request outright without them — one at a time, so finding them
-is an iteration:
+`AppServiceClient::list_apps` cannot list apps on a real phone, for two reasons
+that had to be found one at a time.
+
+**iOS 26 added three required option keys.** The device decodes the request's
+options dictionary into a struct that gained them, and refuses the request
+outright without them — one at a time, so finding them was an iteration:
 
 ```text
 NSCocoaErrorDomain 4865 — "Expected to find key requireContainerAccess."
@@ -287,32 +300,27 @@ NSCocoaErrorDomain 4865 — "Expected to find key requireContainerAccess."
                           "Expected to find key includeContainerPaths."
 ```
 
-idevice 0.1.65 sends the five older keys only, and keeps `AppServiceClient`'s
-transport private, so `app_list.rs` is a second, minimal client onto the same
-service that sends all eight. All three additions are sent as `false`: the farm
-wants bundle ids, and it is the *keys* the device requires, not what they ask
-for. Delete the module when the crate sends them itself.
+All three are sent as `false`: the farm wants bundle ids, and it is the *keys*
+the device requires, not what they ask for. idevice sends them as of 0.1.66.
 
-`examples/app_list_probe.rs` is how the three were found, and is the shortest
-path back if a later iOS adds a fourth. It needs the provider stopped, since it
-builds its own tunnel.
+**The one-shot listing never completes.** With the keys correct, an empty-scope
+request comes back instantly and one that would return actual entries hangs —
+`idevice::xpc::format` logs a short read (`Body length is 24856, but received
+bytes is 16374`) and the caller waits out `APPS_TIMEOUT`. The whole array in a
+single XPC body is not how the device wants to send it. `stream_apps`
+(`com.apple.coredevice.feature.streamapplist`) asks for the same entries over an
+XPC side channel, pushed in batches, and that is what `apps()` uses.
 
-**A device can accept the request and never answer.** Seen on an iPhone 13 on
-iOS 27, and not yet solved: with the keys correct, an empty-scope request comes
-back instantly, and one that would return actual entries never completes. Apple's
-own `devicectl device info apps` answers the same device in ~40s, so the device
-is capable of it and something about our request or transport still is not right.
+`examples/app_list_probe.rs` is how both were found, and is the shortest path
+back if a later iOS changes app listing again. It needs the provider stopped,
+since it builds its own tunnel.
 
-`apps()` is bounded at `APPS_TIMEOUT` (12s) for that reason — under the
-coordinator's 15s command timeout, so it surfaces as a device problem rather than
-as an unresponsive provider. **The bound wraps opening the service stream as well
-as the request**, because a timeout around the request alone never fires: on an
+`apps()` is bounded at `APPS_TIMEOUT` (12s) — under the coordinator's 15s
+command timeout, so a slow device surfaces as a device problem rather than as an
+unresponsive provider. **The bound wraps opening the service stream as well as
+the request**, because a timeout around the request alone never fires: on an
 unwell device the future is stuck a step earlier, in `connect_service_stream`,
 and the caller waits forever on a future that never gets polled to the timeout.
-
-The one clue not yet chased: this device's session is also unstable while idle
-(`requested a fresh IDR reason="settled"` every ~1.5s), so the tunnel carrying
-the request is not quiet.
 
 **Not to be confused with a device in the wrong state.** If the RSD handshake
 offers no `com.apple.coredevice.*` services at all — only lockdown shims and
@@ -598,6 +606,7 @@ pub trait DeviceBackend: Send + Sync + 'static {
     async fn clipboard_set(&self, text: &str) -> Result<()>;
     async fn apps(&self) -> Result<Vec<AppInfo>>;
     async fn install(&self, staged: &Path, progress: &dyn ProgressSink) -> Result<()>;
+    async fn artifact_app_id(&self, staged: &Path) -> Result<String>;
     async fn uninstall(&self, app_id: &str) -> Result<()>;
     async fn launch(&self, app_id: &str, args: &[String]) -> Result<()>;
     fn files_root(&self) -> Option<&'static str>;              // None = no file access

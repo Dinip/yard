@@ -19,7 +19,6 @@
 //! tunnel unreliable below that, and the backend fails loudly at session
 //! bring-up rather than half-working.
 
-pub mod app_list;
 pub mod ddi;
 pub mod device;
 pub mod hevc;
@@ -33,6 +32,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
+use futures::{AsyncReadExt as _, StreamExt as _};
 use idevice::core_device::{
     AppServiceClient, ImageFormat, PasteboardPayload, PasteboardServiceClient, RotationDirection,
     ScreenCaptureServiceClient, GENERAL_PASTEBOARD,
@@ -52,12 +52,57 @@ use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 use yard_protocol::{AppInfo, Display, FileEntry, FileKind, FileListing, Platform};
 
-use crate::app_list::AppList;
 use crate::device::{connect_service, DeviceHost};
 use crate::hid::Input;
 
 /// Where an IPA is staged on the device before `installation_proxy` installs it.
 const STAGING_DIR: &str = "PublicStaging";
+
+/// Reads the bundle identifier from the app's root `Info.plist` without
+/// unpacking the IPA. The same archive shape is used by installation_proxy.
+async fn ipa_bundle_id(staged: &Path) -> BackendResult<String> {
+    let file = tokio::fs::File::open(staged)
+        .await
+        .with_context(|| format!("opening {}", staged.display()))?;
+    let mut archive =
+        async_zip::base::read::seek::ZipFileReader::with_tokio(tokio::io::BufReader::new(file))
+            .await
+            .map_err(|err| BackendError::Failed(format!("reading IPA archive: {err}")))?;
+
+    for index in 0..archive.file().entries().len() {
+        let mut entry = archive
+            .reader_with_entry(index)
+            .await
+            .map_err(|err| BackendError::Failed(format!("reading IPA entry: {err}")))?;
+        let path = entry
+            .entry()
+            .filename()
+            .as_str()
+            .map_err(|_| BackendError::Failed("IPA entry name is not UTF-8".into()))?
+            .trim_end_matches('/');
+
+        if path.ends_with("Info.plist") && path.split('/').count() == 3 {
+            let mut bytes = Vec::new();
+            entry
+                .read_to_end(&mut bytes)
+                .await
+                .map_err(|err| BackendError::Failed(format!("reading IPA Info.plist: {err}")))?;
+            let plist: plist::Value = plist::from_bytes(&bytes)
+                .map_err(|err| BackendError::Failed(format!("parsing IPA Info.plist: {err}")))?;
+            if let Some(bundle_id) = plist
+                .as_dictionary()
+                .and_then(|dict| dict.get("CFBundleIdentifier"))
+                .and_then(plist::Value::as_string)
+            {
+                return Ok(bundle_id.to_owned());
+            }
+        }
+    }
+
+    Err(BackendError::Failed(
+        "IPA does not contain a Payload app Info.plist with CFBundleIdentifier".into(),
+    ))
+}
 
 /// Read size for pulling a file off the device over AFC.
 const AFC_CHUNK: usize = 256 * 1024;
@@ -1014,11 +1059,27 @@ impl DeviceBackend for IosBackend {
         let listed = tokio::time::timeout(APPS_TIMEOUT, async {
             let session = self.session().await?;
             let mut adapter = session.adapter;
-            let mut client = connect_service!(AppList, &mut adapter, &session.handshake)?;
-            client
-                .list_apps()
-                .await
-                .map_err(|err| BackendError::Failed(format!("list apps: {err:?}")))
+            let mut client = connect_service!(
+                AppServiceClient<Box<dyn ReadWrite>>,
+                &mut adapter,
+                &session.handshake
+            )?;
+            // Streamed rather than `list_apps`: the one-shot listing answers
+            // with the whole array in a single XPC body, which a phone with a
+            // few hundred apps never finishes sending — the reader logs a
+            // short body and the request hangs until the timeout below. The
+            // streamed feature pushes the same entries in batches instead.
+            // Third-party apps only, which is every caller's question here:
+            // the farm uninstalls what a session installed and clears what it
+            // is told to, and neither can touch a system app.
+            let apps = client.stream_apps(false, true, false, false, false);
+            futures::pin_mut!(apps);
+            let mut listed: Vec<idevice::core_device::AppListEntry> = Vec::new();
+            while let Some(app) = apps.next().await {
+                listed
+                    .push(app.map_err(|err| BackendError::Failed(format!("list apps: {err:?}")))?);
+            }
+            BackendResult::Ok(listed)
         })
         .await;
 
@@ -1105,6 +1166,10 @@ impl DeviceBackend for IosBackend {
         outcome?;
         progress.report("done", Some(1.0));
         Ok(())
+    }
+
+    async fn artifact_app_id(&self, staged: &Path) -> BackendResult<String> {
+        ipa_bundle_id(staged).await
     }
 
     /// Home, and rotation back to upright.

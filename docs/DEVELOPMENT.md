@@ -149,6 +149,10 @@ The adb server's keypair lives in the `adb-keys` volume, because the phone's
 key means tapping the dialog at the device again. Authorise once, tick *Always allow*, and
 recreates are silent.
 
+The provider's protected preload manifest and retained packages live in the
+`provider-preloads` volume. The scratch directory remains a tmpfs because
+ordinary session uploads are deleted after installation.
+
 **This is now the only key any device trusts.** Since the provider terminates
 `adb connect` itself, a developer's own key is checked against the coordinator
 and never reaches the phone — so losing this volume means walking to every

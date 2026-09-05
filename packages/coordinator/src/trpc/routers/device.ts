@@ -17,9 +17,9 @@ import { audit } from "../../lib/audit.ts";
 import { deviceEvents } from "../../lib/events.ts";
 import { isUniqueViolation } from "../../lib/pg-errors.ts";
 import { addObserver, JOIN_REQUEST_TTL, releaseActive } from "../../lib/reservations.ts";
-import { signSessionToken } from "../../lib/session-token.ts";
+import { signPreloadToken, signSessionToken } from "../../lib/session-token.ts";
 import { getSetting } from "../../lib/settings.ts";
-import { protectedProcedure, router } from "../init.ts";
+import { adminProcedure, protectedProcedure, router } from "../init.ts";
 
 const RESERVABLE: ReadonlyArray<"ready" | "present"> = ["ready", "present"];
 
@@ -152,6 +152,9 @@ export type DeviceListItem = Awaited<ReturnType<typeof listDevices>>[number];
 
 export const deviceRouter = router({
   list: protectedProcedure.query(({ ctx }) => listDevices(ctx.db)),
+
+  /** Preload inventory belongs to the admin page, not the general device list. */
+  preloads: adminProcedure.query(() => providers.preloadedApps),
 
   get: protectedProcedure.input(z.object({ id: z.string() })).query(async ({ ctx, input }) => {
     const all = await listDevices(ctx.db);
@@ -305,6 +308,139 @@ export const deviceRouter = router({
         providerBaseUrl: row.publicBaseUrl,
         sessionUrl: `${row.publicBaseUrl.replace(/^http/, "ws")}/s/${input.deviceId}`,
       };
+    }),
+
+  /**
+   * Mint direct-upload grants for an admin's bulk preload.
+   *
+   * Preloading does not create a reservation. Each provider rechecks that its
+   * device is idle immediately before installing, so a target that is taken
+   * before the provider starts is skipped rather than installed through a user
+   * session.
+   */
+  preloadTokens: adminProcedure
+    .input(z.object({ deviceIds: z.array(z.string().min(1)).min(1).max(200) }))
+    .mutation(async ({ ctx, input }) => {
+      const deviceIds = [...new Set(input.deviceIds)];
+      if (deviceIds.length === 0) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Select at least one device" });
+      }
+
+      const rows = await ctx.db
+        .select({
+          id: device.id,
+          providerId: device.providerId,
+          platform: device.platform,
+          status: device.status,
+          providerBaseUrl: provider.publicBaseUrl,
+          reservationId: reservation.id,
+        })
+        .from(device)
+        .innerJoin(provider, eq(device.providerId, provider.id))
+        .leftJoin(
+          reservation,
+          and(eq(reservation.deviceId, device.id), eq(reservation.state, "active")),
+        )
+        .where(inArray(device.id, deviceIds));
+
+      const found = new Set(rows.map((row) => row.id));
+      const unknown = deviceIds.filter((id) => !found.has(id));
+      if (unknown.length) {
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: `Unknown device${unknown.length === 1 ? "" : "s"}: ${unknown.join(", ")}`,
+        });
+      }
+
+      const skipped: Array<{ deviceId: string; reason: string }> = [];
+      const eligible = rows.filter((row) => {
+        if (row.reservationId) {
+          skipped.push({ deviceId: row.id, reason: "device is in use" });
+          return false;
+        }
+        if (!RESERVABLE.includes(row.status as "ready")) {
+          skipped.push({ deviceId: row.id, reason: `device is ${row.status}` });
+          return false;
+        }
+        try {
+          providers.require(row.providerId);
+        } catch {
+          skipped.push({ deviceId: row.id, reason: "provider is offline" });
+          return false;
+        }
+        return true;
+      });
+
+      const grants = await Promise.all(
+        eligible.map(async (row) => {
+          const grant = await signPreloadToken({
+            deviceId: row.id,
+            userId: ctx.user.id,
+            providerId: row.providerId,
+            platform: row.platform,
+          });
+          return {
+            deviceId: row.id,
+            providerBaseUrl: row.providerBaseUrl,
+            token: grant.token,
+            expiresAt: grant.expiresAt,
+          };
+        }),
+      );
+
+      return { grants, skipped };
+    }),
+
+  removePreload: adminProcedure
+    .input(z.object({ deviceId: z.string().min(1), appId: z.string().min(1) }))
+    .mutation(async ({ ctx, input }) => {
+      const [target] = await ctx.db
+        .select({
+          providerId: device.providerId,
+          status: device.status,
+          reservationId: reservation.id,
+        })
+        .from(device)
+        .leftJoin(
+          reservation,
+          and(eq(reservation.deviceId, device.id), eq(reservation.state, "active")),
+        )
+        .where(eq(device.id, input.deviceId))
+        .limit(1);
+
+      if (!target) throw new TRPCError({ code: "NOT_FOUND", message: "Device not found" });
+      if (target.reservationId) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Device is in use" });
+      }
+      if (!RESERVABLE.includes(target.status as "ready")) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: `Device is ${target.status}`,
+        });
+      }
+
+      const conn = providers.require(target.providerId);
+      const preload = conn.preloadedApps.find(
+        (entry) => entry.deviceId === input.deviceId && entry.appId === input.appId,
+      );
+      if (!preload) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Preloaded app not found" });
+      }
+
+      await conn.command({
+        kind: "device.preload.remove",
+        deviceId: input.deviceId,
+        appId: input.appId,
+      });
+      conn.removePreload(input.deviceId, input.appId);
+      await audit(ctx.db, ctx.user.id, "device.preload.remove", "device", input.deviceId, {
+        appId: input.appId,
+        filename: preload.filename,
+        sha256: preload.sha256,
+        providerId: target.providerId,
+      });
+      deviceEvents.publish();
+      return { ok: true };
     }),
 
   /**

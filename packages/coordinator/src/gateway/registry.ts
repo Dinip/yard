@@ -1,5 +1,5 @@
 import { TRPCError } from "@trpc/server";
-import type { CommandData, CommandPayload, CoordinatorMessage } from "@yard/protocol";
+import type { CommandData, CommandPayload, CoordinatorMessage, PreloadInfo } from "@yard/protocol";
 
 export const COMMAND_TIMEOUT_MS = 15_000;
 
@@ -19,15 +19,47 @@ export class ProviderConnection {
   readonly providerId: string;
   readonly publicBaseUrl: string;
   private readonly pending = new Map<string, Pending>();
+  private preloads: PreloadInfo[];
   private closed = false;
 
   constructor(
     providerId: string,
     publicBaseUrl: string,
     private readonly send: (msg: CoordinatorMessage) => void,
+    preloads: PreloadInfo[] = [],
   ) {
     this.providerId = providerId;
     this.publicBaseUrl = publicBaseUrl;
+    this.preloads = preloads;
+  }
+
+  /** The provider's current protected-preload desired state. */
+  get preloadedApps(): readonly PreloadInfo[] {
+    return this.preloads;
+  }
+
+  /** Replaces the whole snapshot received during provider registration. */
+  setPreloads(preloads: PreloadInfo[]) {
+    this.preloads = preloads;
+  }
+
+  /** Applies a new or replaced preload reported after the initial snapshot. */
+  upsertPreload(preload: PreloadInfo) {
+    const index = this.preloads.findIndex(
+      (existing) => existing.deviceId === preload.deviceId && existing.appId === preload.appId,
+    );
+    if (index === -1) {
+      this.preloads = [...this.preloads, preload];
+    } else {
+      this.preloads = this.preloads.with(index, preload);
+    }
+  }
+
+  /** Drops one preload after the provider has removed its policy and app. */
+  removePreload(deviceId: string, appId: string) {
+    this.preloads = this.preloads.filter(
+      (preload) => preload.deviceId !== deviceId || preload.appId !== appId,
+    );
   }
 
   push(msg: CoordinatorMessage) {
@@ -132,6 +164,11 @@ class ProviderRegistry {
 
   get onlineIds(): string[] {
     return [...this.connections.keys()];
+  }
+
+  /** Current preload metadata from every connected provider. */
+  get preloadedApps(): readonly PreloadInfo[] {
+    return [...this.connections.values()].flatMap((conn) => [...conn.preloadedApps]);
   }
 }
 

@@ -38,6 +38,8 @@ export const AUDIT_ACTIONS = [
 
   // Things done to a device.
   { value: "device.install", label: "Installs", group: "Devices" },
+  { value: "device.preload", label: "Preloaded apps", group: "Devices" },
+  { value: "device.preload.remove", label: "Preload removals", group: "Devices" },
   { value: "device.uninstall", label: "Uninstalls", group: "Devices" },
   { value: "device.launch", label: "App launches", group: "Devices" },
   { value: "device.reboot", label: "Reboots", group: "Devices" },

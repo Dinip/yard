@@ -14,6 +14,8 @@ adb-bridge.workspace = true
 tokio.workspace = true
 futures.workspace = true
 async-trait.workspace = true
+apk-info-axml.workspace = true
+zip.workspace = true
 
 serde_json.workspace = true
 anyhow.workspace = true

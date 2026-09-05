@@ -11,16 +11,17 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{broadcast, Mutex as AsyncMutex, RwLock};
 use tracing::{info, warn};
 use yard_protocol::{
     AppFilter, Battery, CleanupSteps, CommandData, CommandPayload, DeviceSnapshot, DeviceStatus,
-    ProviderMessage,
+    InstallMode, Platform, PreloadInfo, ProviderMessage,
 };
 
 use crate::adb_auth::{AdbAuthWaiters, AdbAuthority};
-use crate::backend::{BackendError, DeviceBackend, DeviceInfo};
+use crate::backend::{BackendError, DeviceBackend, DeviceInfo, NullProgress};
 use crate::control::{now_millis, AdbAuthDecision, CommandHandler, ControlSender};
+use crate::preload::{PreloadStore, ProtectedPreload};
 use crate::session::{Authorization, SessionRegistry};
 
 /// How often each device's info is re-read and pushed up if it changed.
@@ -32,6 +33,14 @@ const POLL_INTERVAL: Duration = Duration::from_secs(15);
 /// activity; the coordinator only needs to know the reservation is not idle,
 /// so this is deliberately coarse relative to any idle timeout worth setting.
 const ACTIVITY_INTERVAL: Duration = Duration::from_secs(30);
+
+fn protocol_platform(value: &str) -> Option<Platform> {
+    match value {
+        "android" => Some(Platform::Android),
+        "ios" => Some(Platform::Ios),
+        _ => None,
+    }
+}
 
 /// Lets one report through per [`ACTIVITY_INTERVAL`].
 ///
@@ -94,9 +103,17 @@ pub struct Device {
     /// touched the display — a cleanup run presses Home, a reboot comes back
     /// lit — so the next poll re-parks rather than trusting a stale read.
     screen_blanked: AtomicBool,
+    /// Serializes installs, session authorization and cleanup on one device.
+    /// A preload must not begin while a user session is being authorized, and a
+    /// cleanup must not run over an install that just acquired an idle grant.
+    operation: AsyncMutex<()>,
 }
 
 impl Device {
+    pub async fn lock_operation(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.operation.lock().await
+    }
+
     pub async fn status(&self) -> DeviceStatus {
         *self.status.read().await
     }
@@ -194,6 +211,7 @@ pub struct Supervisor {
     devices: HashMap<String, Arc<Device>>,
     sessions: SessionRegistry,
     control: RwLock<Option<ControlSender>>,
+    preloads: PreloadStore,
     /// `adb connect` attempts parked on an answer from the coordinator.
     adb_auth: AdbAuthWaiters,
     /// Whether idle devices have their screens parked. See [`Supervisor::reconcile_screen`].
@@ -202,10 +220,15 @@ pub struct Supervisor {
 
 impl Supervisor {
     pub fn new(sessions: SessionRegistry) -> Self {
+        Self::with_preload_store(sessions, PreloadStore::in_memory())
+    }
+
+    pub fn with_preload_store(sessions: SessionRegistry, preloads: PreloadStore) -> Self {
         Self {
             devices: HashMap::new(),
             sessions,
             control: RwLock::new(None),
+            preloads,
             adb_auth: AdbAuthWaiters::new(),
             blank_idle_screens: true,
         }
@@ -239,6 +262,7 @@ impl Supervisor {
                 installs_ok: AtomicU64::new(0),
                 installs_failed: AtomicU64::new(0),
                 screen_blanked: AtomicBool::new(false),
+                operation: AsyncMutex::new(()),
             }),
         );
     }
@@ -257,6 +281,57 @@ impl Supervisor {
 
     pub fn sessions(&self) -> &SessionRegistry {
         &self.sessions
+    }
+
+    /// Returns whether a preload may start on this device right now.
+    ///
+    /// The coordinator checks the same state before minting a grant, but the
+    /// provider must repeat it because a reservation can win the race after the
+    /// browser receives its grant.
+    pub async fn can_preload(&self, device_id: &str) -> bool {
+        let Some(device) = self.devices.get(device_id) else {
+            return false;
+        };
+        if self.sessions.current(device_id).await.is_some() {
+            return false;
+        }
+        matches!(
+            device.status().await,
+            DeviceStatus::Ready | DeviceStatus::Present
+        )
+    }
+
+    /// Identifies and records a package as a protected preload. The caller
+    /// holds the device operation lock so the desired state and install cannot
+    /// race another install, cleanup, or farm-issued uninstall.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "arguments describe one uploaded package"
+    )]
+    pub async fn protect_preload(
+        &self,
+        device_id: &str,
+        platform: &str,
+        user_id: &str,
+        filename: &str,
+        size: i64,
+        sha256: &str,
+        staged: &std::path::Path,
+    ) -> Result<ProtectedPreload> {
+        let device = self.require(device_id)?;
+        let app_id = device.backend.artifact_app_id(staged).await?;
+        self.preloads
+            .protect(
+                device_id, &app_id, platform, user_id, filename, size, sha256, staged,
+            )
+            .await
+    }
+
+    /// Prevents the farm's own uninstall command from deleting a protected
+    /// preload. A user action on the phone can remove it during a session; the
+    /// cleanup run below repairs that case before the device becomes ready.
+    pub async fn is_preload_protected(&self, device_id: &str, app_id: &str) -> bool {
+        self.preloads.is_protected(device_id, app_id).await
     }
 
     /// Whether the coordinator has acked this provider's `hello`.
@@ -537,9 +612,13 @@ impl Supervisor {
 
     /// Reports an install upstream.
     ///
-    /// The uploaded file is already deleted by the time this is sent, so this
-    /// event is the *only* record the install happened — the coordinator turns
-    /// it into an audit row. There is deliberately no artifact table.
+    /// The coordinator turns this into an audit row. Session uploads are
+    /// deleted after install; protected preload artifacts remain provider-local
+    /// and are referenced by the manifest rather than sent through the wire.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "arguments mirror the install audit event"
+    )]
     pub async fn push_install_result(
         &self,
         device_id: &str,
@@ -548,7 +627,22 @@ impl Supervisor {
         size: i64,
         sha256: &str,
         error: Option<String>,
+        mode: Option<&str>,
+        app_id: Option<&str>,
+        platform: Option<&str>,
     ) {
+        let mode = match mode {
+            Some("preload") => Some(InstallMode::Preload),
+            Some("preload.repair") => Some(InstallMode::PreloadRepair),
+            Some(other) => {
+                warn!(
+                    mode = other,
+                    "unknown install mode omitted from protocol event"
+                );
+                None
+            }
+            None => None,
+        };
         if let Some(device) = self.devices.get(device_id) {
             let counter = if error.is_none() {
                 &device.installs_ok
@@ -566,6 +660,9 @@ impl Supervisor {
             sha256: sha256.to_owned(),
             ok: error.is_none(),
             error,
+            mode,
+            app_id: app_id.map(str::to_owned),
+            platform: platform.and_then(protocol_platform),
         })
         .await;
     }
@@ -613,6 +710,33 @@ impl CommandHandler for Supervisor {
         out
     }
 
+    async fn preload_inventory(&self) -> Vec<PreloadInfo> {
+        self.preloads
+            .all()
+            .await
+            .into_iter()
+            .filter_map(|entry| {
+                let platform = protocol_platform(&entry.platform).or_else(|| {
+                    warn!(
+                        device = %entry.device_id,
+                        app = %entry.app_id,
+                        platform = %entry.platform,
+                        "ignoring protected preload with an unsupported platform"
+                    );
+                    None
+                })?;
+                Some(PreloadInfo {
+                    device_id: entry.device_id,
+                    app_id: entry.app_id,
+                    platform,
+                    filename: entry.filename,
+                    size: entry.size,
+                    sha256: entry.sha256,
+                })
+            })
+            .collect()
+    }
+
     /// The coordinator is the source of truth for authorization, so anything we
     /// were told before the socket dropped may be stale by the time it returns.
     /// It re-pushes on reconnect.
@@ -634,6 +758,7 @@ impl CommandHandler for Supervisor {
                 adb_keys,
             } => {
                 let device = self.require(&device_id)?;
+                let _operation = device.operation.lock().await;
                 self.snapshot_baseline(&device, &reservation_id).await;
                 self.wake_screen(&device).await;
                 self.sessions
@@ -688,6 +813,7 @@ impl CommandHandler for Supervisor {
                     steps,
                     clear_app_data_filter,
                     timeout_seconds,
+                    self.preloads.clone(),
                 ));
                 Ok(None)
             }
@@ -731,7 +857,42 @@ impl CommandHandler for Supervisor {
             }
 
             CommandPayload::DeviceUninstall { device_id, app_id } => {
-                self.require(&device_id)?.backend.uninstall(&app_id).await?;
+                let device = self.require(&device_id)?;
+                let _operation = device.lock_operation().await;
+                if self.preloads.is_protected(&device_id, &app_id).await {
+                    return Err(anyhow!(
+                        "cannot uninstall protected preload {app_id}; remove its preload policy first"
+                    ));
+                }
+                device.backend.uninstall(&app_id).await?;
+                Ok(None)
+            }
+
+            CommandPayload::DevicePreloadRemove { device_id, app_id } => {
+                let device = self.require(&device_id)?;
+                let _operation = device.lock_operation().await;
+                if !self.can_preload(&device_id).await {
+                    return Err(anyhow!("device is busy or unavailable for preload removal"));
+                }
+                if !self.preloads.is_protected(&device_id, &app_id).await {
+                    return Err(anyhow!(
+                        "{app_id} is not a protected preload on this device"
+                    ));
+                }
+
+                let installed = device
+                    .backend
+                    .apps()
+                    .await?
+                    .into_iter()
+                    .any(|app| app.id == app_id);
+                if installed {
+                    device.backend.uninstall(&app_id).await?;
+                }
+                self.preloads
+                    .remove(&device_id, &app_id)
+                    .await?
+                    .ok_or_else(|| anyhow!("{app_id} is not a protected preload on this device"))?;
                 Ok(None)
             }
 
@@ -776,7 +937,111 @@ impl CommandHandler for Supervisor {
     }
 }
 
-/// Resets a device after its reservation ended, then puts it back in the pool.
+/// Checks provider-owned preloads at the end of a session cleanup and restores
+/// any app the user removed. The caller holds the device operation lock, so a
+/// session install, cleanup action, or farm-issued uninstall cannot race this
+/// check.
+async fn repair_preloads(
+    device: &Device,
+    preloads: &PreloadStore,
+    sender: Option<&ControlSender>,
+    report: &mut crate::cleanup::CleanupReport,
+) -> bool {
+    let entries = preloads.for_device(&device.id).await;
+    if entries.is_empty() {
+        return true;
+    }
+
+    let current = match device.backend.apps().await {
+        Ok(apps) => apps,
+        Err(err) => {
+            report
+                .errors
+                .push(format!("preload repair: listing apps: {err}"));
+            warn!(device = %device.id, %err, "could not inspect protected preloads during cleanup");
+            return false;
+        }
+    };
+    let mut installed: HashSet<String> = current.into_iter().map(|app| app.id).collect();
+    let mut all_ok = true;
+
+    for entry in entries {
+        if installed.contains(&entry.app_id) {
+            continue;
+        }
+
+        let Some(artifact) = preloads.artifact_path(&entry) else {
+            let error = format!("preload repair {}: no safe artifact path", entry.app_id);
+            report.errors.push(error.clone());
+            warn!(device = %device.id, app = %entry.app_id, "protected preload has no safe artifact path");
+            all_ok = false;
+            continue;
+        };
+        if tokio::fs::metadata(&artifact).await.is_err() {
+            let error = format!("preload repair {}: artifact is missing", entry.app_id);
+            report.errors.push(error.clone());
+            warn!(
+                device = %device.id,
+                app = %entry.app_id,
+                path = %artifact.display(),
+                "protected preload artifact is missing"
+            );
+            all_ok = false;
+            continue;
+        }
+
+        info!(
+            device = %device.id,
+            app = %entry.app_id,
+            "repairing removed protected preload during cleanup"
+        );
+        let outcome = device.backend.install(&artifact, &NullProgress).await;
+        let error = outcome.as_ref().err().map(ToString::to_string);
+        if error.is_none() {
+            device.installs_ok.fetch_add(1, Ordering::Relaxed);
+        } else {
+            device.installs_failed.fetch_add(1, Ordering::Relaxed);
+        }
+        if let Some(sender) = sender {
+            sender.send(ProviderMessage::InstallFinished {
+                device_id: device.id.clone(),
+                user_id: entry.user_id.clone(),
+                filename: entry.filename.clone(),
+                size: entry.size,
+                sha256: entry.sha256.clone(),
+                ok: error.is_none(),
+                error: error.clone(),
+                mode: Some(InstallMode::PreloadRepair),
+                app_id: Some(entry.app_id.clone()),
+                platform: protocol_platform(&entry.platform),
+            });
+        }
+
+        match outcome {
+            Ok(()) => {
+                installed.insert(entry.app_id);
+            }
+            Err(err) => {
+                report
+                    .errors
+                    .push(format!("preload repair {}: {err}", entry.app_id));
+                warn!(
+                    device = %device.id,
+                    app = %entry.app_id,
+                    %err,
+                    "protected preload repair failed"
+                );
+                all_ok = false;
+            }
+        }
+    }
+
+    all_ok
+}
+
+/// Checks and resets a device after its reservation ended, then puts it back in
+/// the pool. Protected preloads are repaired even when ordinary reset steps are
+/// disabled.
 ///
 /// A free function rather than a method because it outlives the command that
 /// started it and must not borrow the supervisor for two minutes.
@@ -784,27 +1049,38 @@ impl CommandHandler for Supervisor {
 /// **The device always ends up out of `cleaning`.** Every early return, every
 /// failed step and the deadline itself converge on the same landing at the
 /// bottom, because a device stuck in `cleaning` is invisible inventory — worse
-/// than the dirty device cleanup was meant to prevent.
+/// than the dirty device cleanup was meant to prevent. A failed protected
+/// preload repair lands on `unhealthy` rather than returning an incomplete
+/// device to the pool.
 async fn run_cleanup(
     device: Arc<Device>,
     sender: Option<ControlSender>,
     steps: CleanupSteps,
     clear_filter: AppFilter,
     timeout_seconds: i64,
+    preloads: PreloadStore,
 ) {
+    let _operation = device.operation.lock().await;
     let started = Instant::now();
     let baseline = device.baseline.read().await;
     let apps = baseline.as_ref().map(|held| &held.apps);
+    let protected = preloads
+        .for_device(&device.id)
+        .await
+        .into_iter()
+        .map(|entry| entry.app_id)
+        .collect::<HashSet<_>>();
 
     let budget = Duration::from_secs(timeout_seconds.clamp(1, 3600) as u64);
     let mut report = match tokio::time::timeout(
         budget,
-        crate::cleanup::run(
+        crate::cleanup::run_with_protected(
             device.backend.as_ref(),
             &steps,
             &clear_filter,
             apps,
             &device.cleanup_paths,
+            &protected,
         ),
     )
     .await
@@ -829,6 +1105,38 @@ async fn run_cleanup(
     // the *next* user's session if the provider never sees its authorize.
     *device.baseline.write().await = None;
 
+    // Preload repair is deliberately part of cleanup. A user can remove a
+    // protected app while working, and the farm puts it back before this
+    // device becomes available to somebody else.
+    let remaining = budget.saturating_sub(started.elapsed());
+    let preloads_ok = if remaining.is_zero() {
+        if preloads.for_device(&device.id).await.is_empty() {
+            true
+        } else {
+            report.errors.push(format!(
+                "preload repair exceeded {timeout_seconds}s and was abandoned"
+            ));
+            warn!(device = %device.id, seconds = timeout_seconds, "preload repair timed out");
+            false
+        }
+    } else {
+        match tokio::time::timeout(
+            remaining,
+            repair_preloads(&device, &preloads, sender.as_ref(), &mut report),
+        )
+        .await
+        {
+            Ok(ok) => ok,
+            Err(_) => {
+                report.errors.push(format!(
+                    "preload repair exceeded {timeout_seconds}s and was abandoned"
+                ));
+                warn!(device = %device.id, seconds = timeout_seconds, "preload repair timed out");
+                false
+            }
+        }
+    };
+
     if !report.errors.is_empty() {
         warn!(device = %device.id, errors = ?report.errors, "cleanup finished with errors");
     }
@@ -842,7 +1150,7 @@ async fn run_cleanup(
     // Health decides the landing: a phone that fell off the bus mid-wipe is
     // unhealthy, not ready, and reporting `ready` would put it back in the pool
     // for the next user to discover.
-    let status = if device.backend.is_healthy().await {
+    let status = if preloads_ok && device.backend.is_healthy().await {
         DeviceStatus::Ready
     } else {
         DeviceStatus::Unhealthy

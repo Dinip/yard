@@ -93,7 +93,7 @@ command dispatch.
 | `device.status` / `.display` / `.battery` | Targeted field updates |
 | `command.result` | Settles the correlated pending command |
 | `adb.auth.request` | An `adb connect` offered a key the provider has not been told about; its connection is parked pending an answer |
-| `install.finished` | Written to `auditLog` — the file is already deleted |
+| `install.finished` | Written to `auditLog`; `mode: "preload"` marks an admin preload and `mode: "preload.repair"` marks a farm repair |
 | `cleanup.finished` | Written to `auditLog` — what a between-users reset removed, cleared, wiped and failed at |
 | `file.pulled` | Written to `auditLog` — bytes left the device and the coordinator was not on the path |
 
@@ -116,8 +116,10 @@ accepts a command and never answers must not wedge the caller.
 `device.cleanup` is the one deliberately sent fire-and-forget, because a
 multi-package uninstall runs far past that timeout. It carries the farm's
 `CleanupSteps`, an `AppFilter` scoping which apps `clearAppData` may touch, and
-a deadline; the device's return to `ready` arrives as an ordinary
-`device.status`, and the report as `cleanup.finished`. See
+a deadline. The provider also checks and repairs protected preloads during this
+pass, even when all ordinary cleanup steps are disabled. The device's return to
+`ready` arrives as an ordinary `device.status`, and the report as
+`cleanup.finished`. See
 [CLEANUP.md](CLEANUP.md).
 
 ### ADB authentication
@@ -224,7 +226,8 @@ they go as `text`, which is also what carries IME output and paste.
 
 ## Artifact plane — browser → provider ✅ built
 
-Same port, same token. `POST /s/:deviceId/install`,
+Same port, with either a session token or a scoped preload grant.
+`POST /s/:deviceId/install`, `POST /s/:deviceId/preload`,
 `GET /s/:deviceId/screenshot.png`, `GET /s/:deviceId/mjpeg`,
 `GET /s/:deviceId/files`, `GET /s/:deviceId/file`.
 
@@ -247,7 +250,8 @@ is rendered as such.
 into its scratch directory, serves it, and deletes it when the response body is
 dropped — the same staging the install path uses in the other direction, and for
 the same reason: a video off a phone must never sit in the provider's memory.
-There is still no artifact storage anywhere.
+There is no coordinator-side artifact storage. Protected preload artifacts are
+stored locally by the provider under its configured `preload_dir`.
 
 **This is the only operation in the system that carries data out of a device**,
 so it is the one that must be audited, and the audit row is written *before* the
@@ -271,9 +275,34 @@ coordinator owns policy, and a separately configured provider would drift the
 first time the web app moved. Until a provider registers the list is empty and
 it refuses browser requests — it fails closed, then self-heals on registration.
 
-Credentials are never allowed. Authorization on this plane is the session token
-in the query string, never a cookie, so there is no ambient authority for a
-hostile page to ride on even if an origin were mislisted.
+Credentials are never allowed. Authorization on this plane is an explicit
+signed token in the query string, never a cookie, so there is no ambient
+authority for a hostile page to ride on even if an origin were mislisted.
+
+### Admin preload
+
+`device.preloadTokens` is admin-only and takes a list of device ids. The
+coordinator grants only devices that are currently reservable, unreserved and
+owned by a connected provider. It returns one short-lived grant per eligible
+device and reports the rest as skipped. The grant has `scope: "preload"`, an
+empty reservation id, and the device's `platform`.
+
+The browser derives the package platform from its suffix: `.apk` targets
+Android and `.ipa` targets iOS. The provider checks that suffix against the
+platform in the signed grant, refuses session endpoints for preload grants, and
+checks idleness again after the upload completes. A successful preload is
+reported as `install.finished` with `mode: "preload"`, which the coordinator
+writes as `device.preload` in the audit log. During cleanup, the provider also
+writes `mode: "preload.repair"` when it reinstalls a protected app that
+disappeared during the session. The manifest and package stay on the provider,
+so cleanup can repair the app after a coordinator restart as long as the
+provider storage survives.
+
+`device.preloads` returns that live inventory to admins only. Removing an entry
+sends `device.preload.remove` over the control plane. Both the coordinator and
+provider require the device to be idle. The provider uninstalls the app, removes
+it from `manifest.json`, and deletes its retained artifact when no other entry
+uses the same file.
 
 ## Fake provider ✅ built
 

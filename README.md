@@ -35,9 +35,15 @@ traffic.
 - Video and input go **browser to provider directly**, over a WebSocket the
   provider serves and authorises itself against the coordinator's public keys.
   The coordinator is never on the data path.
-- Uploads take that same direct path and are never stored: an APK or IPA
+- Session uploads take that same direct path and are never stored: an APK or IPA
   streams to the provider, gets installed, and is deleted. The only trace is an
-  audit-log row.
+  audit-log row. Admin preloads are the deliberate exception: the provider keeps
+  a durable copy and restores the app during cleanup if a session user removes it.
+- Admins can use **Preloaded apps** to deploy one APK or IPA across selected
+  idle devices. The same page lists existing preloads and removes them from an
+  idle device. The UI only offers matching Android or iOS targets, and each
+  provider checks the platform again before installing. Preload state survives
+  provider restarts when its configured preload storage survives.
 
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) has the detail.
 

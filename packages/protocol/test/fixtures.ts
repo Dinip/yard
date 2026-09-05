@@ -41,6 +41,16 @@ export const controlFixtures = {
         streamCodec: "avc1.640028",
       },
     ],
+    preloads: [
+      {
+        deviceId: "R5CT10ABCDE",
+        appId: "com.example.preloaded",
+        platform: "android",
+        filename: "preloaded.apk",
+        size: 48293012,
+        sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      },
+    ],
   },
   heartbeat: { type: "heartbeat", at: 1770000000000 },
   /** Everything an Android device can report about itself, in one snapshot. */
@@ -104,6 +114,8 @@ export const controlFixtures = {
     size: 48293012,
     sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     ok: true,
+    appId: "com.example.preloaded",
+    platform: "android",
   },
   filePulled: {
     type: "file.pulled",
@@ -208,6 +220,15 @@ export const coordinatorFixtures = {
     type: "command",
     id: "cmd-5",
     payload: { kind: "device.adb.keys", deviceId: "R5CT10ABCDE", keys: [] },
+  },
+  preloadRemove: {
+    type: "command",
+    id: "cmd-6",
+    payload: {
+      kind: "device.preload.remove",
+      deviceId: "R5CT10ABCDE",
+      appId: "com.example.preloaded",
+    },
   },
   adbAuthAllow: {
     type: "adb.auth.decision",

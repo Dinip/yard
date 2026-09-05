@@ -1,5 +1,14 @@
 import { z } from "zod";
-import { AppInfo, Battery, DeviceSnapshot, DeviceStatus, Display, Timestamp } from "./common.ts";
+import {
+  AppInfo,
+  Battery,
+  DeviceSnapshot,
+  DeviceStatus,
+  Display,
+  Platform,
+  PreloadInfo,
+  Timestamp,
+} from "./common.ts";
 import { named } from "./registry.ts";
 
 export const PROTOCOL_VERSION = 1;
@@ -54,6 +63,9 @@ export const AppFilter = named(
     deny: z.array(z.string()),
   }),
 );
+
+/** Why the provider reported an application install. */
+export const InstallMode = named("InstallMode", z.enum(["preload", "preload.repair"]));
 
 /**
  * A developer's ADB public key, as the coordinator knows it.
@@ -111,9 +123,13 @@ export const CommandPayload = named(
       args: z.array(z.string()).optional(),
     }),
     z.object({ kind: z.literal("device.uninstall"), deviceId: z.string(), appId: z.string() }),
+    /** Stop protecting a preload and uninstall it from an idle device. */
+    z.object({ kind: z.literal("device.preload.remove"), deviceId: z.string(), appId: z.string() }),
     /**
-     * Reset the device now that its reservation has ended. Sent after
-     * `session.revoke`, and only when the provider is still connected.
+     * Check and reset the device now that its reservation has ended. Sent after
+     * `session.revoke`, and only when the provider is still connected. The
+     * provider also repairs any protected preloads as part of this pass, even
+     * when all ordinary reset steps are disabled.
      *
      * Fire-and-forget on purpose: a multi-package uninstall runs well past the
      * gateway's correlated-command timeout, so completion comes back as a
@@ -127,7 +143,7 @@ export const CommandPayload = named(
       steps: CleanupSteps,
       /** Scopes `clearAppData`. Ignored by the other steps. */
       clearAppDataFilter: AppFilter,
-      /** Whole-run deadline. The provider lands the device on `ready` regardless. */
+      /** Whole-run deadline. The provider reports `ready` only after the pass succeeds. */
       timeoutSeconds: z.number().int(),
     }),
     /** Android only. Binds a provider-host TCP port proxying an adb transport. */
@@ -174,6 +190,8 @@ export const ProviderMessage = named(
       publicBaseUrl: z.string(),
       hostname: z.string().optional(),
       devices: z.array(DeviceSnapshot),
+      /** Provider-local desired state; package bytes never cross this socket. */
+      preloads: z.array(PreloadInfo).optional(),
     }),
     z.object({ type: z.literal("heartbeat"), at: Timestamp }),
     /** Full snapshot, not a delta — see DeviceSnapshot. */
@@ -223,7 +241,7 @@ export const ProviderMessage = named(
       publicKey: z.string(),
       comment: z.string().optional(),
     }),
-    /** Recorded in the audit log; there is no artifact table to write to. */
+    /** Recorded in the audit log; protected preload repairs are reported too. */
     z.object({
       type: z.literal("install.finished"),
       deviceId: z.string(),
@@ -233,6 +251,11 @@ export const ProviderMessage = named(
       sha256: z.string(),
       ok: z.boolean(),
       error: z.string().optional(),
+      /** Set for an admin preload or a farm repair; absent on session installs. */
+      mode: InstallMode.optional(),
+      /** Set for preload events so the dashboard can update without a reconnect. */
+      appId: z.string().optional(),
+      platform: Platform.optional(),
     }),
     /**
      * A between-users reset finished, whatever the outcome.

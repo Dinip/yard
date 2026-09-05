@@ -112,10 +112,12 @@ observer row and nobody else's. It lived on the admin router back when only
 admins could be in a session, which made the Leave button 403 for the first
 non-admin who was ever let into one.
 
-Releasing is also where a device is held back for cleaning: when the policy is
-on and the provider is connected, `releaseActive` sets `cleaning` instead of
-`ready` and sends `device.cleanup` after `session.revoke`. The provider returns
-the device with a `device.status`. Nothing waits — see [CLEANUP.md](CLEANUP.md).
+Releasing is also where a device is held back for cleaning: when the provider is
+connected, `releaseActive` sets `cleaning` instead of `ready` and sends
+`device.cleanup` after `session.revoke`. The ordinary cleanup settings choose
+the reset steps, but the provider always verifies protected preloads before
+returning the device with a `device.status`. Nothing waits — see
+[CLEANUP.md](CLEANUP.md).
 
 ### Who may `adb connect`
 
