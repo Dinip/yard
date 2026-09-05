@@ -383,7 +383,7 @@ function AdminPreloadPage() {
           <input
             ref={fileInput}
             type="file"
-            accept=".apk,.ipa,application/vnd.android.package-archive,application/octet-stream"
+            accept=".apk,.ipa"
             className="sr-only"
             onChange={(event) => chooseFile(event.target.files?.[0])}
           />
