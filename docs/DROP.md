@@ -1,8 +1,9 @@
 # YARD Drop implementation plan
 
-> Status: Android save-to-device, the browser inbox and its web dialog are done
-> and signed off on hardware (increments 0 through 9). Everything iOS is still
-> a plan.
+> Status: Android is written end to end (increments 0 through 10) and the
+> release workflow builds the APK. Increments 0 through 9 are signed off on
+> hardware; increment 10's streaming download and reservation cleanup are the
+> two things left to watch on a device. Everything iOS is still a plan.
 
 YARD Drop is a first-party Flutter companion that appears as an Android share
 target. It accepts file attachments from any app and gives the tester two
