@@ -318,9 +318,8 @@ keeps a PR titled `chore(main): release 0.2.0` open against `main`, rewriting it
 on every push. It contains the version bump, an updated `CHANGELOG.md`, and
 nothing else. **Merging that PR is the release** — it creates the tag and the
 GitHub release, and `release.yml` publishes the images for it and attaches the
-YARD Drop APK, stamped with the version, the CI run number and the commit. See
-[DROP.md](./DROP.md) for the signing secrets that APK expects; without them it
-is signed with debug keys.
+YARD Drop APK, stamped with the version, the CI run number and the commit. It
+is debug-signed; see [DROP.md](./DROP.md).
 
 The version comes from the commits since the last release, which is the reason
 the [Conventional Commits](https://www.conventionalcommits.org) rule is

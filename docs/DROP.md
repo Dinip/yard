@@ -603,8 +603,9 @@ Android instrumentation tests use a test `ContentProvider` that can return:
 - A large generated stream without retaining it in memory.
 - A copy cancelled partway, which must leave no staged batch and no prompt.
 
-Instrumentation tests live in `apps/yard_drop/android/app/src/androidTest`, and
-CI runs them on API 29 and API 35 under the emulator.
+Instrumentation tests live in `apps/yard_drop/android/app/src/androidTest`. They
+need a real device, so they are run by hand rather than in CI — see
+[Releasing the APK](#releasing-the-apk).
 
 ### Cancelling a share that is still arriving
 
@@ -639,7 +640,7 @@ storage to force it is worth doing on a farm device, not a personal one.
 
 ### Farm provisioning
 
-- Take the APK attached to the release, built and signed by `mobile.yml`.
+- Take the APK attached to the release, built by `mobile.yml`.
 - Install it before a reservation begins so it belongs to the device baseline.
 - Cover `/sdcard/Download/YARD Drop` in the device's `cleanup_paths`, which
   `/sdcard/Download` already does.
@@ -873,37 +874,29 @@ parsed rather than saved.
 ## Releasing the APK
 
 `.github/workflows/mobile.yml` builds the release APK and attaches it to the
-GitHub release. It is a reusable workflow called by `release.yml`, so the
-version comes from release-please rather than from anything the build decides
-for itself, and the same file gains the iOS job later.
+GitHub release. It is reusable and called by `release.yml`, so the version comes
+from release-please rather than from anything the build decides for itself, and
+the same file gains the iOS job later.
 
-The build stamps three things through `--dart-define`, which `BuildInfo` reads:
-the released version, the CI run number as the build number, and the short
-commit. They end up in the About screen and in every `batch.json` the app
-writes, so a file pulled off a device names the build that put it there.
+The build stamps the released version, the CI run number and the short commit
+through `--dart-define`. `BuildInfo` reads them, which puts them on the About
+screen and in every `batch.json` the app writes, so a file pulled off a device
+names the build that put it there.
 
-Signing is optional and degrades on purpose. With `YARD_DROP_KEYSTORE` and its
-three companion secrets set, the APK is signed with the farm's key; without
-them Gradle falls back to debug keys, which is the difference between something
-you can sideload onto your own handset and something a farm will accept as an
-upgrade. The secrets are the farm operator's to add — nothing in the repository
-can create them.
+The APK is signed with Android's debug key; there is no release keystore. An
+install over a differently signed build is refused, so provisioning installs it
+once as part of a device's baseline rather than upgrading in place.
 
-`Mobile` does not run on a pull request. `Flutter` does, and it is the one that
-analyses, tests and runs the instrumentation matrix.
+`Mobile` does not run on a pull request. `Flutter` does — format, analyze,
+`flutter test` and a debug build. The instrumentation suite needs a real device
+and is run by hand:
 
-Acceptance criteria:
-
-- The browser does not construct a `Blob` for a YARD Drop download.
-- The provider still stages, hashes, streams and removes its temporary copy.
-- An aborted download leaves the device inbox copy available for retry.
-- The audit event still lands before the response body begins.
-
-Suggested commit:
-
-```text
-perf(web): stream YARD Drop downloads to disk
+```bash
+cd apps/yard_drop/android && ./gradlew :app:connectedDebugAndroidTest
 ```
+
+It uninstalls the app afterwards, taking its MediaStore-owned Downloads files
+with it.
 
 ## Android definition of done
 
