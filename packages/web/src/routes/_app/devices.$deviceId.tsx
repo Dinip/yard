@@ -306,6 +306,7 @@ function DevicePage() {
           mine ? (
             <Button
               variant="outline"
+              size="sm"
               disabled={release.isPending}
               onClick={() => release.mutate({ deviceId })}
             >
@@ -350,7 +351,7 @@ function DevicePage() {
                       Waiting for {device.reservation.ownerName}…
                     </span>
                     <Button
-                      variant="ghost"
+                      variant="outline"
                       size="sm"
                       disabled={cancelJoinRequest.isPending}
                       onClick={() => cancelJoinRequest.mutate({ deviceId })}
