@@ -175,6 +175,8 @@ src/hooks/use-device-session.ts
 src/components/device-screen.tsx       canvas + input capture
 src/components/device-console.tsx      screen + controls + drop target
 src/components/device-files-dialog.tsx browse the device, download a file
+src/components/device-drop-dialog.tsx  files shared into YARD Drop (Android)
+src/lib/drop-inbox.ts                  read YARD Drop's batches off a device
 src/lib/popout.ts                      open the popout, sized to the device
 src/lib/side-panels.ts                 which flanks are open, per user
 ```
@@ -186,8 +188,8 @@ one control surface, not two that drift.
 
 The actions are built once as three sections — **Device** (Back, Home, Recents,
 and for an admin Volume up, Volume down, Lock and Reboot),
-**Screen** (Rotate, Screenshot, Record) and **Files** (Install, Files, Copy from
-device, Paste to device) — and the `controls` prop chooses how they are drawn. A
+**Screen** (Rotate, Screenshot, Record) and **Files** (Install, Files, Receive
+shared files on Android, Copy from device, Paste to device) — and the `controls` prop chooses how they are drawn. A
 control that exists in one rendering and not the other is how the popout ends up
 a lesser window than the page.
 

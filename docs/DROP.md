@@ -1,8 +1,8 @@
 # YARD Drop implementation plan
 
-> Status: Android save-to-device and the browser inbox are done and signed off
-> on hardware (increments 0 through 8). The inbox web UI and everything iOS are
-> still plans.
+> Status: Android save-to-device, the browser inbox and its web dialog are done
+> and signed off on hardware (increments 0 through 9). Everything iOS is still
+> a plan.
 
 YARD Drop is a first-party Flutter companion that appears as an Android share
 target. It accepts file attachments from any app and gives the tester two
@@ -758,6 +758,50 @@ token minting. The provider already lists and pulls arbitrary readable Android
 paths. Its existing `file.pulled` event keeps these downloads in the audit log.
 
 No database, coordinator or wire-protocol change is needed for this increment.
+
+### Where the logic lives
+
+The rule that decides what a browser may show is worth testing without a
+browser, so it sits in `packages/web/src/lib/drop-inbox.ts` behind an
+`InboxSource` of `list` and `read`. The dialog is the thin part: a React Query
+poll whose `enabled` follows the dialog's open state, which is also all the
+polling cleanup there is.
+
+Two behaviours are deliberate and easy to read as bugs:
+
+- **A listing failure on the inbox itself is an empty inbox.** Until somebody
+  shares, the directory does not exist, and that is the state the dialog spends
+  most of its life in. An error there would make the normal case look broken.
+- **The manifest is checked against the listing.** A file the manifest names
+  but the device no longer has is dropped rather than offered, because the
+  download would fail at the point the user least expects it.
+
+Batches sort newest first on the directory name. It starts with a UTC
+timestamp, so ordering survives a manifest that could not be parsed.
+
+**A manifest is read once per batch, ever.** Reading it is a file pull, and a
+file pull writes an audit row — a dialog polling every two seconds would
+otherwise fill the log with its own polling, one row per batch per tick. The
+caller keeps the cache across polls; a batch is immutable once its marker is
+there, so a second read would answer the same thing. A batch that stops being
+listed, because cleanup removed it, is dropped from the cache with it.
+
+`bun test packages/web/test/drop-inbox.test.ts` covers the empty inbox, an
+incomplete batch, a missing and an unparseable manifest, an unsupported schema
+naming the producing build, one and several batches, several files in a batch,
+a batch removed mid-poll, and what repeated polls cost. The two React-level
+cases in the list above — polling cleanup and hiding the control off Android —
+are not covered: `packages/web` has no component test setup, and adding one is
+its own decision.
+
+### Real-device checks
+
+Signed off against the SM-S901B with the coordinator, the Rust provider on the
+`android` backend, and the batch increment 8 wrote. The reader found the one
+complete batch and skipped four abandoned directories that never got a marker.
+All three files downloaded byte-identical to the device's own `md5sum`, and each
+pull is a `device.file_pull` row naming its inbox path. Five consecutive polls
+cost exactly one manifest read.
 
 Web tests cover:
 
