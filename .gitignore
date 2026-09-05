@@ -45,6 +45,10 @@ lerna-debug.log*
 # rust
 /target/
 
+# flutter
+.dart_tool/
+.flutter-plugins-dependencies
+
 # NOTE: packages/provider/crates/yard-protocol/src/generated.rs and
 # tests/fixtures.json are generated but deliberately COMMITTED — CI regenerates
 # and diffs them to catch wire-contract drift. Do not add them here.

@@ -8,6 +8,7 @@ import {
   ClipboardPaste,
   FolderOpen,
   House,
+  Inbox,
   Lock,
   type LucideIcon,
   MoreHorizontal,
@@ -27,6 +28,7 @@ import {
   useState,
 } from "react";
 import { toast } from "sonner";
+import { DeviceDropDialog } from "@/components/device-drop-dialog";
 import { DeviceFilesDialog } from "@/components/device-files-dialog";
 import { DeviceScreen } from "@/components/device-screen";
 import { SidePanel } from "@/components/side-panel";
@@ -116,6 +118,7 @@ export function DeviceConsole({
   const [install, setInstall] = useState<{ name: string; fraction: number } | null>(null);
   const [dragging, setDragging] = useState(false);
   const [filesOpen, setFilesOpen] = useState(false);
+  const [dropOpen, setDropOpen] = useState(false);
 
   // The recorder itself lives in a ref — it is not render state — while
   // `elapsed` drives the label and is the only thing that needs to re-render.
@@ -420,6 +423,18 @@ export function DeviceConsole({
           run: () => installInput.current?.click(),
         },
         { key: "browse", label: "Files", icon: FolderOpen, run: () => setFilesOpen(true) },
+        // The companion app is Android-only, so on iOS this would open a
+        // dialog that can never fill.
+        ...(platform === "android"
+          ? [
+              {
+                key: "drop",
+                label: "Receive shared files",
+                icon: Inbox,
+                run: () => setDropOpen(true),
+              },
+            ]
+          : []),
         { key: "copy", label: "Copy from device", icon: ClipboardCopy, run: readDeviceClipboard },
         { key: "paste", label: "Paste to device", icon: ClipboardPaste, run: writeDeviceClipboard },
       ],
@@ -673,6 +688,8 @@ export function DeviceConsole({
         open={filesOpen}
         onOpenChange={setFilesOpen}
       />
+
+      <DeviceDropDialog deviceId={deviceId} open={dropOpen} onOpenChange={setDropOpen} />
     </div>
   );
 }

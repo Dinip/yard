@@ -124,6 +124,7 @@ packages/
 | [PROTOCOL.md](docs/PROTOCOL.md) | Wire contract |
 | [CLEANUP.md](docs/CLEANUP.md) | Resetting a device between users |
 | [DEVELOPMENT.md](docs/DEVELOPMENT.md) | Setup, commands, conventions |
+| [DROP.md](docs/DROP.md) | Proposed Android and iOS share-target companion plan |
 
 `docs/REFERENCES.local.md` covers the STF sources kept on disk outside this
 repo, and what to read in them. It's local-only and not committed.
