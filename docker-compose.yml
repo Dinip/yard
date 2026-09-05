@@ -117,6 +117,9 @@ services:
       # tmpfs so a container recreate does not re-fetch it — and so it can be
       # pre-populated from Xcode's copy to keep the download off a mirror.
       - ddi-cache:/var/lib/yard/ddi
+      # Protected preloads must survive a provider container recreate so their
+      # retained packages stay in step with the manifest.
+      - provider-preloads:/var/lib/yard/preloads
       - usbmuxd-socket:/run/yard-usbmuxd
       # Comment this out on macOS: the path does not exist to bind.
       - /dev/bus/usb:/dev/bus/usb
@@ -133,5 +136,6 @@ volumes:
   caddy-config:
   adb-keys:
   ddi-cache:
+  provider-preloads:
   lockdown-keys:
   usbmuxd-socket:
