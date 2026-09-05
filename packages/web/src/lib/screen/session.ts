@@ -206,10 +206,48 @@ export interface InstallResult {
   error?: string;
 }
 
+export interface PreloadGrant {
+  deviceId: string;
+  providerBaseUrl: string;
+  token: string;
+}
+
+function uploadApp(
+  url: string,
+  file: File,
+  onProgress: (fraction: number) => void,
+): Promise<InstallResult> {
+  return new Promise<InstallResult>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", url);
+    xhr.setRequestHeader("x-yard-filename", file.name);
+    xhr.setRequestHeader("content-type", "application/octet-stream");
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable) onProgress(event.loaded / event.total);
+    };
+    xhr.onload = () => {
+      let body: InstallResult;
+      try {
+        body = JSON.parse(xhr.responseText) as InstallResult;
+      } catch {
+        reject(new Error(xhr.responseText || `install failed (${xhr.status})`));
+        return;
+      }
+      // A failed install answers with a JSON body — the error belongs to the
+      // device, not the transport, so surface its message.
+      if (xhr.status >= 200 && xhr.status < 300 && body.ok) resolve(body);
+      else reject(new Error(body.error ?? `install failed (${xhr.status})`));
+    };
+    xhr.onerror = () => reject(new Error("upload failed"));
+    xhr.send(file);
+  });
+}
+
 /**
  * `POST /s/:deviceId/install` — streams the build to the provider, which
- * installs it and deletes it. There is no artifact storage anywhere in the
- * system; the only trace is the coordinator's audit-log row.
+ * installs it and deletes it. Admin preloads use a separate protected endpoint;
+ * this session path remains transient and is represented by the coordinator's
+ * audit-log row.
  *
  * XHR rather than fetch because upload progress is the whole point and
  * `fetch` still has no portable way to report it.
@@ -219,34 +257,27 @@ export function installApp(
   file: File,
   onProgress: (fraction: number) => void,
 ): Promise<InstallResult> {
-  return mintToken(deviceId).then(
-    (grant) =>
-      new Promise<InstallResult>((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open(
-          "POST",
-          `${grant.providerBaseUrl}/s/${deviceId}/install?token=${encodeURIComponent(grant.token)}`,
-        );
-        xhr.setRequestHeader("x-yard-filename", file.name);
-        xhr.setRequestHeader("content-type", "application/octet-stream");
-        xhr.upload.onprogress = (event) => {
-          if (event.lengthComputable) onProgress(event.loaded / event.total);
-        };
-        xhr.onload = () => {
-          let body: InstallResult;
-          try {
-            body = JSON.parse(xhr.responseText) as InstallResult;
-          } catch {
-            reject(new Error(xhr.responseText || `install failed (${xhr.status})`));
-            return;
-          }
-          // A failed install answers 502 with a JSON body — the error belongs
-          // to the device, not the transport, so surface its message.
-          if (xhr.status >= 200 && xhr.status < 300 && body.ok) resolve(body);
-          else reject(new Error(body.error ?? `install failed (${xhr.status})`));
-        };
-        xhr.onerror = () => reject(new Error("upload failed"));
-        xhr.send(file);
-      }),
+  return mintToken(deviceId).then((grant) =>
+    uploadApp(
+      `${grant.providerBaseUrl}/s/${deviceId}/install?token=${encodeURIComponent(grant.token)}`,
+      file,
+      onProgress,
+    ),
+  );
+}
+
+/**
+ * `POST /s/:deviceId/preload` — streams an admin-selected app to one idle
+ * device. The grant is scoped to this endpoint and platform by the coordinator.
+ */
+export function preloadApp(
+  grant: PreloadGrant,
+  file: File,
+  onProgress: (fraction: number) => void,
+): Promise<InstallResult> {
+  return uploadApp(
+    `${grant.providerBaseUrl}/s/${grant.deviceId}/preload?token=${encodeURIComponent(grant.token)}`,
+    file,
+    onProgress,
   );
 }

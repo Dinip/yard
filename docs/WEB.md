@@ -30,6 +30,7 @@ src/
     │   ├── devices.$deviceId.tsx
     │   ├── providers.tsx  redirect only → /admin/providers
     │   ├── admin.providers.tsx
+    │   ├── admin.preload.tsx
     │   └── admin.users.tsx
     ├── _session.tsx      same guard, no shell
     └── _session/
@@ -53,6 +54,16 @@ There is **one** providers page, `/admin/providers`. A read-only copy at
 buttons; `/providers` is now a redirect, kept only so an old bookmark still
 works. A non-admin following it hits the admin guard and lands on `/devices` —
 a provider's name reaches them on the device page anyway.
+
+`/admin/preload` is the only page that displays preload inventory. Admins can
+remove an existing preload from an idle device there, which uninstalls the app
+and drops its retained package and repair policy. The same page accepts one
+`.apk` or `.ipa`, derives the target platform from the suffix, shows compatible
+devices alongside their live availability, and uploads to up to three providers
+in parallel. The coordinator signs one scoped grant per target; the package
+bytes travel directly from the browser to each provider. The provider retains
+each preload in its durable preload store and repairs it during cleanup if a
+session user removes the app, before the device returns to the pool.
 
 `/settings` is per-user, and reached from the account menu rather than the nav
 rail: it holds things about *you*, not about the farm, and the rail is for

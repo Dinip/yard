@@ -109,6 +109,30 @@ pub async fn run(
     baseline: Option<&HashSet<String>>,
     paths: &[String],
 ) -> CleanupReport {
+    run_with_protected(
+        backend,
+        steps,
+        clear_filter,
+        baseline,
+        paths,
+        &HashSet::new(),
+    )
+    .await
+}
+
+/// Runs cleanup while preserving apps owned by the provider's preload policy.
+///
+/// The extra set matters after a provider restart: there may be no session
+/// baseline at all, but a protected app still must not be removed by a cleanup
+/// pass.
+pub async fn run_with_protected(
+    backend: &dyn DeviceBackend,
+    steps: &CleanupSteps,
+    clear_filter: &AppFilter,
+    baseline: Option<&HashSet<String>>,
+    paths: &[String],
+    protected: &HashSet<String>,
+) -> CleanupReport {
     let mut report = CleanupReport::default();
 
     if steps.uninstall_apps {
@@ -116,7 +140,7 @@ pub async fn run(
             None => report
                 .errors
                 .push("uninstall: no baseline for this session, skipped".into()),
-            Some(baseline) => uninstall_new(backend, baseline, &mut report).await,
+            Some(baseline) => uninstall_new(backend, baseline, protected, &mut report).await,
         }
     }
 
@@ -146,6 +170,7 @@ pub async fn run(
 async fn uninstall_new(
     backend: &dyn DeviceBackend,
     baseline: &HashSet<String>,
+    protected: &HashSet<String>,
     report: &mut CleanupReport,
 ) {
     let current = match backend.apps().await {
@@ -160,7 +185,7 @@ async fn uninstall_new(
     };
 
     for app in current {
-        if baseline.contains(&app.id) {
+        if baseline.contains(&app.id) || protected.contains(&app.id) {
             continue;
         }
         match backend.uninstall(&app.id).await {

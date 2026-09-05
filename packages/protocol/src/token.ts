@@ -19,6 +19,10 @@ export const SessionTokenClaims = z.object({
   userId: z.string(),
   reservationId: z.string(),
   providerId: z.string(),
+  /** Present only on a grant for the admin preload endpoint. */
+  scope: z.literal("preload").optional(),
+  /** The target platform carried by a preload grant. */
+  platform: z.enum(["ios", "android"]).optional(),
 });
 
 export type SessionTokenClaims = z.infer<typeof SessionTokenClaims>;

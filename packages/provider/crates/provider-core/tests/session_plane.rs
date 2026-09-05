@@ -18,12 +18,14 @@ use jsonwebtoken::{Algorithm, EncodingKey, Header};
 use provider_core::auth::TokenVerifier;
 use provider_core::backend::InputEvent;
 use provider_core::config::Config;
+use provider_core::control::CommandHandler;
 use provider_core::origins::WebOrigins;
+use provider_core::preload::PreloadStore;
 use provider_core::server::{router, ServerState};
 use provider_core::session::{Authorization, SessionRegistry};
 use provider_core::supervisor::Supervisor;
 use serde::Serialize;
-use yard_protocol::Platform;
+use yard_protocol::{AppFilter, CleanupSteps, CommandPayload, DeviceStatus, Platform};
 
 const PROVIDER_ID: &str = "test-provider";
 /// The browser origin the coordinator hands out in `hello.ack`.
@@ -48,6 +50,10 @@ struct Claims<'a> {
     reservation_id: &'a str,
     #[serde(rename = "providerId")]
     provider_id: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    scope: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    platform: Option<&'a str>,
 }
 
 /// An Ed25519 keypair plus the JWKS a provider would fetch for it.
@@ -86,6 +92,22 @@ impl Signer {
     }
 
     fn token(&self, issuer: &str, device_id: &str, reservation_id: &str, ttl_secs: i64) -> String {
+        self.token_with(issuer, device_id, reservation_id, ttl_secs, None, None)
+    }
+
+    fn preload_token(&self, issuer: &str, device_id: &str, platform: &str) -> String {
+        self.token_with(issuer, device_id, "", 60, Some("preload"), Some(platform))
+    }
+
+    fn token_with(
+        &self,
+        issuer: &str,
+        device_id: &str,
+        reservation_id: &str,
+        ttl_secs: i64,
+        scope: Option<&str>,
+        platform: Option<&str>,
+    ) -> String {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -105,6 +127,8 @@ impl Signer {
                 user_id: "user-1",
                 reservation_id,
                 provider_id: PROVIDER_ID,
+                scope,
+                platform,
             },
             &self.encoding,
         )
@@ -118,6 +142,8 @@ struct Harness {
     signer: Signer,
     issuer: String,
     scratch: std::path::PathBuf,
+    preload_dir: std::path::PathBuf,
+    supervisor: Arc<Supervisor>,
     /// The backend behind `DEVICE_ID`, so a test can rotate it or change its
     /// codec the way a real device does mid-session.
     device: Arc<backend_mock::MockBackend>,
@@ -155,6 +181,11 @@ async fn start() -> Harness {
         NEXT_SCRATCH.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
     tokio::fs::create_dir_all(&scratch).await.unwrap();
+    let preload_dir = std::env::temp_dir().join(format!(
+        "farm-preload-test-{}-{}",
+        std::process::id(),
+        NEXT_SCRATCH.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
 
     let config: Config = serde_yaml_ng::from_str(&format!(
         r#"
@@ -164,14 +195,17 @@ coordinator_url: {issuer}
 public_base_url: http://localhost:7100
 token: pft_test
 scratch_dir: {}
+preload_dir: {}
 "#,
-        scratch.display()
+        scratch.display(),
+        preload_dir.display()
     ))
     .unwrap();
     let config = Arc::new(config);
 
     let sessions = SessionRegistry::new();
-    let mut supervisor = Supervisor::new(sessions.clone());
+    let preload_store = PreloadStore::open(&preload_dir).await.unwrap();
+    let mut supervisor = Supervisor::with_preload_store(sessions.clone(), preload_store);
     let device = backend_mock::MockBackend::new(DEVICE_ID, Platform::Ios, "Mock iPhone");
     supervisor.add(DEVICE_ID.into(), device.clone());
     supervisor.add(
@@ -195,7 +229,7 @@ scratch_dir: {}
     web_origins.set(vec![ALLOWED_ORIGIN.into()]);
     let state = ServerState {
         config,
-        supervisor,
+        supervisor: supervisor.clone(),
         verifier,
         web_origins,
     };
@@ -207,6 +241,8 @@ scratch_dir: {}
         signer,
         issuer,
         scratch,
+        preload_dir,
+        supervisor,
         device,
     }
 }
@@ -243,6 +279,7 @@ impl Harness {
 impl Drop for Harness {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.scratch);
+        let _ = std::fs::remove_dir_all(&self.preload_dir);
     }
 }
 
@@ -569,6 +606,207 @@ async fn upload_installs_then_deletes_the_staged_file() {
         "staged upload was left behind: {:?}",
         h.scratch_files()
     );
+}
+
+#[tokio::test]
+async fn preload_installs_on_an_idle_matching_platform() {
+    let h = start().await;
+    let token = h.signer.preload_token(&h.issuer, DEVICE_ID, "ios");
+
+    let res = reqwest::Client::new()
+        .post(format!("{}/s/{DEVICE_ID}/preload?token={token}", h.base))
+        .header("x-yard-filename", "release.ipa")
+        .body(vec![3u8; 1024])
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), 200);
+    let body: serde_json::Value = res.json().await.unwrap();
+    assert_eq!(body["ok"], true);
+    assert_eq!(body["filename"], "release.ipa");
+    assert!(h
+        .device
+        .state
+        .installed
+        .lock()
+        .await
+        .iter()
+        .any(|app| app.id == "mock.release.ipa"));
+    assert!(h.scratch_files().is_empty());
+}
+
+#[tokio::test]
+async fn removing_a_preload_uninstalls_it_and_drops_its_policy() {
+    let h = start().await;
+    let token = h.signer.preload_token(&h.issuer, DEVICE_ID, "ios");
+
+    let res = reqwest::Client::new()
+        .post(format!("{}/s/{DEVICE_ID}/preload?token={token}", h.base))
+        .header("x-yard-filename", "release.ipa")
+        .body(vec![3u8; 1024])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200);
+
+    h.supervisor
+        .handle(CommandPayload::DevicePreloadRemove {
+            device_id: DEVICE_ID.into(),
+            app_id: "mock.release.ipa".into(),
+        })
+        .await
+        .unwrap();
+
+    assert!(!h
+        .device
+        .state
+        .installed
+        .lock()
+        .await
+        .iter()
+        .any(|app| app.id == "mock.release.ipa"));
+    assert!(h.supervisor.preload_inventory().await.is_empty());
+    assert!(std::fs::read_dir(h.preload_dir.join("artifacts"))
+        .unwrap()
+        .next()
+        .is_none());
+}
+
+#[tokio::test]
+async fn a_protected_preload_is_reinstalled_during_session_cleanup() {
+    let h = start().await;
+    let token = h.signer.preload_token(&h.issuer, DEVICE_ID, "ios");
+
+    let res = reqwest::Client::new()
+        .post(format!("{}/s/{DEVICE_ID}/preload?token={token}", h.base))
+        .header("x-yard-filename", "release.ipa")
+        .body(vec![3u8; 1024])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 200);
+
+    h.supervisor
+        .handle(CommandPayload::SessionAuthorize {
+            device_id: DEVICE_ID.into(),
+            reservation_id: RESERVATION.into(),
+            user_id: "user-1".into(),
+            adb_keys: Vec::new(),
+        })
+        .await
+        .unwrap();
+
+    h.device
+        .state
+        .installed
+        .lock()
+        .await
+        .retain(|app| app.id != "mock.release.ipa");
+    assert!(!h
+        .device
+        .state
+        .installed
+        .lock()
+        .await
+        .iter()
+        .any(|app| app.id == "mock.release.ipa"));
+
+    h.supervisor
+        .handle(CommandPayload::DeviceCleanup {
+            device_id: DEVICE_ID.into(),
+            steps: CleanupSteps {
+                uninstall_apps: true,
+                reset_screen: false,
+                clear_app_data: false,
+                wipe_folders: false,
+            },
+            clear_app_data_filter: AppFilter {
+                allow: Vec::new(),
+                deny: Vec::new(),
+            },
+            timeout_seconds: 30,
+        })
+        .await
+        .unwrap();
+
+    let device = h.supervisor.device(DEVICE_ID).unwrap();
+    for _ in 0..200 {
+        let installed = h
+            .device
+            .state
+            .installed
+            .lock()
+            .await
+            .iter()
+            .any(|app| app.id == "mock.release.ipa");
+        if installed && device.status().await == DeviceStatus::Ready {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    assert!(h
+        .device
+        .state
+        .installed
+        .lock()
+        .await
+        .iter()
+        .any(|app| app.id == "mock.release.ipa"));
+    assert!(h.preload_dir.join("manifest.json").exists());
+}
+
+#[tokio::test]
+async fn preload_rejects_a_package_for_the_wrong_platform_before_writing() {
+    let h = start().await;
+    let token = h.signer.preload_token(&h.issuer, DEVICE_ID, "ios");
+
+    let res = reqwest::Client::new()
+        .post(format!("{}/s/{DEVICE_ID}/preload?token={token}", h.base))
+        .header("x-yard-filename", "release.apk")
+        .body(vec![3u8; 1024])
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), 400);
+    assert!(h.scratch_files().is_empty());
+}
+
+#[tokio::test]
+async fn preload_refuses_a_device_with_an_active_session() {
+    let h = start().await;
+    h.authorize().await;
+    let token = h.signer.preload_token(&h.issuer, DEVICE_ID, "ios");
+
+    let res = reqwest::Client::new()
+        .post(format!("{}/s/{DEVICE_ID}/preload?token={token}", h.base))
+        .header("x-yard-filename", "release.ipa")
+        .body(vec![3u8; 1024])
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), 409);
+    assert!(h.scratch_files().is_empty());
+}
+
+#[tokio::test]
+async fn a_preload_grant_cannot_be_used_as_a_session_install_token() {
+    let h = start().await;
+    let token = h.signer.preload_token(&h.issuer, DEVICE_ID, "ios");
+
+    let res = reqwest::Client::new()
+        .post(format!("{}/s/{DEVICE_ID}/install?token={token}", h.base))
+        .header("x-yard-filename", "release.ipa")
+        .body(vec![3u8; 1024])
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(res.status(), 403);
+    assert!(h.scratch_files().is_empty());
 }
 
 #[tokio::test]

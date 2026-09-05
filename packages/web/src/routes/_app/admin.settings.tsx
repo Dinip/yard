@@ -109,15 +109,15 @@ function SettingsPage() {
         <CardContent className="grid gap-6">
           <ToggleSetting
             id="cleanup-enabled"
-            label="Reset devices when a reservation ends"
-            help="The device is held out of the pool while its provider resets it, and comes back when that finishes. A provider that dies mid-clean cannot strand a device — it is returned automatically."
+            label="Run ordinary reset steps when a reservation ends"
+            help="The provider always checks protected preloads before returning a device to the pool. Turn this on to also run the configurable reset steps below."
             checked={data.values["cleanup.enabled"]}
             pending={save.isPending}
             onChange={(value) => save.mutate({ key: "cleanup.enabled", value })}
             changed={changedAt("cleanup.enabled")}
           />
 
-          {/* The steps stay visible when cleanup is off, greyed rather than
+          {/* The steps stay visible when ordinary cleanup is off, greyed rather than
               hidden: an admin turning this on needs to see what they are about
               to switch on before they switch it on. */}
           <div

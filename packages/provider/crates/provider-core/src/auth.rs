@@ -45,6 +45,12 @@ pub struct SessionClaims {
     pub reservation_id: String,
     #[serde(rename = "providerId")]
     pub provider_id: String,
+    /// `preload` is present only on an admin's idle-device deployment grant.
+    #[serde(default)]
+    pub scope: Option<String>,
+    /// Platform bound to a preload grant, used to reject APK/IPA mismatches.
+    #[serde(default)]
+    pub platform: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

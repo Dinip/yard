@@ -19,6 +19,7 @@ import {
   CoordinatorMessage,
   type DeviceSnapshot,
   PROTOCOL_VERSION,
+  type PreloadInfo,
   type ProviderMessage,
 } from "../src/index.ts";
 
@@ -30,6 +31,8 @@ export interface FakeProviderOptions {
   name?: string;
   publicBaseUrl?: string;
   devices: DeviceSnapshot[];
+  /** Provider-retained preload metadata, if this fake should advertise any. */
+  preloads?: PreloadInfo[];
   /** Override how a command is answered. Return data, or throw to fail it. */
   onCommand?: (
     payload: CommandPayload,
@@ -82,6 +85,7 @@ export class FakeProvider {
         publicBaseUrl: this.opts.publicBaseUrl ?? "https://fake-provider.test",
         hostname: "fake.local",
         devices: this.opts.devices,
+        preloads: this.opts.preloads,
       });
     });
 

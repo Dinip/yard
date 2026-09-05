@@ -481,6 +481,15 @@ impl DeviceBackend for MockBackend {
         Ok(())
     }
 
+    async fn artifact_app_id(&self, staged: &Path) -> Result<String> {
+        let id = staged
+            .file_name()
+            .and_then(|n| n.to_str())
+            .and_then(|n| n.split('-').next_back())
+            .unwrap_or("com.example.installed");
+        Ok(format!("mock.{id}"))
+    }
+
     async fn uninstall(&self, app_id: &str) -> Result<()> {
         let mut installed = self.state.installed.lock().await;
         let before = installed.len();

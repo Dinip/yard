@@ -16,12 +16,15 @@ pub mod h264;
 pub mod metrics;
 pub mod scrcpy;
 
+use std::fs::File;
+use std::io::Read;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use adb_bridge::Bridge;
 use anyhow::{anyhow, Context as _, Result};
+use apk_info_axml::AXML;
 use async_trait::async_trait;
 use provider_core::adb_auth::AdbAuthority;
 use provider_core::backend::{
@@ -526,6 +529,31 @@ impl DeviceBackend for AndroidBackend {
         }
         progress.report("done", Some(1.0));
         Ok(())
+    }
+
+    async fn artifact_app_id(&self, staged: &Path) -> BackendResult<String> {
+        // Only the manifest is needed. In particular, do not read the whole
+        // APK into memory: a normal preload can be hundreds of megabytes.
+        let mut archive = zip::ZipArchive::new(
+            File::open(staged)
+                .with_context(|| format!("opening {}", staged.display()))
+                .map_err(BackendError::from)?,
+        )
+        .map_err(|err| BackendError::Failed(format!("reading APK archive: {err}")))?;
+        let mut manifest = Vec::new();
+        archive
+            .by_name("AndroidManifest.xml")
+            .map_err(|err| BackendError::Failed(format!("reading AndroidManifest.xml: {err}")))?
+            .read_to_end(&mut manifest)
+            .map_err(|err| BackendError::Failed(format!("reading AndroidManifest.xml: {err}")))?;
+
+        let mut input = manifest.as_slice();
+        let axml = AXML::new(&mut input, None)
+            .map_err(|err| BackendError::Failed(format!("parsing AndroidManifest.xml: {err}")))?;
+        axml.get_attribute_value("manifest", "package", None)
+            .ok_or_else(|| {
+                BackendError::Failed("Android package does not declare an application id".into())
+            })
     }
 
     async fn uninstall(&self, app_id: &str) -> BackendResult<()> {

@@ -4,6 +4,7 @@ import {
   Boxes,
   LogOut,
   type LucideIcon,
+  PackageOpen,
   ScrollText,
   Server,
   Shield,
@@ -65,6 +66,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           {me?.isAdmin && (
             <>
               <NavLink to="/admin/providers" icon={Server} label="Providers" />
+              <NavLink to="/admin/preload" icon={PackageOpen} label="Preloaded apps" />
               <NavLink to="/admin/users" icon={Shield} label="Users" />
               <NavLink to="/admin/audit" icon={ScrollText} label="Audit" />
               <NavLink to="/admin/settings" icon={SlidersHorizontal} label="Settings" />

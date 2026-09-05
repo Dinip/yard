@@ -110,24 +110,26 @@ export async function releaseActive(
       // Hold the device out of the pool until its provider says it is clean.
       // The provider answers with a `device.status`, so nothing here waits: a
       // multi-package uninstall runs far past any request this could sit in.
-      if (settings["cleanup.enabled"]) {
-        cleaned.push(row.id);
-        conn.commandNoWait({
-          kind: "device.cleanup",
-          deviceId: row.id,
-          steps: {
-            uninstallApps: settings["cleanup.uninstallApps"],
-            resetScreen: settings["cleanup.resetScreen"],
-            clearAppData: settings["cleanup.clearAppData"],
-            wipeFolders: settings["cleanup.wipeFolders"],
-          },
-          clearAppDataFilter: {
-            allow: settings["cleanup.clearAppDataAllow"],
-            deny: settings["cleanup.clearAppDataDeny"],
-          },
-          timeoutSeconds: settings["cleanup.timeoutSeconds"],
-        });
-      }
+      // A cleanup pass is always sent while the provider is connected. The
+      // toggle controls the ordinary reset steps; the provider must still
+      // verify and restore protected preloads before this device is offered to
+      // another session.
+      cleaned.push(row.id);
+      conn.commandNoWait({
+        kind: "device.cleanup",
+        deviceId: row.id,
+        steps: {
+          uninstallApps: settings["cleanup.enabled"] && settings["cleanup.uninstallApps"],
+          resetScreen: settings["cleanup.enabled"] && settings["cleanup.resetScreen"],
+          clearAppData: settings["cleanup.enabled"] && settings["cleanup.clearAppData"],
+          wipeFolders: settings["cleanup.enabled"] && settings["cleanup.wipeFolders"],
+        },
+        clearAppDataFilter: {
+          allow: settings["cleanup.clearAppDataAllow"],
+          deny: settings["cleanup.clearAppDataDeny"],
+        },
+        timeoutSeconds: settings["cleanup.timeoutSeconds"],
+      });
     }
 
     await markFreed(db, ids, cleaned);

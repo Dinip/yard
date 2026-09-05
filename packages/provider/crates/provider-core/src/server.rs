@@ -33,6 +33,7 @@ use crate::auth::TokenVerifier;
 use crate::backend::{InputEvent, ProgressSink};
 use crate::config::Config;
 use crate::origins::WebOrigins;
+use crate::preload::ProtectedPreload;
 use crate::supervisor::Supervisor;
 use crate::video::VideoGeometry;
 
@@ -79,6 +80,10 @@ pub fn router(state: ServerState) -> Router {
         .route(
             "/s/{device_id}/install",
             post(install).layer(DefaultBodyLimit::max(limit)),
+        )
+        .route(
+            "/s/{device_id}/preload",
+            post(preload).layer(DefaultBodyLimit::max(limit)),
         )
         .layer(cors(state.web_origins.clone()))
         .with_state(state)
@@ -155,6 +160,14 @@ async fn authorize(
         return Err((StatusCode::FORBIDDEN, "token is for a different device").into_response());
     }
 
+    if claims.scope.is_some() {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "this token is only valid for app deployment",
+        )
+            .into_response());
+    }
+
     if let Err(err) = state
         .supervisor
         .sessions()
@@ -163,6 +176,46 @@ async fn authorize(
     {
         debug!(device = %device_id, error = %err, "reservation check failed");
         return Err((StatusCode::FORBIDDEN, err.to_string()).into_response());
+    }
+
+    Ok(claims)
+}
+
+/// Verifies an admin's short-lived deployment grant.
+///
+/// This deliberately does not check [`SessionRegistry`]: a preload is not a
+/// user session. It does check the provider's live view of the device before
+/// accepting the upload, and [`install_upload`] repeats that check after the
+/// potentially long upload has completed.
+#[allow(clippy::result_large_err)]
+async fn authorize_preload(
+    state: &ServerState,
+    device_id: &str,
+    token: &str,
+) -> std::result::Result<crate::auth::SessionClaims, Response> {
+    let claims = match state.verifier.verify(token).await {
+        Ok(claims) => claims,
+        Err(err) => {
+            debug!(device = %device_id, error = %format!("{err:#}"), "preload token rejected");
+            return Err((StatusCode::UNAUTHORIZED, "invalid preload token").into_response());
+        }
+    };
+
+    if claims.device_id != device_id {
+        return Err((StatusCode::FORBIDDEN, "token is for a different device").into_response());
+    }
+    if claims.scope.as_deref() != Some("preload") || claims.platform.is_none() {
+        return Err((StatusCode::FORBIDDEN, "invalid preload grant").into_response());
+    }
+    if state.supervisor.device(device_id).is_none() {
+        return Err((StatusCode::NOT_FOUND, "unknown device").into_response());
+    }
+    if !state.supervisor.can_preload(device_id).await {
+        return Err((
+            StatusCode::CONFLICT,
+            "device is busy or unavailable for preload",
+        )
+            .into_response());
     }
 
     Ok(claims)
@@ -595,13 +648,13 @@ impl Drop for StagedFile {
     }
 }
 
-/// Streams an APK/IPA to disk, installs it, and deletes it.
+/// Streams a session APK/IPA to disk, installs it, and deletes it.
 ///
 /// The body is written to the scratch dir as it arrives rather than buffered,
-/// so a 200 MB APK never sits in memory. Nothing is stored server-side and
-/// there is no artifact table anywhere in the system — the only trace is the
-/// `install.finished` event this sends up the control plane, which the
-/// coordinator writes to its audit log.
+/// so a 200 MB APK never sits in memory. Session packages are not retained by
+/// the provider; protected preload retention is handled by the separate preload
+/// path below. The `install.finished` event is the session install's lasting
+/// audit trace.
 async fn install(
     State(state): State<ServerState>,
     Path(device_id): Path<String>,
@@ -613,7 +666,40 @@ async fn install(
         Ok(claims) => claims,
         Err(response) => return response,
     };
-    let Some(device) = state.supervisor.device(&device_id) else {
+
+    install_upload(&state, &device_id, claims, headers, body, None).await
+}
+
+/// Direct browser-to-provider upload for an admin preload grant.
+async fn preload(
+    State(state): State<ServerState>,
+    Path(device_id): Path<String>,
+    Query(query): Query<TokenQuery>,
+    headers: axum::http::HeaderMap,
+    body: Body,
+) -> Response {
+    let claims = match authorize_preload(&state, &device_id, &query.token).await {
+        Ok(claims) => claims,
+        Err(response) => return response,
+    };
+
+    install_upload(&state, &device_id, claims, headers, body, Some("preload")).await
+}
+
+/// Streams one app to the provider, installs it, and deletes it.
+///
+/// `mode` is `Some("preload")` only for an admin deployment. The same upload
+/// implementation serves session installs so both paths retain identical
+/// hashing, cleanup and audit behavior.
+async fn install_upload(
+    state: &ServerState,
+    device_id: &str,
+    claims: crate::auth::SessionClaims,
+    headers: axum::http::HeaderMap,
+    body: Body,
+    mode: Option<&str>,
+) -> Response {
+    let Some(device) = state.supervisor.device(device_id) else {
         return (StatusCode::NOT_FOUND, "unknown device").into_response();
     };
 
@@ -622,6 +708,23 @@ async fn install(
         .and_then(|v| v.to_str().ok())
         .map(sanitize_filename)
         .unwrap_or_else(|| "upload.bin".to_owned());
+
+    if let Some(mode) = mode {
+        let Some(file_platform) = platform_for_filename(&filename) else {
+            return (
+                StatusCode::BAD_REQUEST,
+                "preload accepts only .apk or .ipa files",
+            )
+                .into_response();
+        };
+        if claims.platform.as_deref() != Some(file_platform) {
+            return (
+                StatusCode::BAD_REQUEST,
+                format!("{filename} is not a {mode} file for this device platform"),
+            )
+                .into_response();
+        }
+    }
 
     if let Err(err) = tokio::fs::create_dir_all(&state.config.scratch_dir).await {
         return (
@@ -645,26 +748,91 @@ async fn install(
         }
     };
 
-    info!(device = %device_id, %filename, size, "installing upload");
+    info!(device = %device_id, %filename, size, mode = mode.unwrap_or("session"), "installing upload");
 
-    state.supervisor.note_activity(&device_id).await;
+    state.supervisor.note_activity(device_id).await;
 
     let progress = LogProgress {
-        device_id: device_id.clone(),
+        device_id: device_id.to_owned(),
     };
-    let outcome = device.backend.install(&staged_path, &progress).await;
+    let mut protected: Option<ProtectedPreload> = None;
+    let outcome = {
+        // Cleanup, session authorization and preload all use this same lock.
+        // In particular, a long upload cannot finish into a device that has
+        // just started cleaning or accepting a user session.
+        let _operation = device.lock_operation().await;
+        if mode == Some("preload") && !state.supervisor.can_preload(device_id).await {
+            let error = "device is no longer idle".to_owned();
+            state
+                .supervisor
+                .push_install_result(
+                    device_id,
+                    &claims.user_id,
+                    &filename,
+                    size,
+                    &sha256,
+                    Some(error.clone()),
+                    mode,
+                    None,
+                    None,
+                )
+                .await;
+            drop(staged);
+            return (
+                StatusCode::CONFLICT,
+                axum::Json(serde_json::json!({ "ok": false, "error": error })),
+            )
+                .into_response();
+        }
+        if mode == Some("preload") {
+            let platform = claims.platform.as_deref().unwrap_or("unknown");
+            match state
+                .supervisor
+                .protect_preload(
+                    device_id,
+                    platform,
+                    &claims.user_id,
+                    &filename,
+                    size,
+                    &sha256,
+                    &staged_path,
+                )
+                .await
+            {
+                Ok(entry) => {
+                    protected = Some(entry);
+                    device
+                        .backend
+                        .install(&staged_path, &progress)
+                        .await
+                        .map_err(|err| err.to_string())
+                }
+                Err(err) => Err(format!("could not retain protected preload: {err:#}")),
+            }
+        } else {
+            device
+                .backend
+                .install(&staged_path, &progress)
+                .await
+                .map_err(|err| err.to_string())
+        }
+    };
 
-    // The file is gone by the time this row is written, which is exactly why
-    // the audit entry has to carry the digest.
+    // Session uploads are gone by the time this row is written. A protected
+    // preload has already been copied into the provider's durable store, and
+    // the digest still makes the audit event self-contained.
     state
         .supervisor
         .push_install_result(
-            &device_id,
+            device_id,
             &claims.user_id,
             &filename,
             size,
             &sha256,
-            outcome.as_ref().err().map(|e| e.to_string()),
+            outcome.as_ref().err().cloned(),
+            mode,
+            protected.as_ref().map(|entry| entry.app_id.as_str()),
+            protected.as_ref().map(|entry| entry.platform.as_str()),
         )
         .await;
 
@@ -680,6 +848,17 @@ async fn install(
             axum::Json(serde_json::json!({ "ok": false, "error": err.to_string() })),
         )
             .into_response(),
+    }
+}
+
+fn platform_for_filename(filename: &str) -> Option<&'static str> {
+    let lower = filename.to_ascii_lowercase();
+    if lower.ends_with(".apk") {
+        Some("android")
+    } else if lower.ends_with(".ipa") {
+        Some("ios")
+    } else {
+        None
     }
 }
 
@@ -741,8 +920,8 @@ async fn list_files(
 /// The file is copied off the device into the scratch directory and deleted
 /// when the response body is dropped. That staging is what keeps a large pull
 /// out of the provider's memory, and it is the same arrangement the install
-/// path uses in the other direction — there is still no artifact storage
-/// anywhere, and the only lasting trace is the audit row.
+/// path uses in the other direction. Pulled files are never retained as farm
+/// artifacts; the lasting trace is the audit row.
 async fn pull_file(
     State(state): State<ServerState>,
     Path(device_id): Path<String>,

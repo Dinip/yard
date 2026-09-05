@@ -57,15 +57,25 @@ browser↔provider RTT and nothing else.
 
 ### 4. Artifact plane — browser ↔ provider
 
-Plain HTTPS on the same provider port, authenticated by the same session token.
+Plain HTTPS on the same provider port, authenticated by a coordinator-signed
+session token or a scoped admin preload grant.
 
 - `POST /s/:deviceId/install` streams the APK/IPA to the provider's scratch dir,
   installs it, deletes it, and reports progress over the session WebSocket.
+- `POST /s/:deviceId/preload` uses a short-lived, admin-only grant to install an
+  APK or IPA on an idle device without creating a reservation. The provider
+  binds the grant to the device platform, checks that the device is still idle
+  after the upload finishes, and stores the package in its durable preload
+  directory. The cleanup run after a session checks the package id and
+  reinstalls it if the user removed the app before the device returns to the pool.
+- `device.preload.remove` uninstalls the app and removes the retained package
+  and repair policy. The coordinator and provider both refuse this command
+  while the device is in use.
 - `GET /s/:deviceId/screenshot.png` returns the image directly.
 
-Nothing is stored server-side. There is no object storage anywhere in the
-system, and no `app`/artifact table in the database — see
-[DATA-MODEL.md](./DATA-MODEL.md).
+Session uploads are not stored server-side. Protected preload packages are
+stored locally by each provider, outside the coordinator database, and are
+reconciled from that provider-local manifest — see [DATA-MODEL.md](./DATA-MODEL.md).
 
 ### Not a plane: the metrics listener
 
@@ -85,7 +95,9 @@ expected to bind it where only their monitoring can reach it. See
 ## Session tokens
 
 Ed25519 JWTs carrying `deviceId`, `userId`, `reservationId`, `exp ≈ 60s`,
-refreshed by the client while the tab is open.
+refreshed by the client while the tab is open. Admin preload grants add
+`scope: "preload"` and the target `platform`; providers accept them only on
+the preload upload endpoint.
 
 The coordinator publishes a JWKS at `/.well-known/yard-jwks.json`; each provider
 fetches it at startup and caches it. Consequences worth stating:
@@ -112,7 +124,8 @@ merely hands to the browser.
 | Provider socket drops | Its devices flip to `absent`; its reservations release. |
 | Device unplugged mid-session | Backend reports unhealthy; the UI shows it rather than a frozen frame. |
 | Two users reserve at once | Postgres partial unique index picks one winner; the loser gets `CONFLICT`. |
-| Cleanup fails, hangs, or its provider dies | The device lands on `ready` regardless — under the provider's own deadline, or the coordinator's sweep if the provider is gone. Cleanup can never strand a device. |
+| Preload target becomes unavailable | The provider rechecks its live session and device state before installing; that target gets `CONFLICT` and the others continue. |
+| Cleanup fails, hangs, or its provider dies | Ordinary step errors are audited; a failed protected-preload repair leaves the device `unhealthy`. A provider deadline or disconnect is recovered by the coordinator's sweep, so cleanup cannot strand a device. |
 
 ## Reservations replace STF's group model
 
