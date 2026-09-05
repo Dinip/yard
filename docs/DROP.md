@@ -1,7 +1,7 @@
 # YARD Drop implementation plan
 
-> Status: Android save-to-device is done and signed off on hardware
-> (increments 0 through 7). The browser inbox, its web UI and everything iOS are
+> Status: Android save-to-device and the browser inbox are done and signed off
+> on hardware (increments 0 through 8). The inbox web UI and everything iOS are
 > still plans.
 
 YARD Drop is a first-party Flutter companion that appears as an Android share
@@ -685,6 +685,38 @@ Rules:
 
 First validate this with the existing YARD Files dialog. This increment does
 not change the provider, coordinator or web app.
+
+### What a reader is promised
+
+`_YARD_READY` is written last and is the whole handshake: a reader that sees it
+is promised every file named in `batch.json`, complete. Nothing else about a
+batch directory is stable enough to poll on, because MediaStore makes a row
+visible as soon as `IS_PENDING` clears.
+
+`batch.json` carries the schema version, the batch id, a creation timestamp, the
+producing build, and one entry per file with the name MediaStore actually gave
+it — a duplicate lands as `name (1).ext`, and the manifest has to name what is
+on disk rather than what the sender sent. The build identity travels from Dart
+so the manifest and the About screen can never disagree.
+
+A batch is all-or-nothing. If any file fails, or the manifest or marker cannot
+be written, the rows already published are deleted and the files go back to
+pending. Their staged bytes are kept for exactly this, so a retry replays the
+whole share into a fresh directory rather than repairing a half-written one.
+This is the one place the save flow withdraws files it already wrote: for
+Downloads a later failure never touches an earlier success, but half a batch is
+worse than none, since nothing would ever read it and the bytes would sit in
+Downloads until the reservation ended.
+
+### Real-device checks
+
+Signed off on the same SM-S901B, with 29 instrumentation tests and 41 Dart tests
+green. A three-file share sent to the browser produced one directory holding the
+files, `batch.json` and `_YARD_READY`, and the marker's leading underscore
+survived MediaStore unmangled — the name it is given is the name on disk.
+
+`The existing YARD Files dialog can download every item` is the one acceptance
+criterion still open; it needs a provider running against this handset.
 
 Acceptance criteria:
 

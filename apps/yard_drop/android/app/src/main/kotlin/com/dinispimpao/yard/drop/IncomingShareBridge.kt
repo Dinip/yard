@@ -140,11 +140,18 @@ class IncomingShareBridge(
                 if (share == null || destination == null) {
                     result.error("unknown_share", "That share is no longer pending.", null)
                 } else {
+                    // Build identity comes from Dart so the batch manifest and
+                    // the About screen can never name different builds.
+                    val producer = Producer(
+                        appVersion = call.argument<String>("appVersion") ?: "unknown",
+                        buildNumber = call.argument<String>("buildNumber")?.toIntOrNull() ?: 0,
+                        commit = call.argument<String>("commit") ?: "unknown",
+                    )
                     background("save") {
-                        val outcome = saver.save(share, destination)
+                        val outcome = saver.save(share, destination, producer)
                         main.post {
                             when (outcome) {
-                                is SaveOutcome.Success -> result.success(saver.savedLocation)
+                                is SaveOutcome.Success -> result.success(outcome.location)
                                 is SaveOutcome.Failure ->
                                     result.error(outcome.code, outcome.message, null)
                             }

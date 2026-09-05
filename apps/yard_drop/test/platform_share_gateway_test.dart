@@ -153,7 +153,20 @@ void main() {
     expect(calls.single.arguments, {
       'shareId': 's1',
       'destination': 'downloads',
+      // Defaults, because a test build carries no CI-supplied identity.
+      'appVersion': 'dev',
+      'buildNumber': '0',
+      'commit': 'local',
     });
+  });
+
+  test('a browser save names its own destination', () async {
+    answer((_) async => null);
+
+    final result = await gateway.save('s1', ShareDestination.browserInbox);
+
+    expect(result.succeeded, isTrue);
+    expect((calls.single.arguments as Map)['destination'], 'browserInbox');
   });
 
   test('a platform error becomes a failed save, not an exception', () async {

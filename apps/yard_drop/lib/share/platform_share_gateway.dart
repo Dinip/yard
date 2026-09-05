@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/services.dart';
 
+import '../build_info.dart';
 import 'incoming_share.dart';
 import 'share_gateway.dart';
 
@@ -29,9 +30,15 @@ final class PlatformShareGateway implements ShareGateway {
   @override
   Future<SaveResult> save(String shareId, ShareDestination destination) async {
     try {
+      const build = BuildInfo.current;
       final location = await _methodChannel.invokeMethod<String>('saveShare', {
         'shareId': shareId,
         'destination': destination.name,
+        // A browser batch records the build that wrote it, so an unsupported
+        // schema can name the version the device is running.
+        'appVersion': build.version,
+        'buildNumber': build.buildNumber,
+        'commit': build.commit,
       });
       return SaveResult.success(destination, location: location);
     } on PlatformException catch (error) {

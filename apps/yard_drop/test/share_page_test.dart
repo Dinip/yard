@@ -15,6 +15,12 @@ void main() {
   tearDown(() => gateway.dispose());
 
   Future<void> pumpApp(WidgetTester tester) async {
+    // A handset's height, so a batch of files and both destination buttons fit
+    // on screen the way they do on a device.
+    tester.view.physicalSize = const Size(1080, 2340);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+
     await tester.pumpWidget(YardDropApp(gateway: gateway));
     await tester.pump();
   }
@@ -83,11 +89,17 @@ void main() {
     expect(find.text('1 more share waiting'), findsOneWidget);
   });
 
-  testWidgets('the browser destination is not offered yet', (tester) async {
+  testWidgets('the browser inbox is the second destination', (tester) async {
     gateway.emit(shareFixture());
     await pumpApp(tester);
 
-    expect(find.textContaining('browser'), findsNothing);
+    await tester.tap(find.text('Send to YARD browser'));
+    await tester.pumpAndSettle();
+
+    expect(gateway.savedDestinations['s1'], ShareDestination.browserInbox);
+    expect(find.text('Ready for the browser'), findsOneWidget);
+    // The batch folder ends in an id nobody needs, so it is not read out.
+    expect(find.textContaining('Download/YARD Drop/Inbox/'), findsNothing);
   });
 
   testWidgets('saving shows progress until it completes', (tester) async {

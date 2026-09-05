@@ -36,6 +36,7 @@ final class IncomingShare {
     this.error,
     this.progress,
     this.savedLocation,
+    this.destination,
   });
 
   final String id;
@@ -49,6 +50,10 @@ final class IncomingShare {
 
   /// Where the files ended up, once they have.
   final String? savedLocation;
+
+  /// What the user picked. The native side does not report it back, so the
+  /// screen would otherwise name the wrong folder while a save is in flight.
+  final ShareDestination? destination;
 
   bool get isBatch => files.length > 1;
 
@@ -69,6 +74,7 @@ final class IncomingShare {
     bool clearError = false,
     double? progress,
     String? savedLocation,
+    ShareDestination? destination,
   }) {
     return IncomingShare(
       id: id,
@@ -78,6 +84,7 @@ final class IncomingShare {
       error: clearError ? null : error ?? this.error,
       progress: progress ?? this.progress,
       savedLocation: savedLocation ?? this.savedLocation,
+      destination: destination ?? this.destination,
     );
   }
 }

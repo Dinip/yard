@@ -78,7 +78,7 @@ class _SharePageState extends State<SharePage> {
       IncomingShareState.ready => _ReadyState(
         share: share,
         waiting: _controller.waiting,
-        onSave: () => _controller.save(ShareDestination.downloads),
+        onSave: _controller.save,
         onDiscard: _controller.dismiss,
       ),
       IncomingShareState.saving => _SavingState(share: share),
@@ -144,7 +144,7 @@ class _ReadyState extends StatelessWidget {
 
   final IncomingShare share;
   final int waiting;
-  final VoidCallback onSave;
+  final void Function(ShareDestination) onSave;
   final VoidCallback onDiscard;
 
   @override
@@ -172,14 +172,21 @@ class _ReadyState extends StatelessWidget {
         Flexible(child: _FileList(files: share.files)),
         const SizedBox(height: 24),
         FilledButton.icon(
-          onPressed: onSave,
+          onPressed: () => onSave(ShareDestination.downloads),
           icon: const Icon(Icons.download),
           label: const Text('Save on this device'),
         ),
         const SizedBox(height: 8),
+        OutlinedButton.icon(
+          onPressed: () => onSave(ShareDestination.browserInbox),
+          icon: const Icon(Icons.open_in_browser),
+          label: const Text('Send to YARD browser'),
+        ),
+        const SizedBox(height: 8),
         Text(
-          'Files go to $savedFolder, so a session cleanup can remove all of '
-          'them at once.',
+          'Both go under Download/YARD Drop, so a session cleanup can remove '
+          'all of them at once. The browser copy waits in $inboxFolder for the '
+          'YARD session you reserved this device from.',
           style: theme.textTheme.bodySmall,
           textAlign: TextAlign.center,
         ),
@@ -202,8 +209,10 @@ class _SavingState extends StatelessWidget {
       progressValue: share.progress,
       title: 'Saving',
       message: share.isBatch
-          ? 'Writing ${_fileCount(share.pendingFiles.length)} to $savedFolder.'
-          : 'Writing ${share.files.first.displayName} to $savedFolder.',
+          ? 'Writing ${_fileCount(share.pendingFiles.length)} to '
+                '${_destinationFolder(share)}.'
+          : 'Writing ${share.files.first.displayName} to '
+                '${_destinationFolder(share)}.',
     );
   }
 }
@@ -216,12 +225,25 @@ class _SavedState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final forBrowser = share.destination == ShareDestination.browserInbox;
+
     return _Panel(
       icon: Icons.check_circle_outline,
-      title: 'Saved',
-      message: share.isBatch
-          ? '${_fileCount(share.savedFiles.length)} are in ${_location(share)}.'
-          : '${share.files.first.displayName} is in ${_location(share)}.',
+      title: forBrowser ? 'Ready for the browser' : 'Saved',
+      // The inbox path ends in a batch id nobody needs to read, so the browser
+      // wording names the session instead of the folder.
+      message: switch ((forBrowser, share.isBatch)) {
+        (true, true) =>
+          '${_fileCount(share.savedFiles.length)} are waiting for the YARD '
+              'session you reserved this device from.',
+        (true, false) =>
+          '${share.files.first.displayName} is waiting for the YARD session '
+              'you reserved this device from.',
+        (false, true) =>
+          '${_fileCount(share.savedFiles.length)} are in ${_location(share)}.',
+        (false, false) =>
+          '${share.files.first.displayName} is in ${_location(share)}.',
+      },
       // A renamed duplicate is only visible in the list, and the user needs to
       // know the name their file actually has.
       detail: share.files.any((file) => file.savedName != file.displayName)
@@ -368,7 +390,16 @@ String _fileCount(int count) => count == 1 ? '1 file' : '$count files';
 /// reservation can wipe the lot without touching the user's own downloads.
 const savedFolder = 'Download/YARD Drop/Saved';
 
-String _location(IncomingShare share) => share.savedLocation ?? savedFolder;
+/// A browser batch gets its own timestamped directory under this one.
+const inboxFolder = 'Download/YARD Drop/Inbox';
+
+String _destinationFolder(IncomingShare share) => switch (share.destination) {
+  ShareDestination.browserInbox => inboxFolder,
+  _ => savedFolder,
+};
+
+String _location(IncomingShare share) =>
+    share.savedLocation ?? _destinationFolder(share);
 
 String _describe(IncomingFile file) {
   return switch (file.state) {

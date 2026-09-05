@@ -8,6 +8,7 @@ import android.os.Environment
 import android.provider.MediaStore
 import java.io.File
 import java.io.IOException
+import java.io.OutputStream
 
 /**
  * Publishes a staged file into the device's Downloads collection.
@@ -19,13 +20,35 @@ import java.io.IOException
 class MediaStoreWriter(private val context: Context) {
 
     /**
-     * Copies [staged] into `Download/<folder>` and returns the name it ended up
-     * with, which a duplicate makes differ from [displayName].
+     * Copies [staged] into `Download/<folder>`.
      *
      * A failure leaves nothing behind: the pending row is deleted, so a partial
      * file is never visible to the Files app or to a farm cleanup pass.
      */
-    fun publish(staged: File, displayName: String, mimeType: String?, folder: String): String {
+    fun publish(staged: File, displayName: String, mimeType: String?, folder: String): Published =
+        write(displayName, mimeType, folder) { output ->
+            staged.inputStream().use { input -> input.copyTo(output, ShareLimits.COPY_BUFFER_BYTES) }
+        }
+
+    /**
+     * Publishes small generated content: a batch manifest, or the marker that
+     * says a batch is complete. Bytes, not a file, because neither ever existed
+     * in staging.
+     */
+    fun publishText(content: String, displayName: String, mimeType: String, folder: String): Published =
+        write(displayName, mimeType, folder) { output -> output.write(content.toByteArray()) }
+
+    /** Withdraws rows this app published, for a batch that will never be read. */
+    fun delete(published: List<Published>) {
+        published.forEach { runCatching { context.contentResolver.delete(it.uri, null, null) } }
+    }
+
+    private fun write(
+        displayName: String,
+        mimeType: String?,
+        folder: String,
+        body: (OutputStream) -> Unit,
+    ): Published {
         val values = ContentValues().apply {
             put(MediaStore.Downloads.DISPLAY_NAME, sanitize(displayName))
             put(MediaStore.Downloads.MIME_TYPE, mimeType ?: "application/octet-stream")
@@ -38,11 +61,8 @@ class MediaStoreWriter(private val context: Context) {
             ?: throw IOException("Downloads rejected the file.")
 
         try {
-            resolver.openOutputStream(target)?.use { output ->
-                staged.inputStream().use { input ->
-                    input.copyTo(output, ShareLimits.COPY_BUFFER_BYTES)
-                }
-            } ?: throw IOException("Downloads did not accept the file contents.")
+            resolver.openOutputStream(target)?.use(body)
+                ?: throw IOException("Downloads did not accept the file contents.")
 
             values.clear()
             values.put(MediaStore.Downloads.IS_PENDING, 0)
@@ -54,7 +74,7 @@ class MediaStoreWriter(private val context: Context) {
 
         // Downloads uniquifies a name that already exists, so what the user is
         // told is what the row says, not what was asked for.
-        return savedName(resolver, target) ?: sanitize(displayName)
+        return Published(savedName(resolver, target) ?: sanitize(displayName), target)
     }
 
     private fun savedName(resolver: ContentResolver, target: Uri): String? {
@@ -86,3 +106,6 @@ class MediaStoreWriter(private val context: Context) {
         const val MAX_NAME_LENGTH = 120
     }
 }
+
+/** One row this app owns: the name it ended up with, and the URI to withdraw it. */
+data class Published(val name: String, val uri: Uri)

@@ -51,7 +51,11 @@ final class ShareController extends ChangeNotifier {
 
     _attempted.add(share.id);
     _replace(
-      share.copyWith(state: IncomingShareState.saving, clearError: true),
+      share.copyWith(
+        state: IncomingShareState.saving,
+        clearError: true,
+        destination: destination,
+      ),
     );
 
     final SaveResult result;
@@ -65,10 +69,9 @@ final class ShareController extends ChangeNotifier {
     }
 
     // The share may have gained progress from native events since the snapshot.
-    final latest = _queue.firstWhere(
-      (queued) => queued.id == share.id,
-      orElse: () => share,
-    );
+    final latest = _queue
+        .firstWhere((queued) => queued.id == share.id, orElse: () => share)
+        .copyWith(destination: destination);
 
     _replace(
       result.succeeded
@@ -116,7 +119,9 @@ final class ShareController extends ChangeNotifier {
           share.state == IncomingShareState.ready) {
         return;
       }
-      _queue[index] = share;
+      // The native side does not echo the destination back, and the screen
+      // names a folder from it while the save is still running.
+      _queue[index] = share.copyWith(destination: known.destination);
     }
     if (notify) notifyListeners();
   }
