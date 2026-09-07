@@ -21,7 +21,8 @@
         { "type": "json", "path": "packages/web/package.json", "jsonpath": "$.version" },
         { "type": "json", "path": "packages/db/package.json", "jsonpath": "$.version" },
         { "type": "json", "path": "packages/protocol/package.json", "jsonpath": "$.version" },
-        { "type": "toml", "path": "Cargo.toml", "jsonpath": "$.workspace.package.version" }
+        { "type": "toml", "path": "Cargo.toml", "jsonpath": "$.workspace.package.version" },
+        { "type": "yaml", "path": "apps/yard_drop/pubspec.yaml", "jsonpath": "$.version" }
       ]
     }
   }

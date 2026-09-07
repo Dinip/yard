@@ -1,0 +1,53 @@
+# The YARD Drop release build. Called by release.yml, never on its own: the
+# version comes from the caller so a build can never invent one.
+
+name: Mobile
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: The released semantic version, without a leading v.
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: apps/yard_drop
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.35.6
+          channel: stable
+          cache: true
+      - run: flutter pub get
+
+      # Debug-signed: there is no release keystore, so an install over a
+      # differently signed build is refused and the device must uninstall first.
+      - name: Build the release APK
+        run: |
+          flutter build apk --release \
+            --build-name="${{ inputs.version }}" \
+            --build-number="${{ github.run_number }}" \
+            --dart-define=YARD_VERSION="${{ inputs.version }}" \
+            --dart-define=YARD_BUILD_NUMBER="${{ github.run_number }}" \
+            --dart-define=YARD_COMMIT="${GITHUB_SHA:0:7}"
+          mv build/app/outputs/flutter-apk/app-release.apk \
+             "$RUNNER_TEMP/yard-drop-${{ inputs.version }}.apk"
+
+      - name: Attach it to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "v${{ inputs.version }}" "$RUNNER_TEMP/yard-drop-${{ inputs.version }}.apk" --clobber

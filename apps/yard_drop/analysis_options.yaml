@@ -1,0 +1,6 @@
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  errors:
+    # A missing await in the save path silently loses a file.
+    unawaited_futures: error
