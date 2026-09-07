@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/Dinip/yard/compare/v0.4.0...v0.4.1) (2026-09-07)
+
+
+### Bug Fixes
+
+* **ci:** allow mobile release uploads ([#57](https://github.com/Dinip/yard/issues/57)) ([82b4bc1](https://github.com/Dinip/yard/commit/82b4bc1ccb603d5066d5107b280382a9cdb940e4))
+
 ## [0.4.0](https://github.com/Dinip/yard/compare/v0.3.1...v0.4.0) (2026-09-07)
 
 
