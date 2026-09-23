@@ -186,15 +186,19 @@ function clamp01(value: number) {
 }
 
 /**
- * Printable characters go as `text` — that is what carries IME output and
- * anything a key name cannot express. Everything else goes as a named key the
- * backend maps to a real keycode.
+ * Printable characters go as `text`, using the browser's resolved layout.
+ * Named keys go as keycodes; shortcuts and dead keys stay in the browser.
  */
-function keyMessage(event: React.KeyboardEvent, down: boolean): ClientMessage | null {
-  if (event.metaKey || event.ctrlKey || event.altKey) return null;
+export function keyMessage(
+  event: Pick<React.KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey">,
+  down: boolean,
+): ClientMessage | null {
+  if (event.metaKey || event.ctrlKey) return null;
   if (event.key.length === 1) {
     return down ? { type: "text", text: event.key } : null;
   }
+  // Option can produce text (e.g. @), but Option+Arrow is still a shortcut.
+  if (event.altKey) return null;
   const name = NAMED_KEYS.get(event.key);
   if (!name) return null;
   return { type: "key", key: name, down };

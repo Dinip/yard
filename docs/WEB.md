@@ -255,6 +255,11 @@ device.
 as `MoveHome`/`MoveEnd`, because sending them as `Home` mapped to
 `KEYCODE_HOME` — pressing Home while typing threw the device to the launcher.
 
+Printable keyboard input uses the browser's resolved `KeyboardEvent.key`,
+including Option/Alt characters such as `@`. Command/Ctrl combinations and
+Alt-modified named keys stay in the browser; dead keys are not sent as input.
+The iOS provider still types text through its US ASCII HID mapping.
+
 ### A device page that is mostly device
 
 `/devices/:id` is locked to the viewport and does not scroll. The header is one
