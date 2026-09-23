@@ -366,30 +366,55 @@ pub(crate) fn render_rotation_for(orientation: i64) -> i64 {
     (360 - orientation.rem_euclid(360)).rem_euclid(360)
 }
 
-/// The pointer state machine.
-///
-/// The pointer is a *state machine*, not a sequence of independent gestures.
-/// The browser streams pointerdown / pointermove / pointerup, and each maps 1:1
-/// onto a CONTACT / CONTACT / RELEASE report — which is what a real drag looks
-/// like on the wire. Collapsing a touchdown into a complete tap means the
-/// device has already dispatched the click before the drag samples arrive,
-/// which is why swipes and scrolls used to read as taps.
-#[derive(Debug)]
+/// Browser pointer identities mapped to the five slots in a CoreDevice report.
+#[derive(Debug, Default)]
 struct Pointer {
-    down: bool,
-    /// Where the contact currently is, so a release with no coordinates lifts
-    /// there instead of teleporting to the screen centre.
-    last: (f64, f64),
+    contacts: Vec<(i64, hid::TouchscreenContact)>,
     deadline: Option<Instant>,
 }
 
-impl Default for Pointer {
-    fn default() -> Self {
-        Self {
-            down: false,
-            last: (0.5, 0.5),
-            deadline: None,
+impl Pointer {
+    fn update(
+        &mut self,
+        id: i64,
+        x: f64,
+        y: f64,
+        down: bool,
+        lift: bool,
+    ) -> Option<Vec<hid::TouchscreenContact>> {
+        let index = match self.contacts.iter().position(|(key, _)| *key == id) {
+            Some(index) => index,
+            None if down => {
+                let identity = (0..5).find(|slot| {
+                    self.contacts
+                        .iter()
+                        .all(|(_, contact)| contact.identity != *slot)
+                })?;
+                self.contacts.push((
+                    id,
+                    hid::TouchscreenContact {
+                        identity,
+                        touching: true,
+                        x: 0,
+                        y: 0,
+                    },
+                ));
+                self.contacts.len() - 1
+            }
+            None => return None,
+        };
+        let contact = &mut self.contacts[index].1;
+        if x.is_finite() && y.is_finite() {
+            contact.x = hid::to_hid(x);
+            contact.y = hid::to_hid(y);
         }
+        contact.touching = !lift;
+        let report = self.contacts.iter().map(|(_, contact)| *contact).collect();
+        if lift {
+            self.contacts.remove(index);
+        }
+        self.deadline = (!self.contacts.is_empty()).then(|| Instant::now() + CONTACT_MAX);
+        Some(report)
     }
 }
 
@@ -632,89 +657,33 @@ impl IosBackend {
         .await
     }
 
-    async fn pointer_down(&self, x: f64, y: f64) {
+    async fn pointer_event(&self, id: i64, x: f64, y: f64, down: bool, lift: bool) {
         let mut pointer = self.pointer.lock().await;
-        pointer.down = true;
-        pointer.last = (x, y);
-        pointer.deadline = Some(Instant::now() + CONTACT_MAX);
-        drop(pointer);
-
-        self.send(Input::Contact {
-            x: hid::to_hid(x),
-            y: hid::to_hid(y),
-        })
-        .await;
-    }
-
-    /// A move that arrives with no contact down is dropped rather than promoted
-    /// to a down: the browser binds its move listener inside pointerdown, so a
-    /// stray move means we already released and replaying it would start a
-    /// phantom drag.
-    async fn pointer_move(&self, x: f64, y: f64) {
-        let mut pointer = self.pointer.lock().await;
-        if !pointer.down {
-            return;
+        if let Some(contacts) = pointer.update(id, x, y, down, lift) {
+            self.send(Input::Touch(contacts)).await;
         }
-        pointer.last = (x, y);
-        pointer.deadline = Some(Instant::now() + CONTACT_MAX);
-        drop(pointer);
-
-        self.send(Input::Contact {
-            x: hid::to_hid(x),
-            y: hid::to_hid(y),
-        })
-        .await;
     }
 
-    async fn pointer_up(&self, x: f64, y: f64) {
-        let mut pointer = self.pointer.lock().await;
-        // Prefer the coordinates that came with the release, falling back to
-        // the last sample — releasing at a screen centre would turn every
-        // gesture into a drag to the middle of the display.
-        let (x, y) = if x.is_finite() && y.is_finite() {
-            (x, y)
-        } else {
-            pointer.last
-        };
-        pointer.down = false;
-        pointer.deadline = None;
-        drop(pointer);
-
-        self.send(Input::Release {
-            x: hid::to_hid(x),
-            y: hid::to_hid(y),
-        })
-        .await;
-    }
-
-    /// Auto-lift a contact held with no activity.
-    ///
-    /// A browser can lose a pointerup to a window blur, a dropped socket, or the
-    /// tab going away, and the device would then sit with a finger pinned to the
-    /// glass — every later tap reads as a drag from wherever that finger was.
-    /// Driven by the health poll.
+    /// Lift every contact after input stops, including a lost second finger.
     async fn release_if_stale(&self) {
         let mut pointer = self.pointer.lock().await;
-        let Some(deadline) = pointer.deadline else {
-            return;
-        };
-        if !pointer.down || Instant::now() < deadline {
+        if !pointer.deadline.is_some_and(|at| Instant::now() >= at) {
             return;
         }
-        let (x, y) = pointer.last;
-        pointer.down = false;
+        let contacts = pointer
+            .contacts
+            .drain(..)
+            .map(|(_, mut contact)| {
+                contact.touching = false;
+                contact
+            })
+            .collect();
         pointer.deadline = None;
-        drop(pointer);
-
         warn!(
-            "contact held >{}s with no update — releasing",
+            "contacts held >{}s with no update — releasing",
             CONTACT_MAX.as_secs()
         );
-        self.send(Input::Release {
-            x: hid::to_hid(x),
-            y: hid::to_hid(y),
-        })
-        .await;
+        self.send(Input::Touch(contacts)).await;
     }
 
     /// Display geometry.
@@ -962,9 +931,15 @@ impl DeviceBackend for IosBackend {
 
     async fn input(&self, event: InputEvent) -> BackendResult<()> {
         match event {
-            InputEvent::PointerDown { x, y, .. } => self.pointer_down(x, y).await,
-            InputEvent::PointerMove { x, y, .. } => self.pointer_move(x, y).await,
-            InputEvent::PointerUp { x, y, .. } => self.pointer_up(x, y).await,
+            InputEvent::PointerDown { pointer_id, x, y } => {
+                self.pointer_event(pointer_id, x, y, true, false).await
+            }
+            InputEvent::PointerMove { pointer_id, x, y } => {
+                self.pointer_event(pointer_id, x, y, false, false).await
+            }
+            InputEvent::PointerUp { pointer_id, x, y } => {
+                self.pointer_event(pointer_id, x, y, false, true).await
+            }
 
             // Hardware buttons are edge-triggered on the device: it wants a
             // press-and-hold-and-release, not our down/up pair, so only the
@@ -1487,6 +1462,31 @@ impl DeviceBackend for IosBackend {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn pinch_keeps_contact_identities_until_each_finger_lifts() {
+        let mut pointer = super::Pointer::default();
+        let first = pointer.update(42, 0.3, 0.5, true, false).unwrap()[0];
+        let frame = pointer.update(99, 0.7, 0.5, true, false).unwrap();
+        assert_eq!(frame[0], first);
+        assert_ne!(frame[0].identity, frame[1].identity);
+        let second = frame[1];
+        let frame = pointer.update(42, 0.2, 0.5, false, true).unwrap();
+        assert!(!frame[0].touching);
+        assert_eq!(frame[1], second);
+        let frame = pointer.update(99, 0.8, 0.5, false, false).unwrap();
+        assert_eq!(frame.len(), 1);
+        assert_eq!(frame[0].identity, second.identity);
+        assert!(frame[0].touching);
+        pointer.update(99, 0.8, 0.5, false, true).unwrap();
+        assert!(pointer.contacts.is_empty());
+        assert!(pointer.deadline.is_none());
+        assert!(pointer.update(99, 0.5, 0.5, false, false).is_none());
+        for id in 0..5 {
+            assert!(pointer.update(id, 0.5, 0.5, true, false).is_some());
+        }
+        assert!(pointer.update(5, 0.5, 0.5, true, false).is_none());
+    }
+
     use super::*;
 
     #[test]

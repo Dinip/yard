@@ -702,6 +702,13 @@ so the browser needs no knowledge of the true resolution and a mid-gesture
 rotation cannot desynchronise an in-flight event.
 
 `PointerDown`/`Move`/`Up` are deliberately three variants rather than one `tap`.
+Both backends track contacts by pointer ID, so lifting one finger leaves the
+others active. iOS maps those IDs to up to five CoreDevice contact slots and
+sends every active contact with each report, including a lifted contact once.
+Android forwards up to ten independent contacts to scrcpy and releases stale
+contacts using their original IDs. This supports native touch pinches and the
+browser's synthetic wheel/trackpad pinches without a new wire message.
+
 The backend's pointer state machine needs them to tell a drag from a tap — the
 regression `stf-ios-provider/src/control.rs` documents at length.
 

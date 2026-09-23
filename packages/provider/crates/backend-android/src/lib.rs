@@ -16,6 +16,7 @@ pub mod h264;
 pub mod metrics;
 pub mod scrcpy;
 
+use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
@@ -121,26 +122,11 @@ impl AndroidOptions {
     }
 }
 
-/// The pointer state machine.
-///
-/// Same shape as the iOS backend's, and for the same reason: down/move/up map
-/// 1:1 onto DOWN/MOVE/UP motion events, and collapsing them into a tap makes
-/// every swipe read as a click.
+/// Last sample and timeout for one independently held contact.
 #[derive(Debug)]
 struct Pointer {
-    down: bool,
     last: (f64, f64),
-    deadline: Option<Instant>,
-}
-
-impl Default for Pointer {
-    fn default() -> Self {
-        Self {
-            down: false,
-            last: (0.5, 0.5),
-            deadline: None,
-        }
-    }
+    deadline: Instant,
 }
 
 /// What a live scrcpy session exposes to the backend.
@@ -161,7 +147,7 @@ pub struct AndroidBackend {
     live: Arc<Mutex<Option<Arc<Live>>>>,
     ready: watch::Receiver<bool>,
     restart: Arc<tokio::sync::Notify>,
-    pointer: Mutex<Pointer>,
+    pointer: Mutex<BTreeMap<i64, Pointer>>,
     clipboard_sequence: std::sync::atomic::AtomicU64,
     exposed: Mutex<Option<Exposed>>,
 }
@@ -192,7 +178,7 @@ impl AndroidBackend {
             live: live.clone(),
             ready: ready_rx,
             restart: restart.clone(),
-            pointer: Mutex::new(Pointer::default()),
+            pointer: Mutex::new(BTreeMap::new()),
             clipboard_sequence: std::sync::atomic::AtomicU64::new(1),
             exposed: Mutex::new(None),
         });
@@ -262,26 +248,34 @@ impl AndroidBackend {
         let (action, x, y, pointer_id) = match event {
             InputEvent::PointerDown { pointer_id, x, y } => {
                 let mut pointer = self.pointer.lock().await;
-                pointer.down = true;
-                pointer.last = (*x, *y);
-                pointer.deadline = Some(Instant::now() + CONTACT_MAX);
+                if !pointer.contains_key(pointer_id) && pointer.len() >= 10 {
+                    return Ok(());
+                }
+                pointer.insert(
+                    *pointer_id,
+                    Pointer {
+                        last: (*x, *y),
+                        deadline: Instant::now() + CONTACT_MAX,
+                    },
+                );
                 (scrcpy::touch_action::DOWN, *x, *y, *pointer_id)
             }
             InputEvent::PointerMove { pointer_id, x, y } => {
                 let mut pointer = self.pointer.lock().await;
                 // A move with no contact down is dropped rather than promoted:
                 // replaying it would start a phantom drag.
-                if !pointer.down {
+                let Some(pointer) = pointer.get_mut(pointer_id) else {
                     return Ok(());
-                }
+                };
                 pointer.last = (*x, *y);
-                pointer.deadline = Some(Instant::now() + CONTACT_MAX);
+                pointer.deadline = Instant::now() + CONTACT_MAX;
                 (scrcpy::touch_action::MOVE, *x, *y, *pointer_id)
             }
             InputEvent::PointerUp { pointer_id, x, y } => {
                 let mut pointer = self.pointer.lock().await;
-                pointer.down = false;
-                pointer.deadline = None;
+                if pointer.remove(pointer_id).is_none() {
+                    return Ok(());
+                }
                 (scrcpy::touch_action::UP, *x, *y, *pointer_id)
             }
             _ => return Ok(()),
@@ -302,31 +296,19 @@ impl AndroidBackend {
     /// Lift a contact held with no activity, so a lost pointerup cannot leave a
     /// finger pinned to the glass.
     async fn release_if_stale(&self) {
-        let stale = {
-            let pointer = self.pointer.lock().await;
-            pointer.down && pointer.deadline.is_some_and(|at| Instant::now() >= at)
-        };
-        if !stale {
-            return;
+        let stale: Vec<_> = self
+            .pointer
+            .lock()
+            .await
+            .iter()
+            .filter(|(_, pointer)| Instant::now() >= pointer.deadline)
+            .map(|(&id, pointer)| (id, pointer.last))
+            .collect();
+        for (pointer_id, (x, y)) in stale {
+            let _ = self
+                .pointer_event(&InputEvent::PointerUp { pointer_id, x, y })
+                .await;
         }
-
-        let (x, y) = {
-            let mut pointer = self.pointer.lock().await;
-            pointer.down = false;
-            pointer.deadline = None;
-            pointer.last
-        };
-        warn!(
-            "contact held >{}s with no update — releasing",
-            CONTACT_MAX.as_secs()
-        );
-        let _ = self
-            .pointer_event(&InputEvent::PointerUp {
-                pointer_id: 0,
-                x,
-                y,
-            })
-            .await;
     }
 
     async fn shell(&self, command: &str) -> BackendResult<String> {
@@ -1444,6 +1426,76 @@ mod tests {
     }
 
     use super::*;
+
+    #[tokio::test]
+    async fn pinch_lifts_one_finger_and_expires_the_other_by_its_real_id() {
+        use tokio::io::AsyncReadExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client = TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (mut peer, _) = listener.accept().await.unwrap();
+        let geometry = scrcpy::Geometry::default();
+        geometry.set(1000, 2000);
+        let backend = AndroidBackend {
+            options: AndroidOptions::parse("test", &serde_json::Map::new()).unwrap(),
+            name: None,
+            adb: Adb::new(adb::DEFAULT_ADB_SERVER),
+            video: channel().0,
+            live: Arc::new(Mutex::new(Some(Arc::new(Live {
+                control: Mutex::new(client),
+                geometry,
+            })))),
+            ready: watch::channel(true).1,
+            restart: Arc::new(tokio::sync::Notify::new()),
+            pointer: Mutex::new(BTreeMap::new()),
+            clipboard_sequence: std::sync::atomic::AtomicU64::new(1),
+            exposed: Mutex::new(None),
+        };
+        for event in [
+            InputEvent::PointerDown {
+                pointer_id: 42,
+                x: 0.3,
+                y: 0.5,
+            },
+            InputEvent::PointerDown {
+                pointer_id: 99,
+                x: 0.7,
+                y: 0.5,
+            },
+            InputEvent::PointerUp {
+                pointer_id: 42,
+                x: 0.3,
+                y: 0.5,
+            },
+            InputEvent::PointerMove {
+                pointer_id: 99,
+                x: 0.8,
+                y: 0.5,
+            },
+        ] {
+            backend.pointer_event(&event).await.unwrap();
+        }
+        backend.pointer.lock().await.get_mut(&99).unwrap().deadline = Instant::now();
+        backend.release_if_stale().await;
+        assert!(backend.pointer.lock().await.is_empty());
+        let expected: Vec<u8> = [
+            (scrcpy::touch_action::DOWN, 42, 300),
+            (scrcpy::touch_action::DOWN, 99, 700),
+            (scrcpy::touch_action::UP, 42, 300),
+            (scrcpy::touch_action::MOVE, 99, 800),
+            (scrcpy::touch_action::UP, 99, 800),
+        ]
+        .into_iter()
+        .flat_map(|(action, id, x)| scrcpy::touch(action, id, x, 1000, 1000, 2000))
+        .collect();
+        let mut received = vec![0; expected.len()];
+        tokio::time::timeout(Duration::from_secs(1), peer.read_exact(&mut received))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(received, expected);
+    }
 
     #[test]
     fn the_override_resolution_wins_over_the_panel() {
