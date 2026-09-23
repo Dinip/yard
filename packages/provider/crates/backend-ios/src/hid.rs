@@ -1,8 +1,8 @@
 //! HID input: the tables, and the actor that owns the device's HID clients.
 //!
-//! Ported from `stf-ios-provider/src/device/hid.rs`. The tables and the
-//! single-owner actor are unchanged; only the key *names* differ, because this
-//! farm speaks the browser's `KeyboardEvent.key` vocabulary rather than STF's.
+//! Ported from `stf-ios-provider/src/device/hid.rs`. The tables use the browser's
+//! `KeyboardEvent.key` vocabulary. Text goes through a registered hardware
+//! keyboard so iOS can collapse the software keyboard while a field is focused.
 //!
 //! The HID surfaces authenticate against the *live media stream*, so their
 //! clients are created once per session, after the stream is up, and are owned
@@ -18,8 +18,8 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 use idevice::core_device::hid::{
-    ButtonState, IndigoHidClient, UniversalHidServiceClient, TOUCHSCREEN_STATE_CONTACT,
-    TOUCHSCREEN_STATE_RELEASE,
+    ButtonState, IndigoHidClient, KeyboardUsage, MainKeyboardService, UniversalHidServiceClient,
+    TOUCHSCREEN_STATE_CONTACT, TOUCHSCREEN_STATE_RELEASE,
 };
 use idevice::core_device::{Orientation, OrientationServiceClient, RotationDirection};
 use idevice::rsd::RsdHandshake;
@@ -239,6 +239,7 @@ pub fn channel() -> (InputHandle, mpsc::Receiver<Input>) {
 /// The HID clients for one session.
 pub struct HidClients {
     touch: UniversalHidServiceClient<Box<dyn ReadWrite>>,
+    keyboard: MainKeyboardService,
     indigo: IndigoHidClient<Box<dyn ReadWrite>>,
     orientation: OrientationServiceClient<Box<dyn ReadWrite>>,
 }
@@ -251,7 +252,7 @@ impl HidClients {
     /// Connecting first yields clients that succeed and then silently drop
     /// every report.
     pub async fn connect(adapter: &mut AdapterHandle, handshake: &RsdHandshake) -> Result<Self> {
-        let touch = crate::device::connect_service!(
+        let mut touch = crate::device::connect_service!(
             UniversalHidServiceClient<Box<dyn ReadWrite>>,
             adapter,
             handshake
@@ -267,9 +268,14 @@ impl HidClients {
             handshake
         )?;
 
+        // Register a hardware keyboard so iOS collapses the software keyboard,
+        // whose secure-entry keys are invisible in the captured video.
+        let keyboard = touch.create_main_keyboard().await?;
+
         info!("HID surfaces connected");
         Ok(Self {
             touch,
+            keyboard,
             indigo,
             orientation,
         })
@@ -277,12 +283,26 @@ impl HidClients {
 
     /// Drain the input queue until the session ends.
     pub async fn run(mut self, mut inputs: mpsc::Receiver<Input>) -> Result<()> {
-        while let Some(input) = inputs.recv().await {
-            // A failing HID surface means the session is gone; propagate so the
-            // supervisor rebuilds rather than dropping input silently.
-            self.apply(input).await?;
+        let result = async {
+            while let Some(input) = inputs.recv().await {
+                // A failing HID surface means the session is gone; propagate so
+                // the supervisor rebuilds rather than dropping input silently.
+                self.apply(input).await?;
+            }
+            Ok(())
         }
-        Ok(())
+        .await;
+        // Release held keys and remove the virtual device even after an input
+        // failure, but don't hold up rebuilding a dead tunnel.
+        let cleanup = tokio::time::timeout(
+            Duration::from_secs(2),
+            self.touch.remove_main_keyboard(&mut self.keyboard),
+        )
+        .await;
+        if !matches!(cleanup, Ok(Ok(()))) {
+            warn!("could not remove virtual keyboard before session teardown");
+        }
+        result
     }
 
     async fn apply(&mut self, input: Input) -> Result<()> {
@@ -341,10 +361,20 @@ impl HidClients {
     }
 
     async fn key(&mut self, usage: u64, state: ButtonState) -> Result<()> {
-        self.indigo
-            .send_keyboard(usage, state)
-            .await
-            .map_err(|err| anyhow!("keyboard usage {usage:#x}: {err:?}"))
+        let usage = KeyboardUsage::new(u16::try_from(usage)?)?;
+        match state {
+            ButtonState::Down => {
+                self.touch
+                    .main_keyboard_key_down(&mut self.keyboard, usage)
+                    .await?
+            }
+            ButtonState::Up => {
+                self.touch
+                    .main_keyboard_key_up(&mut self.keyboard, usage)
+                    .await?
+            }
+        }
+        Ok(())
     }
 
     async fn button(&mut self, page: u64, usage: u64, state: ButtonState) -> Result<()> {
@@ -416,6 +446,15 @@ mod tests {
         assert_eq!(ascii_to_hid(')'), Some((0x27, true)));
         assert_eq!(ascii_to_hid(' '), Some((0x2C, false)));
         assert_eq!(ascii_to_hid('é'), None);
+    }
+
+    #[test]
+    fn virtual_keyboard_accepts_the_ascii_table_and_shift() {
+        for character in ' '..='~' {
+            let (usage, _) = ascii_to_hid(character).unwrap();
+            assert!(KeyboardUsage::new(usage as u16).is_ok(), "{character:?}");
+        }
+        assert!(KeyboardUsage::new(KEY_LEFT_SHIFT as u16).is_ok());
     }
 
     #[test]
