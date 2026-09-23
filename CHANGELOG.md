@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.2](https://github.com/Dinip/yard/compare/v0.4.1...v0.4.2) (2026-09-23)
+
+
+### Bug Fixes
+
+* **provider:** register iOS hardware keyboard for remote input ([#60](https://github.com/Dinip/yard/issues/60)) ([e315585](https://github.com/Dinip/yard/commit/e315585788e45d5121e7c6c67d2838bcd82baae0))
+
 ## [0.4.1](https://github.com/Dinip/yard/compare/v0.4.0...v0.4.1) (2026-09-07)
 
 
