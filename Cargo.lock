@@ -1432,8 +1432,8 @@ dependencies = [
 
 [[package]]
 name = "idevice"
-version = "0.1.66"
-source = "git+https://github.com/jkcoxson/idevice?tag=v0.1.66#c65dfbf17b888c5795f17ea3e3dad60e6737252c"
+version = "0.1.68"
+source = "git+https://github.com/jkcoxson/idevice?tag=v0.1.68#d32c8189c51c2789496b0768039419c3705498c3"
 dependencies = [
  "aes",
  "async-stream",

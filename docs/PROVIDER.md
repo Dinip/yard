@@ -381,6 +381,15 @@ stream, so a media restart invalidates them and a tunnel drop invalidates
 everything. That is also why `restart` just closes the adapter: there is no
 finer-grained restart to offer.
 
+The HID session registers a virtual hardware keyboard through idevice 0.1.68
+and sends text and editing keys through it. This asks iOS to collapse its
+software keyboard while keeping the field focused, including for passwords
+whose software keys are omitted from the captured video. Indigo remains the
+hardware-button path. On input shutdown or failure, the actor releases keys
+and removes the virtual keyboard, with a two-second teardown timeout.
+The collapsed layout still needs verification on hardware after this change;
+the browser does not crop the video or guess keyboard bounds.
+
 `media.rs` is the file to leave alone. Receiver reports are not optional (the
 encoder stalls in ~20 s without them), audio is started and then drained but
 never decoded (iOS throttles a lone video client, and an unread flow is
