@@ -37,8 +37,9 @@ async fn main() -> Result<()> {
     let scid = 0x0000_0042u32;
     let command = format!(
         "CLASSPATH={REMOTE_PATH} app_process / com.genymobile.scrcpy.Server {SERVER_VERSION} \
-         scid={scid:08x} log_level=info video=true audio=false control=true tunnel_forward=true \
-         video_codec=h264 max_size=1024 video_bit_rate=4000000 max_fps=30 cleanup=true"
+         scid={scid:08x} log_level=info video=true audio=true control=true tunnel_forward=true \
+         video_codec=h264 max_size=1024 video_bit_rate=4000000 max_fps=30 \
+         audio_source=output audio_codec=opus audio_dup=false cleanup=true"
     );
     println!("starting: {command}");
 
@@ -49,8 +50,9 @@ async fn main() -> Result<()> {
 
     let socket_name = format!("localabstract:scrcpy_{scid:08x}");
     let mut video = connect(&adb, &serial, &socket_name).await?;
+    let mut audio = connect(&adb, &serial, &socket_name).await?;
     let mut control = connect(&adb, &serial, &socket_name).await?;
-    println!("both sockets connected");
+    println!("all three sockets connected");
 
     // Everything from here is what we are trying to learn. Read exactly, never
     // `read()` once: a socket is free to hand over one byte at a time, and the
@@ -77,6 +79,14 @@ async fn main() -> Result<()> {
         "codec id        : {:#010x} ({:?})",
         u32::from_be_bytes(codec),
         String::from_utf8_lossy(&codec)
+    );
+
+    let mut audio_codec = [0u8; 4];
+    audio.read_exact(&mut audio_codec).await?;
+    println!(
+        "audio codec id  : {:#010x} ({:?})",
+        u32::from_be_bytes(audio_codec),
+        String::from_utf8_lossy(&audio_codec)
     );
     println!("session meta    :");
     hexdump(&meta);

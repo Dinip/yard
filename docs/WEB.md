@@ -13,6 +13,7 @@ src/
 │   ├── auth-client.ts    better-auth react client (+ admin plugin)
 │   ├── types.ts          RouterInputs / RouterOutputs helpers
 │   ├── accent.ts         the stored highlight colour
+│   ├── screen/audio.ts   Opus decode, scheduling and browser gain
 │   └── utils.ts          cn(), relativeTime()
 ├── components/
 │   ├── app-shell.tsx     left nav rail, account menu
@@ -306,7 +307,7 @@ deployment's source lives is a property of the build, not of the operator.
 
 **Everything on this path goes to the provider's origin.** The coordinator is
 asked for one thing — a session token, from `device.sessionToken` — and is then
-out of the way. Video, input, screenshots and uploads never touch it.
+out of the way. Video, audio, input, screenshots and uploads never touch it.
 
 ### Renderer
 
@@ -325,6 +326,19 @@ Android.
 `packages/web/test/renderer.test.ts` drives the state machine against a stub
 `VideoDecoder`. The mock backend's video is undecodable filler by design, so
 this is the only hardware-free check on the recovery paths.
+
+### Android audio
+
+Android sessions announce Opus with `audio.codec`, then carry timestamped
+packets beside video on the same direct provider WebSocket. `BrowserAudio`
+decodes them with `AudioDecoder` and schedules them through Web Audio. It sheds
+late packets instead of letting a slow tab play an ever-growing backlog.
+
+The **Browser audio** slider controls only that tab's `GainNode` and persists
+locally. It never sends `VolumeUp` or `VolumeDown`; those remain admin-only
+hardware controls because they affect the physical device. Playback begins
+after the user interacts with the console so browser autoplay policy is
+satisfied. Canvas recordings remain video-only.
 
 ### A device somebody else is holding
 

@@ -15,9 +15,9 @@ pub use generated::*;
 
 /// Frames the session plane sends to a browser viewer.
 ///
-/// Text frames are [`ServerMessage`]; binary frames are a single type byte
-/// followed by one access unit. Kept as a helper rather than generated because
-/// it describes the *framing*, which has no zod counterpart.
+/// Text frames are [`ServerMessage`]; binary frames start with a type byte.
+/// Kept as helpers rather than generated because they describe framing, which
+/// has no zod counterpart.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuKind {
     /// Keyframe. Decodable on its own.
@@ -61,6 +61,15 @@ pub fn frame_au(kind: AuKind, au: &[u8]) -> Vec<u8> {
     out
 }
 
+/// Frames one encoded audio packet with its source timestamp.
+pub fn frame_audio(timestamp_us: u64, packet: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(packet.len() + 9);
+    out.push(AUDIO_PACKET);
+    out.extend_from_slice(&timestamp_us.to_be_bytes());
+    out.extend_from_slice(packet);
+    out
+}
+
 impl ClientMessage {
     /// Whether this message is a person driving the device, as opposed to the
     /// viewer keeping itself alive.
@@ -90,6 +99,26 @@ mod tests {
         assert_eq!(
             frame_au(AuKind::Delta, &[0xaa, 0xbb]),
             vec![AU_DELTA, 0xaa, 0xbb]
+        );
+    }
+
+    #[test]
+    fn audio_framing_carries_the_timestamp() {
+        assert_eq!(
+            frame_audio(0x0102_0304_0506_0708, &[0xaa, 0xbb]),
+            vec![
+                AUDIO_PACKET,
+                0x01,
+                0x02,
+                0x03,
+                0x04,
+                0x05,
+                0x06,
+                0x07,
+                0x08,
+                0xaa,
+                0xbb,
+            ]
         );
     }
 

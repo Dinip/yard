@@ -6,11 +6,11 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Binary video frame type byte, sent as the first byte of each session-plane
-/// binary frame.
+/// Binary frame type bytes, sent first on the session plane.
 pub const AU_KEY: u8 = 0;
 pub const AU_DELTA: u8 = 1;
 pub const AU_KEY_RESET: u8 = 2;
+pub const AUDIO_PACKET: u8 = 3;
 
 pub const PROTOCOL_VERSION: i64 = 1;
 
@@ -425,6 +425,12 @@ pub enum ServerMessage {
     },
     #[serde(rename = "display", rename_all = "camelCase")]
     Display { display: Display },
+    #[serde(rename = "audio.codec", rename_all = "camelCase")]
+    AudioCodec {
+        codec: String,
+        sample_rate: i64,
+        channels: i64,
+    },
     #[serde(rename = "clipboard", rename_all = "camelCase")]
     Clipboard {
         #[serde(default)]

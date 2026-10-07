@@ -1,4 +1,4 @@
-//! The scrcpy server: pushing it, starting it, and reading its two sockets.
+//! The scrcpy server: pushing it, starting it, and reading its three sockets.
 //!
 //! The server jar is **embedded in this binary** and pushed to the device at
 //! session start. It runs on the phone under `app_process`; nothing is
@@ -34,6 +34,11 @@
 //!   4  bytes  height                    packet header
 //! ```
 //!
+//! The audio socket starts with its own 4-byte codec id (`opus`), then uses the
+//! same 12-byte packet header without video's session blocks. Its PTS is kept:
+//! the browser needs source time to schedule packets without accumulating
+//! network jitter.
+//!
 //! That last case is the one worth stating loudly. Bit 31 of the first word is
 //! bit 63 of what would otherwise be `pts_and_flags`, and no real timestamp
 //! ever sets it — so the first four bytes say which of the two this is. Reading
@@ -47,6 +52,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context as _, Result};
+use provider_core::audio::{AudioCodecDescription, AudioPacket, AudioPublisher};
 use provider_core::video::{AccessUnit, CodecDescription, VideoPublisher};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::TcpStream;
@@ -71,6 +77,7 @@ const BIND_TIMEOUT: Duration = Duration::from_secs(10);
 /// also carries the timestamp.
 const PACKET_FLAG_CONFIG: u64 = 1 << 62;
 const PACKET_FLAG_KEY_FRAME: u64 = 1 << 61;
+const PACKET_PTS_MASK: u64 = PACKET_FLAG_KEY_FRAME - 1;
 
 /// Bit 31 of the first word, i.e. bit 63 of a packet header. Set only on a
 /// session-meta block.
@@ -79,6 +86,8 @@ const SESSION_MARKER: u32 = 1 << 31;
 /// H.264. The only codec this backend asks for — `hev1` would save bandwidth,
 /// but H.264 is what every Android encoder and every browser agrees on.
 const CODEC_H264: u32 = 0x6832_3634;
+/// Opus. Fixed so the browser can decode packets directly with WebCodecs.
+const CODEC_OPUS: u32 = 0x6f70_7573;
 
 /// Session ids only have to be unique among live sessions on one device.
 static NEXT_SCID: AtomicU32 = AtomicU32::new(1);
@@ -88,6 +97,7 @@ pub struct ScrcpySession {
     /// process on the device, which is the only cleanup that matters.
     _server: AdbStream,
     pub video: TcpStream,
+    pub audio: TcpStream,
     pub control: TcpStream,
     pub device_name: String,
     pub width: i64,
@@ -117,7 +127,7 @@ impl Default for ScrcpyOptions {
 }
 
 impl ScrcpySession {
-    /// Push the server, start it, connect both sockets, and read the handshake.
+    /// Push the server, start it, connect all sockets, and read the handshake.
     pub async fn start(adb: &Adb, serial: &str, options: &ScrcpyOptions) -> Result<Self> {
         adb.push(serial, REMOTE_PATH, SERVER_JAR, 0o644)
             .await
@@ -131,8 +141,9 @@ impl ScrcpySession {
             // like a broken stream. scrcpy restores both settings on cleanup,
             // so the device is left as it was found.
             "CLASSPATH={REMOTE_PATH} app_process / com.genymobile.scrcpy.Server {SERVER_VERSION} \
-             scid={scid:08x} log_level=info video=true audio=false control=true \
+             scid={scid:08x} log_level=info video=true audio=true control=true \
              tunnel_forward=true video_codec=h264 max_size={} video_bit_rate={} max_fps={} \
+             audio_source=output audio_codec=opus audio_dup=false \
              stay_awake=true power_on=true cleanup=true",
             options.max_size, options.bit_rate, options.max_fps
         );
@@ -144,11 +155,16 @@ impl ScrcpySession {
 
         let socket_name = format!("localabstract:scrcpy_{scid:08x}");
         let video = dial(adb, serial, &socket_name).await?;
+        // Socket order is part of scrcpy's wire protocol. Dialling control
+        // second would make the server accept it as audio and wait forever for
+        // the control socket that never arrives.
+        let audio = dial(adb, serial, &socket_name).await?;
         let control = dial(adb, serial, &socket_name).await?;
 
         let mut session = Self {
             _server: server,
             video,
+            audio,
             control,
             device_name: String::new(),
             width: 0,
@@ -197,11 +213,22 @@ impl ScrcpySession {
             VideoFrame::Session { width, height } => {
                 self.width = width;
                 self.height = height;
-                Ok(())
             }
             VideoFrame::Packet { .. } => {
-                bail!("the handshake carried a video packet where the geometry should be")
+                bail!("the handshake carried a video packet where the geometry should be");
             }
+        }
+
+        let mut audio_codec = [0u8; 4];
+        self.audio
+            .read_exact(&mut audio_codec)
+            .await
+            .context("reading audio codec")?;
+        match u32::from_be_bytes(audio_codec) {
+            CODEC_OPUS => Ok(()),
+            0 => bail!("Android audio capture is unavailable; refusing an audible device session"),
+            1 => bail!("scrcpy could not configure Android audio capture"),
+            other => bail!("the device negotiated audio codec {other:#010x}, not opus"),
         }
     }
 }
@@ -238,6 +265,7 @@ async fn try_dial(adb: &Adb, serial: &str, socket_name: &str) -> Result<TcpStrea
 struct Packet {
     is_config: bool,
     is_key: bool,
+    presentation_time_us: Option<u64>,
     payload: Vec<u8>,
 }
 
@@ -288,6 +316,7 @@ enum VideoFrame {
     Packet {
         is_config: bool,
         is_key: bool,
+        presentation_time_us: Option<u64>,
         payload: Vec<u8>,
     },
 }
@@ -322,6 +351,8 @@ async fn read_frame(video: &mut TcpStream) -> Result<VideoFrame> {
     Ok(VideoFrame::Packet {
         is_config: pts_and_flags & PACKET_FLAG_CONFIG != 0,
         is_key: pts_and_flags & PACKET_FLAG_KEY_FRAME != 0,
+        presentation_time_us: (pts_and_flags & PACKET_FLAG_CONFIG == 0)
+            .then_some(pts_and_flags & PACKET_PTS_MASK),
         payload,
     })
 }
@@ -339,7 +370,7 @@ pub async fn pump_video(
     let mut announced: Option<CodecDescription> = None;
 
     loop {
-        let (is_config, is_key, payload) =
+        let (is_config, is_key, presentation_time_us, payload) =
             match read_frame(&mut video).await.context("reading video")? {
                 VideoFrame::Session { width, height } => {
                     // Touch coordinates scale against this, so a resize that was
@@ -351,12 +382,14 @@ pub async fn pump_video(
                 VideoFrame::Packet {
                     is_config,
                     is_key,
+                    presentation_time_us,
                     payload,
-                } => (is_config, is_key, payload),
+                } => (is_config, is_key, presentation_time_us, payload),
             };
         let packet = Packet {
             is_config,
             is_key,
+            presentation_time_us,
             payload,
         };
 
@@ -391,6 +424,50 @@ pub async fn pump_video(
         publisher.publish(AccessUnit {
             data: h264::to_length_prefixed(&packet.payload),
             is_key: packet.is_key,
+        });
+    }
+}
+
+/// Read Opus from scrcpy and publish it without decoding or transcoding.
+///
+/// The handshake has already refused a zero codec id here: continuing video
+/// after capture failed would restore speaker playback, which violates the
+/// farm's silence requirement.
+pub async fn pump_audio(mut audio: TcpStream, publisher: AudioPublisher) -> Result<()> {
+    publisher.set_codec(AudioCodecDescription {
+        codec: "opus".into(),
+        sample_rate: 48_000,
+        channels: 2,
+    });
+
+    loop {
+        let packet = match read_frame(&mut audio).await.context("reading audio")? {
+            VideoFrame::Session { .. } => bail!("audio stream carried a video session block"),
+            VideoFrame::Packet {
+                is_config,
+                presentation_time_us,
+                payload,
+                ..
+            } => Packet {
+                is_config,
+                is_key: true,
+                presentation_time_us,
+                payload,
+            },
+        };
+
+        // Raw Opus packets need no decoder description. MediaCodec may still
+        // emit a config packet; forwarding it as audio would make WebCodecs try
+        // to decode metadata as sound.
+        if packet.is_config {
+            continue;
+        }
+        let Some(timestamp_us) = packet.presentation_time_us else {
+            continue;
+        };
+        publisher.publish(AudioPacket {
+            data: packet.payload,
+            timestamp_us,
         });
     }
 }
@@ -662,6 +739,7 @@ mod framing_tests {
                 is_config,
                 is_key,
                 payload,
+                ..
             } => {
                 assert!(is_config);
                 assert!(!is_key);

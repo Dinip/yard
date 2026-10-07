@@ -23,12 +23,13 @@ use base64::Engine as _;
 use futures::{SinkExt as _, StreamExt as _};
 use serde::Deserialize;
 use tokio::io::AsyncWriteExt as _;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, watch};
 use tracing::{debug, info, warn};
-use yard_protocol::{frame_au, AuKind, ClientMessage, Display, ServerMessage};
+use yard_protocol::{frame_au, frame_audio, AuKind, ClientMessage, Display, ServerMessage};
 
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
+use crate::audio::{AudioCodecDescription, AudioPacket};
 use crate::auth::TokenVerifier;
 use crate::backend::{InputEvent, ProgressSink};
 use crate::config::Config;
@@ -257,6 +258,7 @@ async fn run_session(
 ) -> Result<()> {
     let (mut sink, mut source) = socket.split();
     let video = device.backend.video();
+    let audio = device.backend.audio();
 
     // A fresh viewer cannot decode anything without the parameter sets.
     let Some(codec) = video.wait_for_codec(CODEC_TIMEOUT).await else {
@@ -287,7 +289,15 @@ async fn run_session(
     sink.send(Message::Text(serde_json::to_string(&handshake)?.into()))
         .await?;
 
+    let mut audio_announced = false;
+    if let Some(codec) = audio.as_ref().and_then(|stream| stream.current_codec()) {
+        send_audio_codec(&mut sink, &codec).await?;
+        audio_announced = true;
+    }
+
     let mut frames = video.subscribe();
+    let mut audio_packets = audio.as_ref().map(|stream| stream.subscribe());
+    let mut audio_codec = audio.as_ref().map(|stream| stream.codec_watch());
     let mut revocations = state.supervisor.sessions().subscribe_revocations();
     let mut ping = tokio::time::interval(PING_INTERVAL);
     ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -324,6 +334,43 @@ async fn run_session(
                     video.request_keyframe();
                 }
                 Err(broadcast::error::RecvError::Closed) => break,
+            },
+
+            packet = next_audio_packet(&mut audio_packets) => match packet {
+                Some(Ok(packet)) if audio_announced => {
+                    sink.send(Message::Binary(
+                        frame_audio(packet.timestamp_us, &packet.data).into()
+                    )).await?;
+                }
+                Some(Ok(_)) => {}
+                Some(Err(broadcast::error::RecvError::Lagged(dropped))) => {
+                    // Opus packets stand alone. Shed everything already queued
+                    // after a lag instead of playing stale sound seconds late.
+                    if let Some(packets) = audio_packets.as_mut() {
+                        while packets.try_recv().is_ok() {}
+                    }
+                    debug!(device = %device_id, dropped, "audio viewer fell behind; shedding backlog");
+                }
+                Some(Err(broadcast::error::RecvError::Closed)) => {
+                    audio_packets = None;
+                }
+                None => {}
+            },
+
+            changed = next_audio_codec(&mut audio_codec) => match changed {
+                Some(Ok(())) => {
+                    let Some(codec) = audio_codec
+                        .as_mut()
+                        .and_then(|watch| watch.borrow_and_update().clone())
+                    else {
+                        audio_announced = false;
+                        continue;
+                    };
+                    send_audio_codec(&mut sink, &codec).await?;
+                    audio_announced = true;
+                }
+                Some(Err(_)) => audio_codec = None,
+                None => {}
             },
 
             // A rotation re-encodes at new dimensions, so the parameter sets
@@ -409,6 +456,39 @@ async fn run_session(
         }
     }
 
+    Ok(())
+}
+
+async fn next_audio_packet(
+    packets: &mut Option<broadcast::Receiver<Arc<AudioPacket>>>,
+) -> Option<std::result::Result<Arc<AudioPacket>, broadcast::error::RecvError>> {
+    match packets {
+        Some(packets) => Some(packets.recv().await),
+        None => std::future::pending().await,
+    }
+}
+
+async fn next_audio_codec(
+    codec: &mut Option<watch::Receiver<Option<AudioCodecDescription>>>,
+) -> Option<std::result::Result<(), watch::error::RecvError>> {
+    match codec {
+        Some(codec) => Some(codec.changed().await),
+        None => std::future::pending().await,
+    }
+}
+
+async fn send_audio_codec<S>(sink: &mut S, codec: &AudioCodecDescription) -> Result<()>
+where
+    S: futures::Sink<Message> + Unpin,
+    S::Error: std::error::Error + Send + Sync + 'static,
+{
+    let message = ServerMessage::AudioCodec {
+        codec: codec.codec.clone(),
+        sample_rate: i64::from(codec.sample_rate),
+        channels: i64::from(codec.channels),
+    };
+    sink.send(Message::Text(serde_json::to_string(&message)?.into()))
+        .await?;
     Ok(())
 }
 

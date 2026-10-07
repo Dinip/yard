@@ -6,10 +6,9 @@ import { named } from "./registry.ts";
  * Session plane: browser ↔ provider, direct WSS at
  * `wss://<publicBaseUrl>/s/<deviceId>?token=<jwt>`.
  *
- * Text frames carry the JSON messages below. **Binary frames are video access
- * units** and are not described here: they are `[type byte][AU]`, where the
- * type byte is 0 = key, 1 = delta, 2 = key-with-reset. That framing is what
- * stf-ios-provider's renderer already speaks; see its frontend/INTEGRATION.md.
+ * Text frames carry the JSON messages below. Binary frames start with a type
+ * byte: 0..2 are video access units and 3 is an audio packet followed by its
+ * u64 microsecond timestamp and encoded payload.
  */
 
 /**
@@ -80,6 +79,12 @@ export const ServerMessage = named(
       display: Display,
     }),
     z.object({ type: z.literal("display"), display: Display }),
+    z.object({
+      type: z.literal("audio.codec"),
+      codec: z.string(),
+      sampleRate: z.number().int(),
+      channels: z.number().int(),
+    }),
     z.object({ type: z.literal("clipboard"), text: z.string().nullable() }),
     z.object({
       type: z.literal("install.progress"),
@@ -108,3 +113,5 @@ export type ServerMessage = z.infer<typeof ServerMessage>;
 export const AU_KEY = 0;
 export const AU_DELTA = 1;
 export const AU_KEY_RESET = 2;
+/** `[AUDIO_PACKET][u64 timestamp_us][encoded packet]`. */
+export const AUDIO_PACKET = 3;

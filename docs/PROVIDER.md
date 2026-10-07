@@ -14,7 +14,7 @@ while collapsing N containers, N ZMQ connections and N config files into one.
 | `provider-core` | ✅ config, control plane, session plane, supervision, JWT auth |
 | `backend-mock` | ✅ synthetic device — the whole provider runs with no hardware |
 | `backend-ios` | ✅ CoreDevice over a root-free RSD tunnel, iOS 27+ |
-| `backend-android` | ✅ adb host protocol + scrcpy, no transcode |
+| `backend-android` | ✅ adb host protocol + scrcpy, H.264 + Opus passthrough |
 
 ```
 packages/provider/
@@ -41,9 +41,9 @@ PROVIDER_TOKEN=pft_… \
 healthcheck.
 
 The example config ships two **mock** devices. They register with the
-coordinator, appear in the UI, reserve, stream synthetic video, accept input and
-uploads — no hardware, no iPhone, no adb. This is the fastest way to work on
-anything above the backend trait.
+coordinator, appear in the UI, reserve, stream synthetic video and Android Opus
+silence, and accept input and uploads — no hardware, no iPhone, no adb. This is
+the fastest way to work on anything above the backend trait.
 
 ## `provider-core`
 
@@ -52,6 +52,7 @@ src/
 ├── config.rs      one YAML file (replaces provider.sh's 13.5k of awk)
 ├── backend.rs     the DeviceBackend trait — the seam
 ├── video.rs       codec-agnostic access-unit fan-out
+├── audio.rs       codec-agnostic encoded-audio fan-out
 ├── auth.rs        JWKS fetch + session-token verification
 ├── session.rs     which reservation may use each device
 ├── control.rs     the outbound WSS to the coordinator
@@ -520,6 +521,19 @@ match the jar, and the server refuses a mismatch rather than half-working.
 Video arrives as Annex-B and is rewritten to length-prefixed NALUs, with the
 config packet's SPS/PPS lifted into an `avcC` sent once out of band. Both halves
 matter: the Annex-B path tears in Chrome under motion.
+
+Audio uses scrcpy's `output` source and is forwarded as Opus packets without
+decoding or transcoding. Android implements that source with playback capture's
+remote-submix path: captured media is routed to the provider instead of the
+device speaker. `audio_dup=false` is explicit, and an unavailable audio capture
+fails the backend session rather than falling back to audible, video-only use.
+
+This requires Android 11 or newer (Android 11 must be unlocked when scrcpy
+starts). Android excludes ringtone, alarm and notification streams from this
+capture path, so the existing admin-only device-volume controls remain the farm
+safety control for those sounds. The user-facing **Browser audio** slider only
+changes a browser `GainNode`; it never sends a volume key or changes device
+volume.
 
 **Not everything on that socket is a packet.** A reset or a resize re-sends the
 session block bare — four bytes of flags, then width and height — and reading it

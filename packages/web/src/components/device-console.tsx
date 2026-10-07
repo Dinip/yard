@@ -18,6 +18,7 @@ import {
   Upload,
   Volume1,
   Volume2,
+  VolumeX,
 } from "lucide-react";
 import {
   type DragEvent,
@@ -64,6 +65,24 @@ import { cn } from "@/lib/utils";
 
 /** How far the handle must travel before a click counts as a drag. */
 const DRAG_SLOP = 4;
+const BROWSER_VOLUME_KEY = "yard.browser-audio-volume";
+
+function loadBrowserVolume() {
+  try {
+    const stored = Number(window.localStorage.getItem(BROWSER_VOLUME_KEY));
+    return Number.isFinite(stored) && stored >= 0 && stored <= 100 ? stored : 100;
+  } catch {
+    return 100;
+  }
+}
+
+function saveBrowserVolume(volume: number) {
+  try {
+    window.localStorage.setItem(BROWSER_VOLUME_KEY, String(volume));
+  } catch {
+    // Playback still works when storage is unavailable; only persistence is lost.
+  }
+}
 
 /**
  * The whole control surface: screen, hardware buttons, input, clipboard,
@@ -105,7 +124,15 @@ export function DeviceConsole({
   onRevoked?: (reason?: string) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const session = useDeviceSession(deviceId, canvasRef, active);
+  const [browserVolume, setBrowserVolume] = useState(loadBrowserVolume);
+  const browserAudio = platform === "android";
+  const session = useDeviceSession(deviceId, canvasRef, active, browserAudio, browserVolume / 100);
+
+  const changeBrowserVolume = (volume: number) => {
+    setBrowserVolume(volume);
+    saveBrowserVolume(volume);
+    session.activateAudio();
+  };
 
   const revokedRef = useRef(false);
   useEffect(() => {
@@ -363,10 +390,15 @@ export function DeviceConsole({
           : []),
         ...(admin
           ? [
-              { key: "volume-up", label: "Volume up", icon: Volume2, run: () => press("VolumeUp") },
+              {
+                key: "volume-up",
+                label: "Device volume up",
+                icon: Volume2,
+                run: () => press("VolumeUp"),
+              },
               {
                 key: "volume-down",
-                label: "Volume down",
+                label: "Device volume down",
                 icon: Volume1,
                 run: () => press("VolumeDown"),
               },
@@ -452,6 +484,7 @@ export function DeviceConsole({
       // portrait device leaves the horizontal space empty anyway, and every row
       // of controls below the screen is a row of screen nobody gets.
       className={cn("flex min-h-0 gap-3", className)}
+      onPointerDownCapture={browserAudio ? session.activateAudio : undefined}
       onDragOver={(event) => {
         event.preventDefault();
         setDragging(true);
@@ -485,6 +518,13 @@ export function DeviceConsole({
                 ))}
               </div>
             ))}
+            {browserAudio && (
+              <BrowserVolume
+                volume={browserVolume}
+                available={active && session.audioAvailable}
+                onChange={changeBrowserVolume}
+              />
+            )}
           </div>
         </SidePanel>
       )}
@@ -561,6 +601,14 @@ export function DeviceConsole({
                       ))}
                     </div>
                   ))}
+                  {browserAudio && (
+                    <BrowserVolume
+                      volume={browserVolume}
+                      available={active && session.audioAvailable}
+                      onChange={changeBrowserVolume}
+                      compact
+                    />
+                  )}
                 </div>
               )}
               <Button
@@ -714,6 +762,72 @@ type ConsoleAction = {
 const HOLD_MS = 500;
 
 type ConsoleSection = { key: string; label: string; actions: ConsoleAction[] };
+
+function BrowserVolume({
+  volume,
+  available,
+  onChange,
+  compact = false,
+}: {
+  volume: number;
+  available: boolean;
+  onChange: (volume: number) => void;
+  compact?: boolean;
+}) {
+  const Icon = volume === 0 ? VolumeX : volume < 50 ? Volume1 : Volume2;
+  const control = (
+    <div className="flex min-w-0 items-center gap-2">
+      <Icon className="size-4 shrink-0 text-muted-foreground" />
+      <input
+        type="range"
+        min={0}
+        max={100}
+        step={5}
+        value={volume}
+        disabled={!available}
+        aria-label="Browser audio volume. Does not change device volume."
+        title="Browser audio only — does not change device volume"
+        className="h-1.5 min-w-16 flex-1 cursor-pointer accent-primary disabled:cursor-not-allowed"
+        onChange={(event) => onChange(Number(event.currentTarget.value))}
+        onKeyDown={() => {
+          if (available) onChange(volume);
+        }}
+      />
+      <span className="w-8 shrink-0 text-right text-[10px] text-muted-foreground tabular-nums">
+        {volume}%
+      </span>
+    </div>
+  );
+
+  if (compact) {
+    return (
+      <div
+        className="min-w-32 rounded-lg border bg-background/70 px-2 py-1.5"
+        title="Browser audio only — device volume is unchanged"
+      >
+        <span className="mb-1 block font-medium text-[9px] text-muted-foreground uppercase tracking-wide">
+          Browser audio
+        </span>
+        {control}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-1 px-2">
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="font-medium text-[10px] text-muted-foreground uppercase tracking-wide">
+          Browser audio
+        </span>
+        <span className="text-[10px] text-muted-foreground">This browser only</span>
+      </div>
+      {control}
+      {!available && (
+        <span className="text-[10px] text-muted-foreground">Waiting for Android audio…</span>
+      )}
+    </div>
+  );
+}
 
 /**
  * Icon-only in both renderings, so the label lives in the tooltip and the

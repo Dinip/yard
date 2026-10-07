@@ -11,6 +11,7 @@
 //! ```
 
 pub mod adb_auth;
+pub mod audio;
 pub mod auth;
 pub mod backend;
 pub mod cleanup;
@@ -25,6 +26,7 @@ pub mod session;
 pub mod supervisor;
 pub mod video;
 
+pub use audio::{AudioCodecDescription, AudioHandle, AudioPacket, AudioPublisher};
 pub use backend::{
     AppFilter, AppMetrics, BackendError, CpuTimes, DeviceBackend, DeviceInfo, DeviceMetrics,
     InputEvent, MemoryBytes, NullProgress, ProgressSink, RemoteDebug, ThermalZone,

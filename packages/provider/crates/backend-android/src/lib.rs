@@ -2,7 +2,7 @@
 //!
 //! ```text
 //!   adb.rs      the adb server's host protocol — transport, shell, sync, forward
-//!   scrcpy.rs   pushing/starting the server, its two sockets, its control protocol
+//!   scrcpy.rs   pushing/starting the server, its three sockets, its protocols
 //!   h264.rs     Annex-B → avcC, so the browser gets the framing it wants
 //!   lib.rs      session supervision and the DeviceBackend impl
 //! ```
@@ -35,6 +35,7 @@ use provider_core::ports::{PortLease, PortPool};
 use yard_protocol::{AppInfo, Display, FileEntry, FileKind, FileListing, Platform};
 
 use crate::bridge::{DeviceAuthorizer, DeviceServices};
+use provider_core::audio::{channel as audio_channel, AudioHandle, AudioPublisher};
 use provider_core::video::{channel, VideoGeometry, VideoHandle, VideoPublisher};
 use tokio::net::TcpStream;
 use tokio::sync::{watch, Mutex};
@@ -155,6 +156,7 @@ pub struct AndroidBackend {
     name: Option<String>,
     adb: Adb,
     video: VideoHandle,
+    audio: AudioHandle,
     live: Arc<Mutex<Option<Arc<Live>>>>,
     ready: watch::Receiver<bool>,
     restart: Arc<tokio::sync::Notify>,
@@ -171,7 +173,8 @@ struct Exposed {
 
 impl AndroidBackend {
     pub fn new(options: AndroidOptions, name: Option<String>) -> Arc<Self> {
-        let (video, publisher) = channel();
+        let (video, video_publisher) = channel();
+        let (audio, audio_publisher) = audio_channel();
         let adb = Adb::new(options.adb_server.clone());
         let (ready_tx, ready_rx) = watch::channel(false);
         let live = Arc::new(Mutex::new(None));
@@ -182,6 +185,7 @@ impl AndroidBackend {
             name,
             adb: adb.clone(),
             video,
+            audio,
             live: live.clone(),
             ready: ready_rx,
             restart: restart.clone(),
@@ -193,7 +197,8 @@ impl AndroidBackend {
         tokio::spawn(supervise(Supervisor {
             options,
             adb,
-            publisher,
+            video_publisher,
+            audio_publisher,
             live,
             ready: ready_tx,
             restart,
@@ -396,6 +401,10 @@ impl DeviceBackend for AndroidBackend {
 
     fn video(&self) -> VideoHandle {
         self.video.clone()
+    }
+
+    fn audio(&self) -> Option<AudioHandle> {
+        Some(self.audio.clone())
     }
 
     async fn input(&self, event: InputEvent) -> BackendResult<()> {
@@ -862,7 +871,8 @@ impl DeviceBackend for AndroidBackend {
 struct Supervisor {
     options: AndroidOptions,
     adb: Adb,
-    publisher: VideoPublisher,
+    video_publisher: VideoPublisher,
+    audio_publisher: AudioPublisher,
     live: Arc<Mutex<Option<Arc<Live>>>>,
     ready: watch::Sender<bool>,
     restart: Arc<tokio::sync::Notify>,
@@ -889,7 +899,8 @@ async fn supervise(supervisor: Supervisor) {
         // unhealthy for the whole gap rather than only at its end.
         let _ = supervisor.ready.send(false);
         *supervisor.live.lock().await = None;
-        supervisor.publisher.mark_stopped();
+        supervisor.video_publisher.mark_stopped();
+        supervisor.audio_publisher.mark_stopped();
 
         tokio::time::sleep(RECONNECT_DELAY).await;
     }
@@ -901,6 +912,7 @@ async fn run_once(supervisor: &Supervisor) -> Result<()> {
 
     let ScrcpySession {
         video,
+        audio,
         control,
         width,
         height,
@@ -920,7 +932,7 @@ async fn run_once(supervisor: &Supervisor) -> Result<()> {
     // message: two writers on one socket would interleave mid-message.
     let keyframes = {
         let live = supervisor.live.clone();
-        let publisher = supervisor.publisher.clone();
+        let publisher = supervisor.video_publisher.clone();
         tokio::spawn(async move {
             loop {
                 publisher.keyframe_requested().await;
@@ -941,7 +953,7 @@ async fn run_once(supervisor: &Supervisor) -> Result<()> {
     // never block on the device to read the next packet.
     let announce = {
         let mut changes = geometry.watch();
-        let publisher = supervisor.publisher.clone();
+        let publisher = supervisor.video_publisher.clone();
         let adb = supervisor.adb.clone();
         let serial = serial.clone();
         tokio::spawn(async move {
@@ -966,7 +978,8 @@ async fn run_once(supervisor: &Supervisor) -> Result<()> {
     };
 
     let outcome = tokio::select! {
-        result = scrcpy::pump_video(video, supervisor.publisher.clone(), geometry) => result,
+        result = scrcpy::pump_video(video, supervisor.video_publisher.clone(), geometry) => result,
+        result = scrcpy::pump_audio(audio, supervisor.audio_publisher.clone()) => result,
         _ = supervisor.restart.notified() => Err(anyhow!("restart requested")),
     };
 
