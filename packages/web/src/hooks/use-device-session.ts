@@ -1,5 +1,6 @@
-import type { ClientMessage, Display } from "@yard/protocol";
+import { AUDIO_PACKET, type ClientMessage, type Display } from "@yard/protocol";
 import { type RefObject, useCallback, useEffect, useRef, useState } from "react";
+import { BrowserAudio } from "@/lib/screen/audio";
 import { isStreamSupported, ScreenRenderer } from "@/lib/screen/renderer";
 import { DeviceSession, fallbackStreamUrl, type SessionState } from "@/lib/screen/session";
 
@@ -24,6 +25,10 @@ export interface DeviceSessionApi {
    * is why it is a fallback and not a mode.
    */
   fallbackUrl: string | null;
+  /** True after the browser accepted the provider's audio codec. */
+  audioAvailable: boolean;
+  /** Resume Web Audio from a trusted user gesture. */
+  activateAudio: () => void;
   /**
    * Asks the device for its clipboard and resolves with the reply — `null`
    * meaning genuinely empty. A request/response rather than a piece of state:
@@ -64,6 +69,8 @@ export function useDeviceSession(
   deviceId: string,
   canvasRef: RefObject<HTMLCanvasElement | null>,
   enabled: boolean,
+  audioEnabled = false,
+  audioVolume = 1,
 ): DeviceSessionApi {
   const [state, setState] = useState<SessionState>("idle");
   const [detail, setDetail] = useState<string | undefined>();
@@ -72,6 +79,7 @@ export function useDeviceSession(
   const [frameSize, setFrameSize] = useState<{ width: number; height: number } | null>(null);
   const [unsupported, setUnsupported] = useState(false);
   const [fallbackUrl, setFallbackUrl] = useState<string | null>(null);
+  const [audioAvailable, setAudioAvailable] = useState(false);
 
   const sessionRef = useRef<DeviceSession | null>(null);
   /**
@@ -81,11 +89,20 @@ export function useDeviceSession(
    */
   const revokedReason = useRef<string | undefined>(undefined);
   const rendererRef = useRef<ScreenRenderer | null>(null);
+  const audioRef = useRef<BrowserAudio | null>(null);
+  const audioVolumeRef = useRef(audioVolume);
+  audioVolumeRef.current = audioVolume;
   const clipboardWaiters = useRef<((text: string | null) => void)[]>([]);
 
   const send = useCallback((message: ClientMessage) => {
     sessionRef.current?.send(message);
   }, []);
+
+  const activateAudio = useCallback(() => audioRef.current?.activate(), []);
+
+  useEffect(() => {
+    audioRef.current?.setVolume(audioVolume);
+  }, [audioVolume]);
 
   const readClipboard = useCallback(
     () =>
@@ -112,6 +129,12 @@ export function useDeviceSession(
     if (!enabled) return;
 
     let disposed = false;
+    const audio =
+      audioEnabled && typeof AudioContext !== "undefined"
+        ? new BrowserAudio(audioVolumeRef.current)
+        : null;
+    audioRef.current = audio;
+    setAudioAvailable(false);
     // A fresh session is not revoked, whatever the last one ended as.
     revokedReason.current = undefined;
     setRevoked(false);
@@ -128,6 +151,8 @@ export function useDeviceSession(
         if (next === "closed" || next === "idle") {
           rendererRef.current?.destroy();
           rendererRef.current = null;
+          audio?.reset();
+          setAudioAvailable(false);
         }
       },
       onMessage: (message) => {
@@ -184,6 +209,11 @@ export function useDeviceSession(
             // picture is now sideways.
             rendererRef.current?.setRenderRotation(message.display.renderRotation);
             break;
+          case "audio.codec":
+            void audio?.configure(message).then((supported) => {
+              if (!disposed) setAudioAvailable(supported);
+            });
+            break;
           case "clipboard": {
             const waiters = clipboardWaiters.current;
             clipboardWaiters.current = [];
@@ -218,7 +248,10 @@ export function useDeviceSession(
             break;
         }
       },
-      onBinary: (frame) => rendererRef.current?.decodeChunk(frame),
+      onBinary: (frame) => {
+        if (frame[0] === AUDIO_PACKET) audio?.decodeChunk(frame);
+        else rendererRef.current?.decodeChunk(frame);
+      },
     });
 
     sessionRef.current = session;
@@ -230,8 +263,11 @@ export function useDeviceSession(
       sessionRef.current = null;
       rendererRef.current?.destroy();
       rendererRef.current = null;
+      audio?.destroy();
+      audioRef.current = null;
+      setAudioAvailable(false);
     };
-  }, [deviceId, enabled, canvasRef]);
+  }, [deviceId, enabled, canvasRef, audioEnabled]);
 
   return {
     state,
@@ -241,6 +277,8 @@ export function useDeviceSession(
     frameSize,
     unsupported,
     fallbackUrl,
+    audioAvailable,
+    activateAudio,
     readClipboard,
     send,
   };

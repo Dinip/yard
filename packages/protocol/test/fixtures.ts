@@ -263,6 +263,12 @@ export const serverFixtures = {
     description: "AQFAAAAAAAAAAAAAAAAAAAAA",
     display: { width: 1179, height: 2556, scale: 3 },
   },
+  audioCodec: {
+    type: "audio.codec",
+    codec: "opus",
+    sampleRate: 48_000,
+    channels: 2,
+  },
   clipboard: { type: "clipboard", text: "copied" },
   clipboardEmpty: { type: "clipboard", text: null },
   installProgress: { type: "install.progress", progress: 0.42, stage: "uploading" },

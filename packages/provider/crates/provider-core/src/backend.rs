@@ -13,6 +13,7 @@ use wildmatch::WildMatch;
 use yard_protocol::{AppInfo, Display, FileListing, Platform};
 
 use crate::adb_auth::AdbAuthority;
+use crate::audio::AudioHandle;
 use crate::video::VideoHandle;
 
 pub type Result<T> = std::result::Result<T, BackendError>;
@@ -258,6 +259,12 @@ pub trait DeviceBackend: Send + Sync + 'static {
     /// subscribing must not disturb the capture pipeline.
     fn video(&self) -> VideoHandle;
 
+    /// Encoded system audio when this backend can route it away from the
+    /// device speaker. `None` means the session remains video-only.
+    fn audio(&self) -> Option<AudioHandle> {
+        None
+    }
+
     async fn input(&self, event: InputEvent) -> Result<()>;
 
     /// Full-resolution PNG, straight from the device's own capture service.
@@ -340,6 +347,11 @@ pub trait DeviceBackend: Send + Sync + 'static {
 
     /// Tears the device session down and brings it back up.
     async fn restart(&self) -> Result<()>;
+
+    /// Enables captured media for a reservation, or silences an idle device.
+    async fn set_audio_active(&self, _active: bool) -> Result<()> {
+        Ok(())
+    }
 
     /// Turns the display off or on without disturbing the session.
     ///

@@ -3,7 +3,7 @@
 ## The one idea
 
 **The coordinator owns identity, inventory, reservations and policy. Providers
-own devices and every byte of high-bandwidth traffic.** Video and input go
+own devices and every byte of high-bandwidth traffic.** Video, audio and input go
 browser↔provider directly; the coordinator is never on the data path.
 
 This is the single structural difference from STF, which proxied every device's
@@ -21,7 +21,7 @@ instance the bottleneck for exactly the traffic that scales with device count.
      │                                    │    (provider dials out, WSS)
      │              ┌─────────────────────┴───────────────────────┐
      │  3. session  │              provider                        │
-     ├──── WSS ────►│   video access units + input events          │
+     ├──── WSS ────►│   video/audio packets + input events         │
      │              │                                              │
      │  4. artifact │   ┌──────────────────┬───────────────────┐   │
      └─── HTTPS ───►│   │ backend-ios      │ backend-android   │   │
@@ -49,7 +49,7 @@ behind a NAT in an office.
 ### 3. Session plane — browser ↔ provider
 
 Direct WSS at `wss://<provider publicBaseUrl>/s/<deviceId>?token=<jwt>`. Carries
-video access units and input events. The provider verifies the
+video and audio packets plus input events. The provider verifies the
 coordinator-signed token locally against a cached JWKS.
 
 **Input never round-trips through the coordinator**, so interaction latency is

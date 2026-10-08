@@ -208,6 +208,11 @@ async fn main() -> Result<()> {
             revocation_loop.abort();
             metrics_plane.abort();
             metrics_sampler.abort();
+            for device in supervisor.devices() {
+                if let Err(err) = device.backend.set_audio_active(false).await {
+                    warn!(device = %device.id, %err, "could not silence device on shutdown");
+                }
+            }
             Ok(())
         }
     }

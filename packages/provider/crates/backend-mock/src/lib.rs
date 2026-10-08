@@ -19,6 +19,9 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use provider_core::adb_auth::AdbAuthority;
+use provider_core::audio::{
+    channel as audio_channel, AudioCodecDescription, AudioHandle, AudioPacket, AudioPublisher,
+};
 use provider_core::backend::{
     parent_of, AppFilter, AppMetrics, BackendError, CpuTimes, DeviceBackend, DeviceInfo,
     DeviceMetrics, InputEvent, MemoryBytes, ProgressSink, RemoteDebug, Result, ThermalZone,
@@ -92,6 +95,7 @@ pub struct MockBackend {
     platform: Platform,
     name: String,
     video: VideoHandle,
+    audio: Option<AudioHandle>,
     /// Kept so a rotation can publish the new geometry, the same way a real
     /// backend does when its encoder restarts.
     publisher: VideoPublisher,
@@ -130,6 +134,7 @@ pub struct MockState {
     /// rather than the final state: blanking a device twice is a bug even
     /// though it leaves the screen in the right place.
     pub screen_power: Mutex<Vec<bool>>,
+    pub audio_active: Mutex<Vec<bool>>,
     /// Answer `set_screen_awake` with `Unsupported`, the way a backend that
     /// cannot reach the display does.
     pub no_screen_power: AtomicBool,
@@ -154,6 +159,12 @@ pub enum ScreenFault {
 impl MockBackend {
     pub fn new(id: impl Into<String>, platform: Platform, name: impl Into<String>) -> Arc<Self> {
         let (video, publisher) = channel();
+        let (audio, audio_publisher) = if platform == Platform::Android {
+            let (handle, publisher) = audio_channel();
+            (Some(handle), Some(publisher))
+        } else {
+            (None, None)
+        };
         let state = Arc::new(MockState {
             installed: Mutex::new(vec![
                 AppInfo {
@@ -178,6 +189,7 @@ impl MockBackend {
             platform,
             name: name.into(),
             video,
+            audio,
             publisher: publisher.clone(),
             state,
             started: Instant::now(),
@@ -192,6 +204,9 @@ impl MockBackend {
         });
 
         tokio::spawn(synthesize(publisher, platform));
+        if let Some(publisher) = audio_publisher {
+            tokio::spawn(synthesize_audio(publisher));
+        }
         backend
     }
 
@@ -305,6 +320,28 @@ async fn synthesize(publisher: VideoPublisher, platform: Platform) {
 
         publisher.publish(AccessUnit { data, is_key });
         counter = counter.wrapping_add(1);
+    }
+}
+
+/// Valid 20 ms Opus silence packets, so the Android mock exercises the whole
+/// browser-facing audio wire without shipping an encoder as a test fixture.
+async fn synthesize_audio(publisher: AudioPublisher) {
+    publisher.set_codec(AudioCodecDescription {
+        codec: "opus".into(),
+        sample_rate: 48_000,
+        channels: 2,
+    });
+
+    let mut timestamp_us = 0;
+    let mut ticker = tokio::time::interval(Duration::from_millis(20));
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        ticker.tick().await;
+        publisher.publish(AudioPacket {
+            data: vec![0xf8, 0xff, 0xfe],
+            timestamp_us,
+        });
+        timestamp_us += 20_000;
     }
 }
 
@@ -429,6 +466,10 @@ impl DeviceBackend for MockBackend {
         self.video.clone()
     }
 
+    fn audio(&self) -> Option<AudioHandle> {
+        self.audio.clone()
+    }
+
     async fn input(&self, event: InputEvent) -> Result<()> {
         debug!(device = %self.id, ?event, "mock input");
         self.state.events.lock().await.push(event);
@@ -510,6 +551,11 @@ impl DeviceBackend for MockBackend {
         }
         drop(installed);
         self.state.cleared.lock().await.push(app_id.to_owned());
+        Ok(())
+    }
+
+    async fn set_audio_active(&self, active: bool) -> Result<()> {
+        self.state.audio_active.lock().await.push(active);
         Ok(())
     }
 

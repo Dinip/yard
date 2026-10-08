@@ -75,6 +75,43 @@ async fn screen_calls(backend: &Arc<backend_mock::MockBackend>) -> Vec<bool> {
 }
 
 #[tokio::test]
+async fn audio_follows_reservations_even_when_idle_screen_parking_is_disabled() {
+    let (supervisor, backend, _rx) = harness(false).await;
+    assert_eq!(*backend.state.audio_active.lock().await, vec![false]);
+    let revocations = tokio::spawn(supervisor.clone().run_revocation_loop());
+    authorize(&supervisor, "res-1").await;
+    authorize(&supervisor, "res-1").await;
+    assert_eq!(
+        *backend.state.audio_active.lock().await,
+        vec![false, false, true, true]
+    );
+    revoke(&supervisor).await;
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            if backend.state.audio_active.lock().await.last() == Some(&false) {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("revocation silences immediately, without a poll");
+    revocations.abort();
+}
+
+#[tokio::test]
+async fn a_new_reservation_resets_audio_even_before_the_release_listener_runs() {
+    let (supervisor, backend, _rx) = harness(false).await;
+    authorize(&supervisor, "res-1").await;
+    revoke(&supervisor).await;
+    authorize(&supervisor, "res-2").await;
+    assert_eq!(
+        *backend.state.audio_active.lock().await,
+        vec![false, false, true, false, true]
+    );
+}
+
+#[tokio::test]
 async fn an_idle_device_is_parked_once_and_then_left_alone() {
     let (supervisor, backend, _rx) = harness(true).await;
     assert_eq!(screen_calls(&backend).await, vec![false]);

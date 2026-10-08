@@ -322,6 +322,12 @@
         "scale": 3
       }
     },
+    "audioCodec": {
+      "type": "audio.codec",
+      "codec": "opus",
+      "sampleRate": 48000,
+      "channels": 2
+    },
     "clipboard": {
       "type": "clipboard",
       "text": "copied"

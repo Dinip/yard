@@ -67,10 +67,11 @@ clipboard report at all*. They are now distinct:
 **JSON for control messages.** They are low-rate, and reading them in a log is
 worth more than the bytes.
 
-**Binary framing for video access units only** — `[type byte][AU]`, where the
-type byte is `0 = key`, `1 = delta`, `2 = key-with-reset`. This is the framing
-`stf-ios-provider/src/frontend/hevc-screen.js` already speaks; see that
-directory's `INTEGRATION.md`.
+**Binary framing for media.** Video remains `[type byte][AU]`, where the type
+byte is `0 = key`, `1 = delta`, `2 = key-with-reset`. Audio is
+`[3][u64 timestamp_us, big endian][encoded packet]`; its `audio.codec` JSON
+message announces the codec, sample rate and channel count first. Both travel
+directly between browser and provider on the session socket.
 
 ## Control plane — provider ↔ coordinator ✅ built
 
@@ -188,7 +189,7 @@ to the browser as nothing but an abnormal socket close.
 | Direction | Messages |
 |---|---|
 | browser → provider (`ClientMessage`) | `pointer.down/move/up`, `key`, `text`, `clipboard.get/set`, `rotate`, `keyframe`, `pong` |
-| provider → browser (`ServerMessage`) | `codec` handshake, `display`, `clipboard`, `install.progress`, `install.result`, `session.closed`, `error`, `ping` |
+| provider → browser (`ServerMessage`) | `codec` and `audio.codec` handshakes, `display`, `clipboard`, `install.progress`, `install.result`, `session.closed`, `error`, `ping` |
 
 Pointer coordinates are **normalised 0..1, not pixels**: the browser needs no
 knowledge of the true resolution, and a mid-session rotation cannot

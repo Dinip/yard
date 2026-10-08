@@ -2,7 +2,7 @@
 //!
 //! ```text
 //!   adb.rs      the adb server's host protocol — transport, shell, sync, forward
-//!   scrcpy.rs   pushing/starting the server, its two sockets, its control protocol
+//!   scrcpy.rs   pushing/starting the server, its three sockets, its protocols
 //!   h264.rs     Annex-B → avcC, so the browser gets the framing it wants
 //!   lib.rs      session supervision and the DeviceBackend impl
 //! ```
@@ -35,6 +35,7 @@ use provider_core::ports::{PortLease, PortPool};
 use yard_protocol::{AppInfo, Display, FileEntry, FileKind, FileListing, Platform};
 
 use crate::bridge::{DeviceAuthorizer, DeviceServices};
+use provider_core::audio::{channel as audio_channel, AudioHandle, AudioPublisher};
 use provider_core::video::{channel, VideoGeometry, VideoHandle, VideoPublisher};
 use tokio::net::TcpStream;
 use tokio::sync::{watch, Mutex};
@@ -155,6 +156,8 @@ pub struct AndroidBackend {
     name: Option<String>,
     adb: Adb,
     video: VideoHandle,
+    audio: AudioHandle,
+    audio_state: Arc<Mutex<AudioState>>,
     live: Arc<Mutex<Option<Arc<Live>>>>,
     ready: watch::Receiver<bool>,
     restart: Arc<tokio::sync::Notify>,
@@ -171,17 +174,21 @@ struct Exposed {
 
 impl AndroidBackend {
     pub fn new(options: AndroidOptions, name: Option<String>) -> Arc<Self> {
-        let (video, publisher) = channel();
+        let (video, video_publisher) = channel();
+        let (audio, audio_publisher) = audio_channel();
         let adb = Adb::new(options.adb_server.clone());
         let (ready_tx, ready_rx) = watch::channel(false);
         let live = Arc::new(Mutex::new(None));
         let restart = Arc::new(tokio::sync::Notify::new());
+        let audio_state = Arc::new(Mutex::new(AudioState::default()));
 
         let backend = Arc::new(Self {
             options: options.clone(),
             name,
             adb: adb.clone(),
             video,
+            audio,
+            audio_state: audio_state.clone(),
             live: live.clone(),
             ready: ready_rx,
             restart: restart.clone(),
@@ -193,10 +200,12 @@ impl AndroidBackend {
         tokio::spawn(supervise(Supervisor {
             options,
             adb,
-            publisher,
+            video_publisher,
+            audio_publisher,
             live,
             ready: ready_tx,
             restart,
+            audio_state,
         }));
 
         backend
@@ -396,6 +405,10 @@ impl DeviceBackend for AndroidBackend {
 
     fn video(&self) -> VideoHandle {
         self.video.clone()
+    }
+
+    fn audio(&self) -> Option<AudioHandle> {
+        Some(self.audio.clone())
     }
 
     async fn input(&self, event: InputEvent) -> BackendResult<()> {
@@ -791,6 +804,26 @@ impl DeviceBackend for AndroidBackend {
         Ok(())
     }
 
+    async fn set_audio_active(&self, active: bool) -> BackendResult<()> {
+        if active {
+            self.live().await?;
+        }
+        let mut state = self.audio_state.lock().await;
+        if active && !state.capturing {
+            return Err(BackendError::Unavailable(
+                "audio capture is restarting".into(),
+            ));
+        }
+        if state.active != active {
+            state.active = active;
+            state.applied = None;
+        }
+        state
+            .apply(&self.adb, &self.options.serial, active)
+            .await
+            .map_err(|err| BackendError::Failed(format!("{err:#}")))
+    }
+
     async fn remote_debug_port(&self) -> Option<u16> {
         self.exposed
             .lock()
@@ -862,10 +895,96 @@ impl DeviceBackend for AndroidBackend {
 struct Supervisor {
     options: AndroidOptions,
     adb: Adb,
-    publisher: VideoPublisher,
+    video_publisher: VideoPublisher,
+    audio_publisher: AudioPublisher,
     live: Arc<Mutex<Option<Arc<Live>>>>,
     ready: watch::Sender<bool>,
     restart: Arc<tokio::sync::Notify>,
+    audio_state: Arc<Mutex<AudioState>>,
+}
+
+#[derive(Default)]
+struct AudioState {
+    active: bool,
+    applied: Option<bool>,
+    capturing: bool,
+}
+
+impl AudioState {
+    async fn apply(&mut self, adb: &Adb, serial: &str, active: bool) -> Result<()> {
+        if self.applied == Some(active) {
+            return Ok(());
+        }
+        // Total-silence DND rejects media-volume changes until its exit has propagated.
+        if active {
+            set_dnd(adb, serial, "all").await?;
+        }
+        let volume = if active {
+            let output = adb
+                .shell(serial, "cmd media_session volume --stream 3 --get")
+                .await?;
+            media_volume_max(&output).context("reading Android media volume range")?
+        } else {
+            0
+        };
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            let output = adb
+                .shell(
+                    serial,
+                    &format!("cmd media_session volume --stream 3 --set {volume} --get"),
+                )
+                .await?;
+            let actual = media_volume_current(&output).context("verifying Android media volume")?;
+            if actual == volume {
+                break;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Err(anyhow!(
+                    "Android media volume stayed at {actual}, wanted {volume}"
+                ));
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        // Idle total-silence DND also covers alarms, whose minimum volume may be nonzero.
+        if !active {
+            set_dnd(adb, serial, "none").await?;
+        }
+        self.applied = Some(active);
+        Ok(())
+    }
+}
+
+async fn set_dnd(adb: &Adb, serial: &str, mode: &str) -> Result<()> {
+    let output = adb
+        .shell(serial, &format!("cmd notification set_dnd {mode}"))
+        .await?;
+    if !output.trim().is_empty() {
+        return Err(anyhow!("setting Android do-not-disturb: {output}"));
+    }
+    Ok(())
+}
+
+fn media_volume_current(output: &str) -> Option<u32> {
+    output
+        .split_once("volume is ")?
+        .1
+        .split_once(" in range [")?
+        .0
+        .parse()
+        .ok()
+}
+
+fn media_volume_max(output: &str) -> Option<u32> {
+    output
+        .split_once(" in range [")?
+        .1
+        .split_once("..")?
+        .1
+        .split_once(']')?
+        .0
+        .parse()
+        .ok()
 }
 
 /// Rebuild the scrcpy session forever.
@@ -889,7 +1008,8 @@ async fn supervise(supervisor: Supervisor) {
         // unhealthy for the whole gap rather than only at its end.
         let _ = supervisor.ready.send(false);
         *supervisor.live.lock().await = None;
-        supervisor.publisher.mark_stopped();
+        supervisor.video_publisher.mark_stopped();
+        supervisor.audio_publisher.mark_stopped();
 
         tokio::time::sleep(RECONNECT_DELAY).await;
     }
@@ -897,10 +1017,24 @@ async fn supervise(supervisor: Supervisor) {
 
 async fn run_once(supervisor: &Supervisor) -> Result<()> {
     let serial = &supervisor.options.serial;
+    {
+        let mut state = supervisor.audio_state.lock().await;
+        state.capturing = false;
+        state.applied = None;
+        state.apply(&supervisor.adb, serial, false).await?;
+    }
     let session = ScrcpySession::start(&supervisor.adb, serial, &supervisor.options.scrcpy).await?;
+    {
+        // Raise media only after capture has taken it away from the speaker.
+        let mut state = supervisor.audio_state.lock().await;
+        state.capturing = true;
+        let active = state.active;
+        state.apply(&supervisor.adb, serial, active).await?;
+    }
 
     let ScrcpySession {
         video,
+        audio,
         control,
         width,
         height,
@@ -920,7 +1054,7 @@ async fn run_once(supervisor: &Supervisor) -> Result<()> {
     // message: two writers on one socket would interleave mid-message.
     let keyframes = {
         let live = supervisor.live.clone();
-        let publisher = supervisor.publisher.clone();
+        let publisher = supervisor.video_publisher.clone();
         tokio::spawn(async move {
             loop {
                 publisher.keyframe_requested().await;
@@ -941,7 +1075,7 @@ async fn run_once(supervisor: &Supervisor) -> Result<()> {
     // never block on the device to read the next packet.
     let announce = {
         let mut changes = geometry.watch();
-        let publisher = supervisor.publisher.clone();
+        let publisher = supervisor.video_publisher.clone();
         let adb = supervisor.adb.clone();
         let serial = serial.clone();
         tokio::spawn(async move {
@@ -966,12 +1100,18 @@ async fn run_once(supervisor: &Supervisor) -> Result<()> {
     };
 
     let outcome = tokio::select! {
-        result = scrcpy::pump_video(video, supervisor.publisher.clone(), geometry) => result,
+        result = scrcpy::pump_video(video, supervisor.video_publisher.clone(), geometry) => result,
+        result = scrcpy::pump_audio(audio, supervisor.audio_publisher.clone()) => result,
         _ = supervisor.restart.notified() => Err(anyhow!("restart requested")),
     };
 
     keyframes.abort();
     announce.abort();
+    {
+        let mut state = supervisor.audio_state.lock().await;
+        state.capturing = false;
+        state.apply(&supervisor.adb, serial, false).await?;
+    }
     outcome
 }
 
@@ -1249,6 +1389,60 @@ fn staging_suffix() -> String {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    #[ignore = "requires YARD_TEST_ANDROID_SERIAL and an already-running output capture"]
+    async fn reserved_audio_leaves_total_silence_before_raising_media_volume() {
+        let serial = std::env::var("YARD_TEST_ANDROID_SERIAL").expect("test device serial");
+        let adb = Adb::new(adb::DEFAULT_ADB_SERVER);
+        let mut state = AudioState::default();
+        for _ in 0..2 {
+            state.apply(&adb, &serial, false).await.unwrap();
+            assert_eq!(
+                adb.shell(&serial, "settings get global zen_mode")
+                    .await
+                    .unwrap()
+                    .trim(),
+                "2"
+            );
+            let muted = adb
+                .shell(&serial, "cmd media_session volume --stream 3 --get")
+                .await
+                .unwrap();
+            assert_eq!(media_volume_current(&muted), Some(0));
+            state.apply(&adb, &serial, true).await.unwrap();
+            let audible = adb
+                .shell(&serial, "cmd media_session volume --stream 3 --get")
+                .await
+                .unwrap();
+            assert_eq!(media_volume_current(&audible), media_volume_max(&audible));
+            assert_ne!(media_volume_current(&audible), Some(0));
+            assert_eq!(
+                adb.shell(&serial, "settings get global zen_mode")
+                    .await
+                    .unwrap()
+                    .trim(),
+                "0"
+            );
+        }
+    }
+
+    #[test]
+    fn media_volume_range_comes_from_the_device() {
+        assert_eq!(
+            super::media_volume_max("[V] volume is 0 in range [0..15]"),
+            Some(15)
+        );
+        assert_eq!(
+            super::media_volume_max("[V] volume is 20 in range [0..25]"),
+            Some(25)
+        );
+        assert_eq!(super::media_volume_max("Error: permission denied"), None);
+        assert_eq!(
+            super::media_volume_max("volume is 0 in range [0..oops]"),
+            None
+        );
+    }
+
     use super::*;
 
     #[test]
