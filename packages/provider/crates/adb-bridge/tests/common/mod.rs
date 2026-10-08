@@ -13,7 +13,7 @@ use base64::Engine as _;
 use rsa::pkcs1v15::Pkcs1v15Sign;
 use rsa::traits::PublicKeyParts as _;
 use rsa::{RsaPrivateKey, RsaPublicKey};
-use sha1::Sha1;
+use sha1::{digest::const_oid::AssociatedOid as _, Digest as _, Sha1};
 use tokio::io::{AsyncRead, AsyncWrite};
 
 /// Keys these tests sign with are generated, not committed.
@@ -90,8 +90,27 @@ pub fn other_key() -> PublicKey {
 pub fn sign(key: &RsaPrivateKey, token: &[u8]) -> Vec<u8> {
     // What `adb` does: the 20-byte challenge is treated as a SHA-1 digest and
     // signed with the prefixed PKCS#1 v1.5 scheme.
-    key.sign(Pkcs1v15Sign::new::<Sha1>(), token)
-        .expect("signing succeeds")
+    // Build DigestInfo from sha1's OID independently of the verifier's fixed prefix.
+    let oid = Sha1::OID.as_bytes();
+    let hash_len = Sha1::output_size();
+    let mut prefix = vec![
+        0x30,
+        (oid.len() + 8 + hash_len) as u8,
+        0x30,
+        (oid.len() + 4) as u8,
+        0x06,
+        oid.len() as u8,
+    ];
+    prefix.extend_from_slice(oid);
+    prefix.extend_from_slice(&[0x05, 0x00, 0x04, hash_len as u8]);
+    key.sign(
+        Pkcs1v15Sign {
+            hash_len: Some(hash_len),
+            prefix: prefix.into_boxed_slice(),
+        },
+        token,
+    )
+    .expect("signing succeeds")
 }
 
 /// Send the opening `CNXN` and read the challenge back.

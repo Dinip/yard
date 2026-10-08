@@ -16,6 +16,7 @@ plist.workspace = true
 reqwest.workspace = true
 
 tokio.workspace = true
+tokio-util = { workspace = true, features = ["compat"] }
 futures.workspace = true
 async-trait.workspace = true
 async_zip.workspace = true

@@ -588,6 +588,12 @@ nobody is asked anything. Otherwise we issue a fresh token, which makes the
 client try its next key and eventually offer a public key instead. We then ask
 the holder, through `adb.auth.request`, and park for 120 seconds.
 
+ADB treats the challenge as a SHA-1 digest without hashing it. Verification
+supplies the fixed SHA-1 DigestInfo prefix from
+[RFC 8017 section 9.2](https://www.rfc-editor.org/rfc/rfc8017#section-9.2) and
+requires a 20-byte challenge, keeping the wire format independent of the
+different `digest` trait versions used by `rsa` 0.9 and `sha1` 0.11.
+
 **A denied key is refused locally from then on.** The `AdbAuthority` remembers
 the fingerprints the holder said no to and answers the next attempt itself,
 without a second `adb.auth.request`. The client's adb server redials a transport

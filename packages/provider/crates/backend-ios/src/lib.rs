@@ -49,6 +49,7 @@ use provider_core::backend::{
 };
 use provider_core::video::{channel, VideoGeometry, VideoHandle, VideoPublisher};
 use tokio::sync::Mutex;
+use tokio_util::compat::TokioAsyncReadCompatExt as _;
 use tracing::{debug, info, warn};
 use yard_protocol::{AppInfo, Display, FileEntry, FileKind, FileListing, Platform};
 
@@ -64,21 +65,22 @@ async fn ipa_bundle_id(staged: &Path) -> BackendResult<String> {
     let file = tokio::fs::File::open(staged)
         .await
         .with_context(|| format!("opening {}", staged.display()))?;
-    let mut archive =
-        async_zip::base::read::seek::ZipFileReader::with_tokio(tokio::io::BufReader::new(file))
-            .await
-            .map_err(|err| BackendError::Failed(format!("reading IPA archive: {err}")))?;
+    let mut archive = async_zip::base::read1::seek::ZipArchiveReader::open(
+        tokio::io::BufReader::new(file).compat(),
+    )
+    .await
+    .map_err(|err| BackendError::Failed(format!("reading IPA archive: {err}")))?;
 
-    for index in 0..archive.file().entries().len() {
+    for index in 0..archive.cdrs().len() {
         let mut entry = archive
-            .reader_with_entry(index)
+            .file(index)
             .await
             .map_err(|err| BackendError::Failed(format!("reading IPA entry: {err}")))?;
         let path = entry
-            .entry()
-            .filename()
+            .lf()
+            .insecure_file_name
             .as_str()
-            .map_err(|_| BackendError::Failed("IPA entry name is not UTF-8".into()))?
+            .ok_or_else(|| BackendError::Failed("IPA entry name is not UTF-8".into()))?
             .trim_end_matches('/');
 
         if path.ends_with("Info.plist") && path.split('/').count() == 3 {
@@ -1488,6 +1490,66 @@ mod tests {
     }
 
     use super::*;
+
+    #[tokio::test]
+    async fn ipa_bundle_id_reads_the_root_plist_and_rejects_invalid_metadata() {
+        use async_zip::{base::write::ZipFileWriter, Compression, ZipEntryBuilder};
+
+        let plist = b"<?xml version=\"1.0\"?><plist version=\"1.0\"><dict><key>CFBundleIdentifier</key><string>com.example.app</string></dict></plist>";
+        let cases = [
+            (
+                vec![
+                    (
+                        "Payload/App.app/Frameworks/Nested.framework/Info.plist",
+                        b"ignored".as_slice(),
+                    ),
+                    ("Payload/App.app/Info.plist", plist.as_slice()),
+                ],
+                Some("com.example.app"),
+            ),
+            (
+                vec![("Payload/App.app/other.txt", b"no plist".as_slice())],
+                None,
+            ),
+            (
+                vec![("Payload/App.app/Info.plist", b"invalid plist".as_slice())],
+                None,
+            ),
+            (
+                vec![(
+                    "Payload/App.app/Info.plist",
+                    b"<plist><dict/></plist>".as_slice(),
+                )],
+                None,
+            ),
+        ];
+        let path = std::env::temp_dir().join(format!("yard-ipa-{}.ipa", uuid::Uuid::new_v4()));
+        for (entries, expected) in cases {
+            let mut bytes = Vec::new();
+            let mut writer = ZipFileWriter::with_tokio(&mut bytes);
+            for (name, contents) in entries {
+                writer
+                    .write_entry_whole(
+                        ZipEntryBuilder::new(name.to_owned().into(), Compression::Deflate),
+                        contents,
+                    )
+                    .await
+                    .unwrap();
+            }
+            writer.close().await.unwrap();
+            tokio::fs::write(&path, bytes).await.unwrap();
+            let result = ipa_bundle_id(&path).await;
+            tokio::fs::remove_file(&path).await.unwrap();
+            match expected {
+                Some(expected) => assert_eq!(result.unwrap(), expected),
+                None => assert!(result.is_err()),
+            }
+        }
+        tokio::fs::write(&path, b"not a ZIP archive").await.unwrap();
+        let result = ipa_bundle_id(&path).await;
+        tokio::fs::remove_file(&path).await.unwrap();
+        assert!(result.is_err());
+    }
 
     #[test]
     fn the_two_file_trees_stay_apart_but_navigate_as_one() {

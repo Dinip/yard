@@ -129,9 +129,12 @@ impl PublicKey {
     /// prefix, so verification uses the prefixed scheme even though nothing was
     /// actually hashed.
     pub fn verify(&self, token: &[u8], signature: &[u8]) -> bool {
-        self.inner
-            .verify(Pkcs1v15Sign::new::<Sha1>(), token, signature)
-            .is_ok()
+        // RFC 8017 section 9.2's SHA-1 prefix, without rsa's older digest traits.
+        let padding = Pkcs1v15Sign {
+            hash_len: Some(Sha1::output_size()),
+            prefix: Box::from(&b"\x30\x21\x30\x09\x06\x05\x2b\x0e\x03\x02\x1a\x05\x00\x04\x14"[..]),
+        };
+        self.inner.verify(padding, token, signature).is_ok()
     }
 }
 
