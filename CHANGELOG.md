@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.5.0](https://github.com/Dinip/yard/compare/v0.4.2...v0.5.0) (2026-10-08)
+
+
+### Features
+
+* **android:** stream device audio to browsers ([#62](https://github.com/Dinip/yard/issues/62)) ([d4a5c18](https://github.com/Dinip/yard/commit/d4a5c1821e47fdcfbc233c5aaf9dbc5d94b050bb))
+* **screen:** support pinch and wheel zoom on iOS and Android ([#65](https://github.com/Dinip/yard/issues/65)) ([483e65e](https://github.com/Dinip/yard/commit/483e65ef49ecfb0a559b708c7d1702cd6f25285f))
+
+
+### Bug Fixes
+
+* **web:** accept printable Option and Alt keyboard input ([#64](https://github.com/Dinip/yard/issues/64)) ([1eb26bc](https://github.com/Dinip/yard/commit/1eb26bc80c308400e386cb9d075850afa6be64db))
+
 ## [0.4.2](https://github.com/Dinip/yard/compare/v0.4.1...v0.4.2) (2026-09-23)
 
 
