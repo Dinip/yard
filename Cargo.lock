@@ -123,16 +123,15 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "apk-info-axml"
-version = "1.0.12"
+version = "1.0.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6ae17724ac06d657147be97c96fc0c0c1eaead2e56749e4aecf8dcc7321b3bc"
+checksum = "f5b728c1b100e814602cf9ea0f78bd06cdae15b338efac82b4912a1829ee4ed2"
 dependencies = [
  "apk-info-xml",
  "bitflags",
  "log",
  "phf",
  "phf_codegen",
- "quick-xml",
  "serde",
  "serde_json",
  "thiserror 2.0.19",
@@ -141,9 +140,9 @@ dependencies = [
 
 [[package]]
 name = "apk-info-xml"
-version = "1.0.12"
+version = "1.0.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c3dcf2ac2165e435e8a780744a7e74bcad0467ad3df2f7ccadf44c9b5555743b"
+checksum = "9a868f137d0dbaade83da5c4700fd9aef2dfe439fac1763fdb925e5054452a65"
 
 [[package]]
 name = "arbitrary"
