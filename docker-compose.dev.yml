@@ -50,7 +50,7 @@ services:
   # without a uid then refuses to be re-provisioned with one, and Grafana
   # crash-loops on "data source not found" until the volume is removed.
   grafana:
-    image: grafana/grafana:12.2.0
+    image: grafana/grafana:13.2.3
     profiles: [observability]
     restart: unless-stopped
     depends_on: [prometheus]
