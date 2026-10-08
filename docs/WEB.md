@@ -312,6 +312,19 @@ deployment's source lives is a property of the build, not of the operator.
 asked for one thing — a session token, from `device.sessionToken` — and is then
 out of the way. Video, audio, input, screenshots and uploads never touch it.
 
+### Pinch and wheel zoom
+
+Two-finger touch gestures go directly to the device app. Mouse-wheel scrolling
+and trackpad pinches over the screen synthesize two contacts around the cursor;
+scroll up spreads them to zoom in, and scroll down brings them together.
+Safari gesture events use the same path. The page and popout share this input
+handling, including the fallback stream. Wheel contacts lift after 150 ms of
+inactivity, on window blur, or before a real touch begins. Coordinates follow
+the displayed rotation. Android splits large scale changes into short steps and
+alternates which contact moves first, because scrcpy injects the two contacts as
+separate events and an unbounded intermediate midpoint makes map widgets pan.
+The app must support pinch zoom.
+
 ### Renderer
 
 `ScreenRenderer` is `stf-ios-provider/src/frontend/hevc-screen.js` ported and

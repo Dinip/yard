@@ -1,7 +1,8 @@
 import type { ClientMessage } from "@yard/protocol";
 import { Loader2, MonitorOff } from "lucide-react";
-import { type PointerEvent as ReactPointerEvent, useCallback, useRef } from "react";
+import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useRef } from "react";
 import type { DeviceSessionApi } from "@/hooks/use-device-session";
+import { attachPinch } from "@/lib/screen/pinch";
 import { toDevicePoint } from "@/lib/screen/rotation";
 import { cn } from "@/lib/utils";
 
@@ -16,11 +17,13 @@ import { cn } from "@/lib/utils";
 export function DeviceScreen({
   session,
   canvasRef,
+  platform,
   className,
   interactive = true,
 }: {
   session: DeviceSessionApi;
   canvasRef: React.RefObject<HTMLCanvasElement | null>;
+  platform?: string;
   className?: string;
   interactive?: boolean;
 }) {
@@ -30,6 +33,18 @@ export function DeviceScreen({
   // The canvas is in viewer space; the device's HID surface is in device
   // space, and on iOS the renderer has turned the picture between the two.
   const renderRotation = display?.renderRotation;
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !interactive || state !== "open") return;
+    return attachPinch(
+      canvas,
+      send,
+      renderRotation,
+      () => activePointers.current.size > 0,
+      platform === "android",
+    );
+  }, [canvasRef, interactive, state, send, renderRotation, platform]);
+
   const at = useCallback(
     (event: ReactPointerEvent<HTMLCanvasElement>) => {
       const rect = event.currentTarget.getBoundingClientRect();

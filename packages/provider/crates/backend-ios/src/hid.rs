@@ -14,12 +14,12 @@
 //! the ordering it needs for free. A reordered move-before-down turns a swipe
 //! into a tap; a reordered up-before-move pins a contact to the glass.
 
+pub use idevice::core_device::hid::TouchscreenContact;
 use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 use idevice::core_device::hid::{
     ButtonState, IndigoHidClient, KeyboardUsage, MainKeyboardService, UniversalHidServiceClient,
-    TOUCHSCREEN_STATE_CONTACT, TOUCHSCREEN_STATE_RELEASE,
 };
 use idevice::core_device::{Orientation, OrientationServiceClient, RotationDirection};
 use idevice::rsd::RsdHandshake;
@@ -172,10 +172,8 @@ pub fn orientation_degrees(orientation: &Orientation) -> Option<i64> {
 
 /// One HID action, applied in the order it was queued.
 pub enum Input {
-    /// An in-contact touchscreen sample.
-    Contact { x: u16, y: u16 },
-    /// Lift the contact at this point.
-    Release { x: u16, y: u16 },
+    /// All active contacts, including any lifted in this frame.
+    Touch(Vec<TouchscreenContact>),
     /// Type one character through the virtual keyboard.
     Character(char),
     /// Press and release a bare HID keyboard usage.
@@ -307,16 +305,11 @@ impl HidClients {
 
     async fn apply(&mut self, input: Input) -> Result<()> {
         match input {
-            Input::Contact { x, y } => self
+            Input::Touch(contacts) => self
                 .touch
-                .send_touchscreen(TOUCHSCREEN_STATE_CONTACT, x, y, None)
+                .send_multitouch(&contacts, None)
                 .await
-                .map_err(|err| anyhow!("touch contact: {err:?}"))?,
-            Input::Release { x, y } => self
-                .touch
-                .send_touchscreen(TOUCHSCREEN_STATE_RELEASE, x, y, None)
-                .await
-                .map_err(|err| anyhow!("touch release: {err:?}"))?,
+                .map_err(|err| anyhow!("touch report: {err:?}"))?,
             Input::Character(character) => {
                 let Some((usage, needs_shift)) = ascii_to_hid(character) else {
                     debug!(?character, "skipping untypeable character");
