@@ -1442,6 +1442,8 @@ mod tests {
             name: None,
             adb: Adb::new(adb::DEFAULT_ADB_SERVER),
             video: channel().0,
+            audio: audio_channel().0,
+            audio_state: Arc::new(Mutex::new(AudioState::default())),
             live: Arc::new(Mutex::new(Some(Arc::new(Live {
                 control: Mutex::new(client),
                 geometry,
