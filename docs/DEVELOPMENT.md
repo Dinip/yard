@@ -277,6 +277,12 @@ docker compose -f docker-compose.yml -f docker-compose.build.yml \
 
 ## CI and releases
 
+Dependabot combines version updates for Bun, Cargo, Flutter, GitHub Actions,
+Docker and Docker Compose into one weekly `dependencies` pull request. The
+schedule and commit-message convention live on the multi-ecosystem group in
+`.github/dependabot.yml`. Security updates are separate and cannot be grouped
+across ecosystems.
+
 | Workflow | Runs on | Does |
 |---|---|---|
 | `pr.yml` | pull requests | lint, typecheck, tests, drift guard, amd64 build of all three images |
