@@ -62,11 +62,11 @@ use crate::adb::{Adb, AdbStream};
 use crate::h264;
 
 /// The vendored server, embedded so a provider host needs nothing but adb.
-const SERVER_JAR: &[u8] = include_bytes!("../../../vendor/scrcpy-server-v4.1");
+const SERVER_JAR: &[u8] = include_bytes!("../../../vendor/scrcpy-server-v5.0.1");
 
 /// Must match the jar exactly: the server refuses a client that claims another
 /// version, which is the failure mode you want when the pin drifts.
-const SERVER_VERSION: &str = "4.1";
+const SERVER_VERSION: &str = "5.0.1";
 
 const REMOTE_PATH: &str = "/data/local/tmp/farm-scrcpy-server.jar";
 

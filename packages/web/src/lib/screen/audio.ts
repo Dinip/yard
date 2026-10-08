@@ -11,7 +11,7 @@ import { AUDIO_PACKET, type ServerMessage } from "@yard/protocol";
 export type AudioCodecInfo = Extract<ServerMessage, { type: "audio.codec" }>;
 
 const HEADER_BYTES = 9;
-const START_BUFFER_SECONDS = 0.04;
+const START_BUFFER_SECONDS = 0.08;
 const MAX_BUFFER_SECONDS = 0.25;
 const MAX_DECODE_QUEUE = 8;
 
@@ -37,7 +37,8 @@ export class BrowserAudio {
   private nextStart = 0;
 
   constructor(volume: number) {
-    this.context = new AudioContext({ latencyHint: "interactive" });
+    // Resampling each short Opus buffer independently creates boundary clicks.
+    this.context = new AudioContext({ latencyHint: "interactive", sampleRate: 48_000 });
     this.gain = this.context.createGain();
     this.gain.gain.value = volume;
     this.gain.connect(this.context.destination);
@@ -120,7 +121,7 @@ export class BrowserAudio {
       }
 
       const now = this.context.currentTime;
-      if (this.nextStart < now || this.nextStart > now + MAX_BUFFER_SECONDS) {
+      if (this.nextStart <= now || this.nextStart > now + MAX_BUFFER_SECONDS) {
         this.nextStart = now + START_BUFFER_SECONDS;
       }
 

@@ -507,7 +507,7 @@ crate, below, which answers the client itself instead of splicing it to the
 device. The device never listens on the network and `adbd` is never restarted,
 which removes the health-flap the restart used to cause.
 
-The scrcpy server is **embedded in the binary** and pushed to the phone at
+The scrcpy 5.0.1 server is **embedded in the binary** and pushed to the phone at
 session start, so nothing is installed on a provider host for it. It is started
 with `tunnel_forward=true`, which makes it listen on a device-side abstract
 socket that the adb transport can open directly — no `adb reverse`, no host port
@@ -534,6 +534,13 @@ capture path, so the existing admin-only device-volume controls remain the farm
 safety control for those sounds. The user-facing **Browser audio** slider only
 changes a browser `GainNode`; it never sends a volume key or changes device
 volume.
+
+The provider raises media volume automatically for every authorized reservation
+and sets it to zero on release, capture teardown and graceful shutdown. Idle
+Android devices also enter total-silence Do Not Disturb. Authorization exits
+DND before raising volume, then reads the volume back and retries briefly while
+Android applies the DND change. A command reply alone does not prove the volume
+changed: Android can silently reject it while DND is active.
 
 **Not everything on that socket is a packet.** A reset or a resize re-sends the
 session block bare — four bytes of flags, then width and height — and reading it

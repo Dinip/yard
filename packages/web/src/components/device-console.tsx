@@ -601,14 +601,6 @@ export function DeviceConsole({
                       ))}
                     </div>
                   ))}
-                  {browserAudio && (
-                    <BrowserVolume
-                      volume={browserVolume}
-                      available={active && session.audioAvailable}
-                      onChange={changeBrowserVolume}
-                      compact
-                    />
-                  )}
                 </div>
               )}
               <Button
@@ -767,12 +759,10 @@ function BrowserVolume({
   volume,
   available,
   onChange,
-  compact = false,
 }: {
   volume: number;
   available: boolean;
   onChange: (volume: number) => void;
-  compact?: boolean;
 }) {
   const Icon = volume === 0 ? VolumeX : volume < 50 ? Volume1 : Volume2;
   const control = (
@@ -787,39 +777,22 @@ function BrowserVolume({
         disabled={!available}
         aria-label="Browser audio volume. Does not change device volume."
         title="Browser audio only — does not change device volume"
-        className="h-1.5 min-w-16 flex-1 cursor-pointer accent-primary disabled:cursor-not-allowed"
+        className="h-1.5 min-w-0 flex-1 cursor-pointer accent-primary disabled:cursor-not-allowed"
         onChange={(event) => onChange(Number(event.currentTarget.value))}
         onKeyDown={() => {
           if (available) onChange(volume);
         }}
       />
-      <span className="w-8 shrink-0 text-right text-[10px] text-muted-foreground tabular-nums">
-        {volume}%
-      </span>
     </div>
   );
 
-  if (compact) {
-    return (
-      <div
-        className="min-w-32 rounded-lg border bg-background/70 px-2 py-1.5"
-        title="Browser audio only — device volume is unchanged"
-      >
-        <span className="mb-1 block font-medium text-[9px] text-muted-foreground uppercase tracking-wide">
-          Browser audio
-        </span>
-        {control}
-      </div>
-    );
-  }
-
   return (
-    <div className="flex flex-col gap-1 px-2">
+    <div className="flex flex-col gap-2 px-2">
       <div className="flex items-baseline justify-between gap-2">
         <span className="font-medium text-[10px] text-muted-foreground uppercase tracking-wide">
           Browser audio
         </span>
-        <span className="text-[10px] text-muted-foreground">This browser only</span>
+        <span className="text-[10px] text-muted-foreground tabular-nums">{volume}%</span>
       </div>
       {control}
       {!available && (

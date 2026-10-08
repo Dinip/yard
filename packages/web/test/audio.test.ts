@@ -14,7 +14,7 @@ class StubAudioDecoder {
   config: AudioDecoderConfig | null = null;
   chunks: EncodedAudioChunk[] = [];
 
-  constructor(_init: AudioDecoderInit) {
+  constructor(readonly init: AudioDecoderInit) {
     decoders.push(this);
   }
 
@@ -42,12 +42,26 @@ class StubAudioContext {
     disconnect() {},
   } as unknown as GainNode;
 
-  constructor() {
+  starts: number[] = [];
+
+  constructor(readonly options: AudioContextOptions) {
     contexts.push(this);
   }
 
   createGain() {
     return this.gain;
+  }
+
+  createBuffer(channels: number, frames: number, sampleRate: number) {
+    return {
+      duration: frames / sampleRate,
+      getChannelData: () => new Float32Array(frames),
+      numberOfChannels: channels,
+    };
+  }
+
+  createBufferSource() {
+    return { buffer: null, connect() {}, start: (at: number) => this.starts.push(at) };
   }
 
   resume() {
@@ -99,6 +113,34 @@ afterEach(() => {
 });
 
 describe("BrowserAudio", () => {
+  test("uses the source sample rate and keeps playback contiguous across packet jitter", async () => {
+    const audio = new BrowserAudio(1);
+    await audio.configure({ type: "audio.codec", codec: "opus", sampleRate: 48_000, channels: 2 });
+    const context = contexts[0]!;
+    expect(context.options.sampleRate).toBe(48_000);
+    let closed = 0;
+    const output = () =>
+      decoders[0]!.init.output({
+        numberOfChannels: 2,
+        numberOfFrames: 960,
+        sampleRate: 48_000,
+        copyTo() {},
+        close() {
+          closed++;
+        },
+      } as unknown as AudioData);
+    output();
+    context.currentTime = 0.03;
+    output();
+    context.currentTime = 0.075;
+    output();
+    expect(context.starts[0]).toBeCloseTo(0.08);
+    expect(context.starts[1]).toBeCloseTo(0.1);
+    expect(context.starts[2]).toBeCloseTo(0.12);
+    expect(closed).toBe(3);
+    audio.destroy();
+  });
+
   test("decodes raw Opus with source-relative timestamps and browser-only gain", async () => {
     const audio = new BrowserAudio(0.75);
     expect(contexts[0]?.gain.gain.value).toBe(0.75);

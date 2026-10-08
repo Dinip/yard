@@ -134,6 +134,7 @@ pub struct MockState {
     /// rather than the final state: blanking a device twice is a bug even
     /// though it leaves the screen in the right place.
     pub screen_power: Mutex<Vec<bool>>,
+    pub audio_active: Mutex<Vec<bool>>,
     /// Answer `set_screen_awake` with `Unsupported`, the way a backend that
     /// cannot reach the display does.
     pub no_screen_power: AtomicBool,
@@ -550,6 +551,11 @@ impl DeviceBackend for MockBackend {
         }
         drop(installed);
         self.state.cleared.lock().await.push(app_id.to_owned());
+        Ok(())
+    }
+
+    async fn set_audio_active(&self, active: bool) -> Result<()> {
+        self.state.audio_active.lock().await.push(active);
         Ok(())
     }
 

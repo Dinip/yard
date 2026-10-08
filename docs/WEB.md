@@ -201,9 +201,7 @@ one control surface, not two that drift.
 The actions are built once as three sections — **Device** (Back, Home, Recents,
 and for an admin Volume up, Volume down, Lock and Reboot),
 **Screen** (Rotate, Screenshot, Record) and **Files** (Install, Files, Receive
-shared files on Android, Copy from device, Paste to device) — and the `controls` prop chooses how they are drawn. A
-control that exists in one rendering and not the other is how the popout ends up
-a lesser window than the page.
+shared files on Android, Copy from device, Paste to device) — and the `controls` prop chooses how they are drawn.
 
 - `"rail"` — a bordered strip left of the screen: one **labelled** button per
   row, a heading per section. It sits beside the screen rather than under it
@@ -331,12 +329,14 @@ this is the only hardware-free check on the recovery paths.
 
 Android sessions announce Opus with `audio.codec`, then carry timestamped
 packets beside video on the same direct provider WebSocket. `BrowserAudio`
-decodes them with `AudioDecoder` and schedules them through Web Audio. It sheds
-late packets instead of letting a slow tab play an ever-growing backlog.
+decodes them with `AudioDecoder` and schedules them through a 48 kHz Web Audio
+context with an 80 ms starting buffer. Matching the source rate avoids
+resampling discontinuities between short Opus buffers. It sheds late packets instead of letting a slow tab play an ever-growing backlog.
 
-The **Browser audio** slider controls only that tab's `GainNode` and persists
-locally. It never sends `VolumeUp` or `VolumeDown`; those remain admin-only
-hardware controls because they affect the physical device. Playback begins
+The **Browser audio** slider appears only in the main console rail, controls
+that tab's `GainNode`, and persists locally. The popout uses the saved volume
+without displaying a slider. It never sends `VolumeUp` or `VolumeDown`; those
+remain admin-only hardware controls because they affect the physical device. Playback begins
 after the user interacts with the console so browser autoplay policy is
 satisfied. Canvas recordings remain video-only.
 

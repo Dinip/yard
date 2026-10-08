@@ -348,6 +348,11 @@ pub trait DeviceBackend: Send + Sync + 'static {
     /// Tears the device session down and brings it back up.
     async fn restart(&self) -> Result<()>;
 
+    /// Enables captured media for a reservation, or silences an idle device.
+    async fn set_audio_active(&self, _active: bool) -> Result<()> {
+        Ok(())
+    }
+
     /// Turns the display off or on without disturbing the session.
     ///
     /// Absolute, not a toggle: callers ask for the state they want and a

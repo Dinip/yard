@@ -413,6 +413,8 @@ impl Supervisor {
         let Some(device) = self.devices.get(device_id) else {
             return;
         };
+        let _operation = device.operation.lock().await;
+        self.reconcile_audio(device).await;
         match device.backend.remote_debug_stop().await {
             Ok(()) | Err(BackendError::Unsupported(_)) => {}
             Err(err) => warn!(device = %device_id, %err, "could not withdraw the adb bridge"),
@@ -470,7 +472,18 @@ impl Supervisor {
             .await;
         }
 
+        {
+            let _operation = device.operation.lock().await;
+            self.reconcile_audio(device).await;
+        }
         self.reconcile_screen(device, next_status).await;
+    }
+
+    async fn reconcile_audio(&self, device: &Arc<Device>) {
+        let active = self.sessions.current(&device.id).await.is_some();
+        if let Err(err) = device.backend.set_audio_active(active).await {
+            warn!(device = %device.id, %err, "could not reconcile device audio");
+        }
     }
 
     /// Parks the screen of a device nobody is using, and only that device.
@@ -761,6 +774,17 @@ impl CommandHandler for Supervisor {
                 let _operation = device.operation.lock().await;
                 self.snapshot_baseline(&device, &reservation_id).await;
                 self.wake_screen(&device).await;
+                if self
+                    .sessions
+                    .current(&device_id)
+                    .await
+                    .as_ref()
+                    .map(|auth| &auth.reservation_id)
+                    != Some(&reservation_id)
+                {
+                    device.backend.set_audio_active(false).await?;
+                }
+                device.backend.set_audio_active(true).await?;
                 self.sessions
                     .authorize(
                         &device_id,

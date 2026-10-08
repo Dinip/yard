@@ -12,8 +12,8 @@ use anyhow::{Context as _, Result};
 use backend_android::adb::{Adb, AdbStream, DEFAULT_ADB_SERVER};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
-const SERVER_JAR: &[u8] = include_bytes!("../../../vendor/scrcpy-server-v4.1");
-const SERVER_VERSION: &str = "4.1";
+const SERVER_JAR: &[u8] = include_bytes!("../../../vendor/scrcpy-server-v5.0.1");
+const SERVER_VERSION: &str = "5.0.1";
 const REMOTE_PATH: &str = "/data/local/tmp/farm-scrcpy-server.jar";
 
 #[tokio::main]
@@ -88,6 +88,25 @@ async fn main() -> Result<()> {
         u32::from_be_bytes(audio_codec),
         String::from_utf8_lossy(&audio_codec)
     );
+    anyhow::ensure!(
+        &audio_codec == b"opus",
+        "audio capture did not negotiate Opus"
+    );
+    for packet in 1..=3 {
+        let mut header = [0u8; 12];
+        audio.read_exact(&mut header).await?;
+        let pts_flags = u64::from_be_bytes(header[..8].try_into().unwrap());
+        let size = u32::from_be_bytes(header[8..].try_into().unwrap()) as usize;
+        anyhow::ensure!(size <= 1024 * 1024, "oversized audio packet");
+        let mut payload = vec![0u8; size];
+        audio.read_exact(&mut payload).await?;
+        println!(
+            "audio packet {packet}: flags={:03b} pts={} size={size} head={:02x?}",
+            pts_flags >> 61,
+            pts_flags & ((1 << 61) - 1),
+            &payload[..size.min(24)]
+        );
+    }
     println!("session meta    :");
     hexdump(&meta);
     println!(
@@ -138,11 +157,24 @@ async fn main() -> Result<()> {
     control.write_all(&[17]).await?;
     control.flush().await?;
 
-    for packet in 1..=4 {
+    let mut reset_seen = false;
+    let mut resumed = false;
+    for packet in 1..=60 {
         let mut header = [0u8; 12];
         video.read_exact(&mut header).await?;
+        // RESET_VIDEO sends bare session metadata before the next frame.
+        if u32::from_be_bytes(header[..4].try_into().unwrap()) & (1 << 31) != 0 {
+            reset_seen = true;
+            println!(
+                "  after-reset session: width={} height={}",
+                u32::from_be_bytes(header[4..8].try_into().unwrap()),
+                u32::from_be_bytes(header[8..].try_into().unwrap())
+            );
+            continue;
+        }
         let pts_flags = u64::from_be_bytes(header[..8].try_into().unwrap());
         let size = u32::from_be_bytes(header[8..].try_into().unwrap());
+        anyhow::ensure!(size <= 16 * 1024 * 1024, "oversized video packet");
         println!(
             "  after-reset packet {packet}: flags={:03b} pts={} size={size}",
             pts_flags >> 61,
@@ -151,7 +183,12 @@ async fn main() -> Result<()> {
         let mut payload = vec![0u8; size as usize];
         video.read_exact(&mut payload).await?;
         println!("    payload: {:02x?}", &payload[..payload.len().min(24)]);
+        if reset_seen && pts_flags & (1 << 61) != 0 {
+            resumed = true;
+            break;
+        }
     }
+    anyhow::ensure!(resumed, "video did not resume with a keyframe after reset");
 
     println!("\nsending a no-op control message (get clipboard)");
     control.write_all(&[8, 0]).await?;
