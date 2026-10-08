@@ -320,7 +320,10 @@ scroll up spreads them to zoom in, and scroll down brings them together.
 Safari gesture events use the same path. The page and popout share this input
 handling, including the fallback stream. Wheel contacts lift after 150 ms of
 inactivity, on window blur, or before a real touch begins. Coordinates follow
-the displayed rotation. The app must support pinch zoom.
+the displayed rotation. Android splits large scale changes into short steps and
+alternates which contact moves first, because scrcpy injects the two contacts as
+separate events and an unbounded intermediate midpoint makes map widgets pan.
+The app must support pinch zoom.
 
 ### Renderer
 

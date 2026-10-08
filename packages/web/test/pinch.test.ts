@@ -72,3 +72,52 @@ test("wheel and Safari pinch send two rotated fingers and release on interruptio
     globalThis.window = previousWindow;
   }
 });
+
+test("Android wheel zoom bounds and alternates sequential contact movement", () => {
+  const previousWindow = globalThis.window;
+  globalThis.window = new EventTarget() as unknown as Window & typeof globalThis;
+  const canvas = Object.assign(new EventTarget(), {
+    clientHeight: 600,
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: 300, height: 600 }),
+  }) as unknown as HTMLCanvasElement;
+  const messages: ClientMessage[] = [];
+  const cleanup = attachPinch(
+    canvas,
+    (message) => messages.push(message),
+    0,
+    () => false,
+    true,
+  );
+  const event = Object.assign(new Event("wheel", { cancelable: true }), {
+    clientX: 150,
+    clientY: 300,
+    deltaY: -100,
+    deltaMode: 0,
+  });
+
+  try {
+    canvas.dispatchEvent(event);
+    const downs = messages.filter((message) => message.type === "pointer.down");
+    const moves = messages.filter((message) => message.type === "pointer.move");
+    expect(moves.length).toBeGreaterThan(2);
+    let previousRadius = Math.abs(downs[0]!.at.x - 0.5);
+    for (let index = 0; index < moves.length; index += 2) {
+      const pair = moves.slice(index, index + 2);
+      expect(pair.map((message) => message.pointerId)).toEqual(
+        index % 4 === 0
+          ? [downs[0]?.pointerId, downs[1]?.pointerId]
+          : [downs[1]?.pointerId, downs[0]?.pointerId],
+      );
+      const points = pair
+        .filter((message) => message.type === "pointer.move")
+        .map((message) => message.at.x);
+      expect((points[0]! + points[1]!) / 2).toBeCloseTo(0.5);
+      const radius = Math.abs(points[0]! - 0.5);
+      expect(Math.abs(radius - previousRadius)).toBeLessThanOrEqual(0.01);
+      previousRadius = radius;
+    }
+  } finally {
+    cleanup();
+    globalThis.window = previousWindow;
+  }
+});

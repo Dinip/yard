@@ -2,28 +2,36 @@ import type { ClientMessage } from "@yard/protocol";
 import { toDevicePoint } from "./rotation";
 
 // Keep synthetic fingers separate from browser pointer IDs and scrcpy's mouse IDs.
-const FINGERS = [2147483646, 2147483647];
+const FINGERS = [2147483646, 2147483647] as const;
+const REVERSED_FINGERS = [FINGERS[1], FINGERS[0]] as const;
+// scrcpy applies contacts one at a time, so bound its temporary midpoint shift.
+const ANDROID_RADIUS_STEP = 0.01;
 
 export function attachPinch(
   canvas: HTMLCanvasElement,
   send: (message: ClientMessage) => void,
   rotation: number | null | undefined,
   hasPointers: () => boolean,
+  stabilizeSequentialTouches = false,
 ) {
   let pinch: { x: number; y: number; radius: number; max: number } | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let gestureScale = 1;
   let gesturing = false;
+  let reverseMoves = false;
 
   const emit = (type: "pointer.down" | "pointer.move" | "pointer.up") => {
     if (!pinch) return;
-    for (const [index, pointerId] of FINGERS.entries()) {
+    const fingers = type === "pointer.move" && reverseMoves ? REVERSED_FINGERS : FINGERS;
+    for (const pointerId of fingers) {
+      const index = pointerId === FINGERS[0] ? 0 : 1;
       send({
         type,
         pointerId,
         at: toDevicePoint(pinch.x + (index === 0 ? -1 : 1) * pinch.radius, pinch.y, rotation),
       });
     }
+    if (type === "pointer.move" && stabilizeSequentialTouches) reverseMoves = !reverseMoves;
   };
   const finish = () => {
     clearTimeout(timer);
@@ -37,13 +45,21 @@ export function attachPinch(
     const y = Math.max(0.05, Math.min(0.95, (clientY - rect.top) / rect.height));
     const max = Math.min(x, 1 - x) * 0.95;
     pinch = { x, y, radius: max / 3, max };
+    reverseMoves = false;
     emit("pointer.down");
     return true;
   };
   const scale = (factor: number) => {
     if (!pinch || !Number.isFinite(factor) || factor <= 0) return;
-    pinch.radius = Math.max(0.01, Math.min(pinch.max, pinch.radius * factor));
-    emit("pointer.move");
+    const from = pinch.radius;
+    const target = Math.max(0.01, Math.min(pinch.max, from * factor));
+    const steps = stabilizeSequentialTouches
+      ? Math.max(1, Math.ceil(Math.abs(target - from) / ANDROID_RADIUS_STEP))
+      : 1;
+    for (let step = 1; step <= steps; step++) {
+      pinch.radius = from + ((target - from) * step) / steps;
+      emit("pointer.move");
+    }
   };
   const wheel = (event: WheelEvent) => {
     event.preventDefault();

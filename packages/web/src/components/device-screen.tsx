@@ -17,11 +17,13 @@ import { cn } from "@/lib/utils";
 export function DeviceScreen({
   session,
   canvasRef,
+  platform,
   className,
   interactive = true,
 }: {
   session: DeviceSessionApi;
   canvasRef: React.RefObject<HTMLCanvasElement | null>;
+  platform?: string;
   className?: string;
   interactive?: boolean;
 }) {
@@ -34,8 +36,14 @@ export function DeviceScreen({
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !interactive || state !== "open") return;
-    return attachPinch(canvas, send, renderRotation, () => activePointers.current.size > 0);
-  }, [canvasRef, interactive, state, send, renderRotation]);
+    return attachPinch(
+      canvas,
+      send,
+      renderRotation,
+      () => activePointers.current.size > 0,
+      platform === "android",
+    );
+  }, [canvasRef, interactive, state, send, renderRotation, platform]);
 
   const at = useCallback(
     (event: ReactPointerEvent<HTMLCanvasElement>) => {

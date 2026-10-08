@@ -531,7 +531,12 @@ export function DeviceConsole({
 
       <div className="flex min-h-0 flex-1 flex-col gap-2">
         <div ref={screenRef} className="relative flex min-h-0 flex-1">
-          <DeviceScreen session={session} canvasRef={canvasRef} className="flex-1" />
+          <DeviceScreen
+            session={session}
+            canvasRef={canvasRef}
+            platform={platform}
+            className="flex-1"
+          />
 
           {controls === "overlay" && (
             // Every corner is in something's way — the bottom edge is the home
