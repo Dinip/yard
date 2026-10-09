@@ -51,6 +51,30 @@ impl Authorizer for Fake {
 
 const BANNER: &str = "device::ro.product.name=farm;features=shell_v2,cmd";
 
+#[test]
+fn signature_verification_requires_sha1_digest_info_and_a_20_byte_challenge() {
+    let key = test_key();
+    let private = test_private_key();
+    let token = [0x42; 20];
+    let signature = sign(&private, &token);
+    assert!(key.verify(&token, &signature));
+    assert!(!key.verify(&[0x43; 20], &signature));
+    assert!(!key.verify(&token, &signature[..signature.len() - 1]));
+
+    let unprefixed = rsa::Pkcs1v15Sign::new_unprefixed();
+    assert!(!key.verify(&token, &private.sign(unprefixed.clone(), &token).unwrap()));
+    for length in [19, 21] {
+        let token = vec![0x42; length];
+        let digest_info = [
+            &b"\x30\x21\x30\x09\x06\x05\x2b\x0e\x03\x02\x1a\x05\x00\x04\x14"[..],
+            &token,
+        ]
+        .concat();
+        let signature = private.sign(unprefixed.clone(), &digest_info).unwrap();
+        assert!(!key.verify(&token, &signature));
+    }
+}
+
 #[tokio::test]
 async fn a_known_key_is_admitted_without_asking_anyone() {
     let authorizer = Fake::entitled(vec![test_key().with_owner("user-1")]);

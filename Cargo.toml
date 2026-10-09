@@ -31,9 +31,9 @@ futures = "0.3"
 # Streaming HTTP bodies for the fallback video path.
 async-stream = "0.3"
 async-trait = "0.1"
-async_zip = { version = "0.0.18", features = ["tokio", "deflate"] }
+async_zip = { version = "0.0.19", features = ["tokio", "deflate"] }
 apk-info-axml = "1.0.12"
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "8", default-features = false, features = ["deflate"] }
 
 # iOS device services: lockdown, CoreDevice, RSD. Pinned exactly — upstream
 # warns of breaking changes at every point release until 0.2.0
@@ -46,7 +46,7 @@ plist = "1"
 # Session + artifact planes. `ws` for video/input, `multipart` for APK/IPA
 # uploads that must stream to disk rather than buffer in memory.
 axum = { version = "0.8", features = ["ws", "multipart", "macros"] }
-tower-http = { version = "0.6", features = ["cors", "trace", "limit"] }
+tower-http = { version = "0.7", features = ["cors", "trace", "limit"] }
 
 # Control plane: one outbound WSS to the coordinator.
 tokio-tungstenite = { version = "0.30", features = ["rustls-tls-native-roots"] }
@@ -71,7 +71,7 @@ jsonwebtoken = { version = "11", default-features = false, features = ["rust_cry
 rsa = "0.9"
 # Only for the SHA-1 DigestInfo prefix ADB's signatures carry. Not a hash we
 # choose; it is the one `adb` has always signed with.
-sha1 = { version = "0.10", features = ["oid"] }
+sha1 = { version = "0.11", features = ["oid"] }
 base64 = "0.23"
 sha2 = "0.11"
 uuid = { version = "1", features = ["v4"] }
