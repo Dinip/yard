@@ -152,6 +152,14 @@ is the question the mechanism exists to answer.
 fingerprint, because ADB authentication is challenge-response — the provider
 issues a token and verifies a signature over it.
 
+### `changelogView`
+
+One row per `user_id` and release `version`, with a composite primary key and a
+cascading user foreign key. Viewing a release in the app inserts the row
+idempotently. The update notice checks the installed version's row, so viewing
+an older release cannot dismiss a new one. Read status follows the account
+across browsers and survives coordinator restarts.
+
 ### `auditLog`
 
 `actorUserId`, `action`, `targetType`/`targetId`, `metadata` (jsonb), `at`.

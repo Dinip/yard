@@ -1,5 +1,5 @@
 import { TRPCError } from "@trpc/server";
-import { userAdbKey } from "@yard/db";
+import { changelogView, userAdbKey } from "@yard/db";
 import { AdbKeyParseError, parseAdbPublicKey } from "@yard/protocol/adbkey";
 import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
@@ -116,6 +116,29 @@ export const userRouter = router({
 
   /** Lets the sign-in page render only the methods that are actually configured. */
   capabilities: publicProcedure.query(() => authCapabilities),
+
+  changelog: router({
+    viewed: protectedProcedure
+      .input(z.object({ version: z.string().min(1).max(100) }))
+      .query(async ({ ctx, input }) => {
+        const [view] = await ctx.db
+          .select({ version: changelogView.version })
+          .from(changelogView)
+          .where(
+            and(eq(changelogView.userId, ctx.user.id), eq(changelogView.version, input.version)),
+          );
+        return { viewed: !!view };
+      }),
+    markViewed: protectedProcedure
+      .input(z.object({ version: z.string().min(1).max(100) }))
+      .mutation(async ({ ctx, input }) => {
+        await ctx.db
+          .insert(changelogView)
+          .values({ userId: ctx.user.id, version: input.version })
+          .onConflictDoNothing();
+        return { viewed: true };
+      }),
+  }),
 
   adbKeys: adbKeysRouter,
 });

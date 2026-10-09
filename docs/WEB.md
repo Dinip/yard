@@ -308,6 +308,24 @@ stamp drops the sha, not the version.
 Unlike the product name, the repo URL is not configuration: where a
 deployment's source lives is a property of the build, not of the operator.
 
+### Changelog and update notices
+
+`/changelog` is available to every signed-in user from the bottom of the rail.
+It defaults to the installed version, and its version selector opens older
+releases through `?version=`. `CHANGELOG.md`, maintained by release-please, is
+bundled with the SPA, including in Docker builds. The renderer supports the
+generated version headings, section headings, bullets, bold text, inline code
+and HTTP links. It renders raw HTML and other link schemes as text.
+
+The shell shows a persistent update banner when the installed release has notes
+and the account has not viewed them. Rendering that release's notes calls
+`user.changelog.markViewed`; the banner clears after the write succeeds.
+Opening an older version records only that version. There is no separate
+dismiss button. Status is stored in `changelogView`, keyed by account and
+version, and cached separately per account in the browser. Tabs refetch it
+every minute and on focus. A new deployed version prompts again when the
+browser loads that build; there is no check for upstream releases.
+
 **Everything on this path goes to the provider's origin.** The coordinator is
 asked for one thing — a session token, from `device.sessionToken` — and is then
 out of the way. Video, audio, input, screenshots and uploads never touch it.

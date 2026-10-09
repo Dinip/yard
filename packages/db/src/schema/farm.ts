@@ -5,6 +5,7 @@ import {
   jsonb,
   pgEnum,
   pgTable,
+  primaryKey,
   real,
   text,
   timestamp,
@@ -274,6 +275,17 @@ export const setting = pgTable("setting", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
   updatedBy: text("updated_by").references(() => user.id, { onDelete: "set null" }),
 });
+
+export const changelogView = pgTable(
+  "changelog_view",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    version: text("version").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.version] })],
+);
 
 /**
  * A developer's ADB public key.

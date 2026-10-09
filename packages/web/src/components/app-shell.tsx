@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useRouter } from "@tanstack/react-router";
 import {
   Boxes,
+  History,
   LogOut,
   type LucideIcon,
   PackageOpen,
@@ -26,6 +27,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { UpdateNotice } from "@/components/update-notice";
 import { authClient } from "@/lib/auth-client";
 import { REPO_URL } from "@/lib/build-info";
 import { trpc } from "@/lib/trpc";
@@ -74,6 +76,8 @@ export function AppShell({ children }: { children: ReactNode }) {
           )}
 
           <div className="flex-1" />
+
+          <NavLink to="/changelog" icon={History} label="Changelog" />
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -143,9 +147,12 @@ export function AppShell({ children }: { children: ReactNode }) {
             because nothing inside claims a large intrinsic height — see the
             note in `DeviceScreen`, which lays the picture out of flow for
             exactly this reason. */}
-        <main className="min-h-0 min-w-0 flex-1 overflow-y-auto px-6 py-4">
-          <div className="mx-auto flex min-h-full w-full max-w-[1600px] flex-col">{children}</div>
-        </main>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <UpdateNotice />
+          <main className="min-h-0 min-w-0 flex-1 overflow-y-auto px-6 py-4">
+            <div className="mx-auto flex min-h-full w-full max-w-[1600px] flex-col">{children}</div>
+          </main>
+        </div>
       </div>
     </TooltipProvider>
   );

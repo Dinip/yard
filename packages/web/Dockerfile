@@ -10,6 +10,7 @@ COPY packages/web/package.json ./packages/web/
 RUN bun install --frozen-lockfile
 
 COPY tsconfig.base.json ./
+COPY CHANGELOG.md ./
 # The SPA imports the coordinator's router *type* only; the source must be
 # present for tsc/vite to resolve it, but none of it reaches the bundle.
 COPY packages/protocol ./packages/protocol
