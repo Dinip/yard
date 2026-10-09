@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/Dinip/yard/compare/v0.5.0...v0.6.0) (2026-10-09)
+
+
+### Features
+
+* **web:** add in-app changelog and update notices ([#82](https://github.com/Dinip/yard/issues/82)) ([4224671](https://github.com/Dinip/yard/commit/4224671da29672b1f1be1c129c41eba2a4c8da85))
+
 ## [0.5.0](https://github.com/Dinip/yard/compare/v0.4.2...v0.5.0) (2026-10-08)
 
 
