@@ -72,6 +72,7 @@ v11, fetch adapter, mounted at `/api/trpc`. Three procedure levels in
 |---|---|---|
 | `user` | `me`, `capabilities` | ✅ |
 | `user` | `adbKeys.list`/`add`/`remove` | ✅ |
+| `user` | `changelog.viewed`/`markViewed` | ✅ |
 | `device` | `list`, `get`, `reserve`, `renew`, `release`, `myReservations` | ✅ |
 | `device` | `sessionToken`, `apps`, `launch`, `uninstall`, `reboot`, `rotate`, `adbExpose`, `adbUnexpose` | ✅ |
 | `device` | `requestJoin`, `cancelJoinRequest`, `answerJoinRequest`, `myJoinRequest`, `leaveSession` | ✅ |
