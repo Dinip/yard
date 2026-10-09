@@ -21,9 +21,11 @@ export const Route = createFileRoute("/_app/changelog")({
 });
 
 function ChangelogPage() {
-  const { version = VERSION } = Route.useSearch();
+  const { version } = Route.useSearch();
   const navigate = Route.useNavigate();
-  const release = releases.find((entry) => entry.version === version);
+  const visibleReleases = version
+    ? releases.filter((entry) => entry.version === version)
+    : releases;
 
   return (
     <div className="mx-auto grid w-full max-w-3xl gap-6">
@@ -32,11 +34,17 @@ function ChangelogPage() {
           <h1 className="font-semibold text-2xl">Changelog</h1>
           <p className="text-muted-foreground text-sm">What's changed in YARD - Device Farm.</p>
         </div>
-        <Select value={version} onValueChange={(version) => navigate({ search: { version } })}>
+        <Select
+          value={version ?? "all"}
+          onValueChange={(selected) =>
+            navigate({ search: { version: selected === "all" ? undefined : selected } })
+          }
+        >
           <SelectTrigger aria-label="Release version" className="w-44">
-            <SelectValue placeholder={`v${version}`} />
+            <SelectValue placeholder="All versions" />
           </SelectTrigger>
           <SelectContent>
+            <SelectItem value="all">All versions</SelectItem>
             {releases.map((entry) => (
               <SelectItem key={entry.version} value={entry.version}>
                 v{entry.version}
@@ -47,11 +55,11 @@ function ChangelogPage() {
         </Select>
       </div>
 
-      {release ? (
-        <article className="grid gap-6 rounded-lg border bg-card p-6">
+      {visibleReleases.map((release) => (
+        <article key={release.version} className="grid gap-6 rounded-lg border bg-card p-6">
           <header className="flex flex-wrap items-center gap-3">
             <h2 className="font-semibold text-xl">v{release.version}</h2>
-            {version === VERSION && <Badge variant="secondary">Installed version</Badge>}
+            {release.version === VERSION && <Badge variant="secondary">Installed version</Badge>}
             <time dateTime={release.date} className="text-muted-foreground text-sm">
               {release.date}
             </time>
@@ -68,9 +76,12 @@ function ChangelogPage() {
               </ul>
             </section>
           ))}
-          <ViewedRelease key={version} version={version} />
+          {release.version === (version ?? VERSION) && (
+            <ViewedRelease key={release.version} version={release.version} />
+          )}
         </article>
-      ) : (
+      ))}
+      {visibleReleases.length === 0 && (
         <p className="rounded-lg border p-6 text-muted-foreground text-sm">
           Release notes for v{version} aren't available in this build. Choose another version above.
         </p>

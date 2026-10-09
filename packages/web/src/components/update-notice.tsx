@@ -21,7 +21,7 @@ export function UpdateNotice() {
         <span className="text-muted-foreground">See the latest changes.</span>
       </p>
       <Button asChild variant="outline" size="sm">
-        <Link to="/changelog" search={{ version: VERSION }}>
+        <Link to="/changelog" search={{}}>
           View changelog
         </Link>
       </Button>
