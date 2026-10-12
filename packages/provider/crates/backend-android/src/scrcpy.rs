@@ -98,7 +98,6 @@ pub struct ScrcpySession {
     _server: AdbStream,
     pub video: TcpStream,
     pub audio: Option<TcpStream>,
-    pub audio_error: Option<String>,
     pub control: TcpStream,
     pub device_name: String,
     pub width: i64,
@@ -175,16 +174,12 @@ impl ScrcpySession {
             _server: server,
             video,
             audio,
-            audio_error: None,
             control,
             device_name: String::new(),
             width: 0,
             height: 0,
         };
         session.read_handshake().await?;
-        if session.audio_error.is_some() {
-            return Ok(session);
-        }
 
         info!(
             serial,
@@ -197,14 +192,6 @@ impl ScrcpySession {
     }
 
     async fn read_handshake(&mut self) -> Result<()> {
-        // Audio encoder failures can kill scrcpy before video sends its first frame.
-        if let Some(audio) = self.audio.as_mut() {
-            if let Err(err) = read_audio_codec(audio).await {
-                self.audio_error = Some(format!("{err:#}"));
-                self.audio = None;
-                return Ok(());
-            }
-        }
         let mut dummy = [0u8; 1];
         self.video
             .read_exact(&mut dummy)
@@ -245,7 +232,7 @@ impl ScrcpySession {
     }
 }
 
-async fn read_audio_codec(audio: &mut TcpStream) -> Result<()> {
+pub async fn read_audio_codec(audio: &mut TcpStream) -> Result<()> {
     let mut codec = [0u8; 4];
     tokio::time::timeout(Duration::from_secs(3), audio.read_exact(&mut codec))
         .await
@@ -646,9 +633,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn failed_audio_can_fall_back_before_video_starts() {
-        use tokio::io::AsyncWriteExt as _;
-
+    async fn video_handshake_does_not_wait_for_audio() {
         for codec in [Some(0u32), Some(1), Some(CODEC_OPUS), Some(0x1234), None] {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let addr = listener.local_addr().unwrap().to_string();
@@ -663,8 +648,7 @@ mod tests {
             let mut session = ScrcpySession {
                 _server: server,
                 video,
-                audio: codec.map(|_| audio),
-                audio_error: None,
+                audio: Some(audio),
                 control,
                 device_name: String::new(),
                 width: 0,
@@ -673,27 +657,24 @@ mod tests {
             if let Some(codec) = codec {
                 audio_peer.write_all(&codec.to_be_bytes()).await.unwrap();
             }
-            let video_only = codec.is_none();
-            if codec == Some(CODEC_OPUS) || video_only {
-                let mut metadata = vec![0u8; 65];
-                metadata.extend_from_slice(&CODEC_H264.to_be_bytes());
-                metadata.extend_from_slice(&SESSION_MARKER.to_be_bytes());
-                metadata.extend_from_slice(&1080u32.to_be_bytes());
-                metadata.extend_from_slice(&1920u32.to_be_bytes());
-                video_peer.write_all(&metadata).await.unwrap();
-            }
-            drop(video_peer);
-            tokio::time::timeout(Duration::from_secs(1), session.read_handshake())
+            let mut metadata = vec![0u8; 65];
+            metadata.extend_from_slice(&CODEC_H264.to_be_bytes());
+            metadata.extend_from_slice(&SESSION_MARKER.to_be_bytes());
+            metadata.extend_from_slice(&1080u32.to_be_bytes());
+            metadata.extend_from_slice(&1920u32.to_be_bytes());
+            video_peer.write_all(&metadata).await.unwrap();
+            tokio::time::timeout(Duration::from_millis(100), session.read_handshake())
                 .await
                 .unwrap()
                 .unwrap();
-            if codec == Some(CODEC_OPUS) || video_only {
-                assert!(session.audio_error.is_none());
-                assert_eq!((session.width, session.height), (1080, 1920));
-                assert_eq!(session.audio.is_none(), video_only);
-            } else {
-                assert!(session.audio_error.is_some());
-                assert!(session.audio.is_none());
+            assert_eq!((session.width, session.height), (1080, 1920));
+            if let Some(codec) = codec {
+                assert_eq!(
+                    read_audio_codec(session.audio.as_mut().unwrap())
+                        .await
+                        .is_ok(),
+                    codec == CODEC_OPUS
+                );
             }
         }
     }

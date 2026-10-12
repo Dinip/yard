@@ -547,12 +547,20 @@ DND change, then restores total silence for an idle device even if muting fails.
 A command reply alone does not prove the volume changed: Android can silently
 reject it while DND is active, even when setting it to zero.
 
+Audio activation and its codec handshake run alongside video and input, so
+reservation authorization and the first video frame do not wait for audio.
+Volume/DND operations remain serialized. A transition from an active reservation
+to idle waits for muting; repeated idle requests retry in the background.
 Audio configuration has bounded waits and cannot mark a device unhealthy. If
-capture cannot start, scrcpy reconnects with audio disabled. If audio stops during
+scrcpy cannot complete startup with audio, it retries without audio. If it ends
+before audio is ready, the next connection disables audio. If audio stops during
 a session, the provider keeps video running and stops forwarding audio packets.
 Volume/DND failures retry on the regular poll and clear the browser warning when
 they recover. Capture failures stay disabled until an explicit device restart or
 provider restart retries capture, so a broken encoder cannot cause a restart loop.
+Unrecognized volume replies include Android's command output in the warning,
+so unsupported commands and permission errors can be distinguished from a
+volume readback that stayed at the wrong level.
 
 **Not everything on that socket is a packet.** A reset or a resize re-sends the
 session block bare — four bytes of flags, then width and height — and reading it

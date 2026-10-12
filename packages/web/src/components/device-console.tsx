@@ -18,7 +18,6 @@ import {
   Upload,
   Volume1,
   Volume2,
-  VolumeX,
 } from "lucide-react";
 import {
   type DragEvent,
@@ -29,6 +28,7 @@ import {
   useState,
 } from "react";
 import { toast } from "sonner";
+import { BrowserVolume } from "@/components/browser-volume";
 import { DeviceDropDialog } from "@/components/device-drop-dialog";
 import { DeviceFilesDialog } from "@/components/device-files-dialog";
 import { DeviceScreen } from "@/components/device-screen";
@@ -522,7 +522,7 @@ export function DeviceConsole({
               <BrowserVolume
                 volume={browserVolume}
                 available={active && session.audioAvailable}
-                unavailable={Boolean(session.audioWarning)}
+                warning={session.audioWarning}
                 onChange={changeBrowserVolume}
               />
             )}
@@ -531,14 +531,6 @@ export function DeviceConsole({
       )}
 
       <div className="flex min-h-0 flex-1 flex-col gap-2">
-        {active && session.audioWarning && (
-          <div
-            role="status"
-            className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs"
-          >
-            Browser audio unavailable. Video and controls still work. {session.audioWarning}
-          </div>
-        )}
         <div ref={screenRef} className="relative flex min-h-0 flex-1">
           <DeviceScreen
             session={session}
@@ -768,55 +760,6 @@ type ConsoleAction = {
 const HOLD_MS = 500;
 
 type ConsoleSection = { key: string; label: string; actions: ConsoleAction[] };
-
-function BrowserVolume({
-  volume,
-  available,
-  unavailable,
-  onChange,
-}: {
-  volume: number;
-  available: boolean;
-  unavailable: boolean;
-  onChange: (volume: number) => void;
-}) {
-  const Icon = volume === 0 ? VolumeX : volume < 50 ? Volume1 : Volume2;
-  const control = (
-    <div className="flex min-w-0 items-center gap-2">
-      <Icon className="size-4 shrink-0 text-muted-foreground" />
-      <input
-        type="range"
-        min={0}
-        max={100}
-        step={5}
-        value={volume}
-        disabled={!available}
-        aria-label="Browser audio volume. Does not change device volume."
-        title="Browser audio only — does not change device volume"
-        className="h-1.5 min-w-0 flex-1 cursor-pointer accent-primary disabled:cursor-not-allowed"
-        onChange={(event) => onChange(Number(event.currentTarget.value))}
-        onKeyDown={() => {
-          if (available) onChange(volume);
-        }}
-      />
-    </div>
-  );
-
-  return (
-    <div className="flex flex-col gap-2 px-2">
-      <div className="flex items-baseline justify-between gap-2">
-        <span className="font-medium text-[10px] text-muted-foreground uppercase tracking-wide">
-          Browser audio
-        </span>
-        <span className="text-[10px] text-muted-foreground tabular-nums">{volume}%</span>
-      </div>
-      {control}
-      {!available && !unavailable && (
-        <span className="text-[10px] text-muted-foreground">Waiting for Android audio…</span>
-      )}
-    </div>
-  );
-}
 
 /**
  * Icon-only in both renderings, so the label lives in the tooltip and the

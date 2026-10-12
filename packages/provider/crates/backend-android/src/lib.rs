@@ -147,6 +147,7 @@ pub struct AndroidBackend {
     audio: AudioHandle,
     audio_publisher: AudioPublisher,
     audio_state: Arc<Mutex<AudioState>>,
+    audio_active: watch::Sender<bool>,
     live: Arc<Mutex<Option<Arc<Live>>>>,
     ready: watch::Receiver<bool>,
     restart: Arc<tokio::sync::Notify>,
@@ -170,6 +171,7 @@ impl AndroidBackend {
         let live = Arc::new(Mutex::new(None));
         let restart = Arc::new(tokio::sync::Notify::new());
         let audio_state = Arc::new(Mutex::new(AudioState::default()));
+        let (audio_active, audio_requests) = watch::channel(false);
 
         let backend = Arc::new(Self {
             options: options.clone(),
@@ -179,6 +181,7 @@ impl AndroidBackend {
             audio,
             audio_publisher: audio_publisher.clone(),
             audio_state: audio_state.clone(),
+            audio_active: audio_active.clone(),
             live: live.clone(),
             ready: ready_rx,
             restart: restart.clone(),
@@ -196,9 +199,28 @@ impl AndroidBackend {
             ready: ready_tx,
             restart,
             audio_state,
+            audio_active,
         }));
 
+        let audio_backend = backend.clone();
+        tokio::spawn(async move { audio_backend.reconcile_audio(audio_requests).await });
+
         backend
+    }
+
+    async fn reconcile_audio(&self, mut requests: watch::Receiver<bool>) {
+        while requests.changed().await.is_ok() {
+            self.audio_state
+                .lock()
+                .await
+                .reconcile(
+                    &self.adb,
+                    &self.options.serial,
+                    &self.audio_publisher,
+                    &self.audio_active,
+                )
+                .await;
+        }
     }
 
     async fn live(&self) -> BackendResult<Arc<Live>> {
@@ -792,14 +814,20 @@ impl DeviceBackend for AndroidBackend {
     }
 
     async fn set_audio_active(&self, active: bool) -> BackendResult<()> {
-        let mut state = self.audio_state.lock().await;
-        if state.active != active {
-            state.active = active;
-            state.applied = None;
+        let was_active = self.audio_active.send_replace(active);
+        if !active && was_active {
+            // Wait for silence on release; idle retries and session activation run in the background.
+            self.audio_state
+                .lock()
+                .await
+                .reconcile(
+                    &self.adb,
+                    &self.options.serial,
+                    &self.audio_publisher,
+                    &self.audio_active,
+                )
+                .await;
         }
-        state
-            .reconcile(&self.adb, &self.options.serial, &self.audio_publisher)
-            .await;
         Ok(())
     }
 
@@ -880,51 +908,64 @@ struct Supervisor {
     ready: watch::Sender<bool>,
     restart: Arc<tokio::sync::Notify>,
     audio_state: Arc<Mutex<AudioState>>,
+    audio_active: watch::Sender<bool>,
 }
 
 #[derive(Default)]
 struct AudioState {
-    active: bool,
     applied: Option<bool>,
     capturing: bool,
     capture_error: Option<String>,
 }
 
 impl AudioState {
-    async fn reconcile(&mut self, adb: &Adb, serial: &str, publisher: &AudioPublisher) {
-        let active = self.active && self.capturing;
-        let result = tokio::time::timeout(Duration::from_secs(3), self.apply(adb, serial, active))
-            .await
-            .unwrap_or_else(|_| Err(anyhow!("Android audio configuration timed out")));
-        match result {
-            Err(err) => {
-                let reason = format!("Could not configure device audio: {err:#}");
-                warn!(%serial, %reason, "browser audio disabled; device remains usable");
-                publisher.set_unavailable(reason);
-                self.applied = None;
-                // A failed raise may have changed volume. Keep the phone silent on fallback.
-                if active {
-                    let _ = tokio::time::timeout(
-                        Duration::from_secs(3),
-                        self.apply(adb, serial, false),
-                    )
-                    .await;
+    async fn reconcile(
+        &mut self,
+        adb: &Adb,
+        serial: &str,
+        publisher: &AudioPublisher,
+        desired: &watch::Sender<bool>,
+    ) {
+        loop {
+            let active = *desired.borrow() && self.capturing;
+            let result =
+                tokio::time::timeout(Duration::from_secs(3), self.apply(adb, serial, active))
+                    .await
+                    .unwrap_or_else(|_| Err(anyhow!("Android audio configuration timed out")));
+            match result {
+                Err(err) => {
+                    let reason = format!("Could not configure device audio: {err:#}");
+                    warn!(%serial, %reason, "browser audio disabled; device remains usable");
+                    publisher.set_unavailable(reason);
+                    self.applied = None;
+                    // A failed raise may have changed volume. Keep the phone silent on fallback.
+                    if active {
+                        let _ = tokio::time::timeout(
+                            Duration::from_secs(3),
+                            self.apply(adb, serial, false),
+                        )
+                        .await;
+                    }
+                    let _ =
+                        tokio::time::timeout(Duration::from_secs(1), set_dnd(adb, serial, "none"))
+                            .await;
                 }
-                let _ = tokio::time::timeout(Duration::from_secs(1), set_dnd(adb, serial, "none"))
-                    .await;
+                Ok(()) => {
+                    if let Some(reason) = &self.capture_error {
+                        publisher.set_unavailable(reason.clone());
+                    } else if self.capturing {
+                        publisher.set_codec(AudioCodecDescription {
+                            codec: "opus".into(),
+                            sample_rate: 48_000,
+                            channels: 2,
+                        });
+                    } else {
+                        publisher.mark_stopped();
+                    }
+                }
             }
-            Ok(()) => {
-                if let Some(reason) = &self.capture_error {
-                    publisher.set_unavailable(reason.clone());
-                } else if self.capturing {
-                    publisher.set_codec(AudioCodecDescription {
-                        codec: "opus".into(),
-                        sample_rate: 48_000,
-                        channels: 2,
-                    });
-                } else {
-                    publisher.mark_stopped();
-                }
+            if active == (*desired.borrow() && self.capturing) {
+                break;
             }
         }
     }
@@ -939,7 +980,8 @@ impl AudioState {
             let output = adb
                 .shell(serial, "cmd media_session volume --stream 3 --get")
                 .await?;
-            media_volume_max(&output).context("reading Android media volume range")?
+            media_volume_max(&output)
+                .with_context(|| format!("reading Android media volume range: {}", output.trim()))?
         } else {
             0
         };
@@ -952,8 +994,9 @@ impl AudioState {
                         &format!("cmd media_session volume --stream 3 --set {volume} --get"),
                     )
                     .await?;
-                let actual =
-                    media_volume_current(&output).context("verifying Android media volume")?;
+                let actual = media_volume_current(&output).with_context(|| {
+                    format!("verifying Android media volume: {}", output.trim())
+                })?;
                 if actual == volume {
                     return Ok(());
                 }
@@ -1043,32 +1086,36 @@ async fn run_once(supervisor: &Supervisor) -> Result<()> {
         state.capturing = false;
         state.applied = None;
         state
-            .reconcile(&supervisor.adb, serial, &supervisor.audio_publisher)
+            .reconcile(
+                &supervisor.adb,
+                serial,
+                &supervisor.audio_publisher,
+                &supervisor.audio_active,
+            )
             .await;
     }
     let capture_audio = supervisor.audio_state.lock().await.capture_error.is_none();
-    let mut session = ScrcpySession::start(
+    let session = ScrcpySession::start(
         &supervisor.adb,
         serial,
         &supervisor.options.scrcpy,
         capture_audio,
     )
-    .await?;
-    if let Some(reason) = session.audio_error.take() {
-        supervisor.audio_state.lock().await.capture_error = Some(reason);
-        // An encoder configuration error can terminate scrcpy itself. Reconnect without audio.
-        drop(session);
-        session = ScrcpySession::start(&supervisor.adb, serial, &supervisor.options.scrcpy, false)
-            .await?;
-    }
-    {
-        // Raise media only after capture has taken it away from the speaker.
-        let mut state = supervisor.audio_state.lock().await;
-        state.capturing = session.audio.is_some();
-        state
-            .reconcile(&supervisor.adb, serial, &supervisor.audio_publisher)
-            .await;
-    }
+    .await;
+    let session = match session {
+        Ok(session) => session,
+        Err(err) if capture_audio => {
+            // Some audio encoder failures kill scrcpy before its video handshake.
+            let reason = format!("scrcpy could not start with Android audio: {err:#}");
+            let session =
+                ScrcpySession::start(&supervisor.adb, serial, &supervisor.options.scrcpy, false)
+                    .await?;
+            supervisor.audio_publisher.set_unavailable(reason.clone());
+            supervisor.audio_state.lock().await.capture_error = Some(reason);
+            session
+        }
+        Err(err) => return Err(err),
+    };
 
     let ScrcpySession {
         video,
@@ -1140,24 +1187,54 @@ async fn run_once(supervisor: &Supervisor) -> Result<()> {
     let outcome = tokio::select! {
         result = scrcpy::pump_video(video, supervisor.video_publisher.clone(), geometry) => result,
         _ = pump_audio(supervisor, audio) => unreachable!(),
-        _ = supervisor.restart.notified() => Err(anyhow!("restart requested")),
+        _ = supervisor.restart.notified() => Ok(()),
     };
 
     keyframes.abort();
     announce.abort();
     {
         let mut state = supervisor.audio_state.lock().await;
+        if let Err(err) = &outcome {
+            if capture_audio && !state.capturing && state.capture_error.is_none() {
+                state.capture_error = Some(format!(
+                    "scrcpy ended before Android audio was ready: {err:#}"
+                ));
+            }
+        }
         state.capturing = false;
         state
-            .reconcile(&supervisor.adb, serial, &supervisor.audio_publisher)
+            .reconcile(
+                &supervisor.adb,
+                serial,
+                &supervisor.audio_publisher,
+                &supervisor.audio_active,
+            )
             .await;
     }
     outcome
 }
 
 async fn pump_audio(supervisor: &Supervisor, audio: Option<TcpStream>) {
-    if let Some(audio) = audio {
-        if let Err(err) = scrcpy::pump_audio(audio, supervisor.audio_publisher.clone()).await {
+    if let Some(mut audio) = audio {
+        let result = async {
+            scrcpy::read_audio_codec(&mut audio).await?;
+            {
+                // Raise media only after capture has taken it away from the speaker.
+                let mut state = supervisor.audio_state.lock().await;
+                state.capturing = true;
+                state
+                    .reconcile(
+                        &supervisor.adb,
+                        &supervisor.options.serial,
+                        &supervisor.audio_publisher,
+                        &supervisor.audio_active,
+                    )
+                    .await;
+            }
+            scrcpy::pump_audio(audio, supervisor.audio_publisher.clone()).await
+        }
+        .await;
+        if let Err(err) = result {
             let reason = format!("Android audio capture stopped: {err:#}");
             supervisor.audio_publisher.set_unavailable(reason.clone());
             let mut state = supervisor.audio_state.lock().await;
@@ -1169,6 +1246,7 @@ async fn pump_audio(supervisor: &Supervisor, audio: Option<TcpStream>) {
                     &supervisor.adb,
                     &supervisor.options.serial,
                     &supervisor.audio_publisher,
+                    &supervisor.audio_active,
                 )
                 .await;
         }
@@ -1552,7 +1630,7 @@ mod tests {
 
         let (audio, audio_publisher) = audio_channel();
         state.capturing = true;
-        let backend = AndroidBackend {
+        let backend = Arc::new(AndroidBackend {
             options: AndroidOptions::parse("test", &serde_json::Map::new()).unwrap(),
             name: None,
             adb,
@@ -1560,14 +1638,39 @@ mod tests {
             audio,
             audio_publisher,
             audio_state: Arc::new(Mutex::new(state)),
+            audio_active: watch::channel(false).0,
             live: Arc::new(Mutex::new(None)),
             ready: watch::channel(true).1,
             restart: Arc::new(tokio::sync::Notify::new()),
             pointer: Mutex::new(BTreeMap::new()),
             clipboard_sequence: std::sync::atomic::AtomicU64::new(1),
             exposed: Mutex::new(None),
-        };
-        backend.set_audio_active(true).await.unwrap();
+        });
+        let requests = backend.audio_active.subscribe();
+        let worker_backend = backend.clone();
+        let worker = tokio::spawn(async move { worker_backend.reconcile_audio(requests).await });
+        let mut status = backend.audio.status_watch();
+        let configuring = backend.audio_state.lock().await;
+        tokio::time::timeout(Duration::from_millis(100), backend.set_audio_active(false))
+            .await
+            .unwrap()
+            .unwrap();
+        tokio::time::timeout(Duration::from_millis(100), backend.set_audio_active(true))
+            .await
+            .unwrap()
+            .unwrap();
+        drop(configuring);
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            status.wait_for(|status| {
+                matches!(status, provider_core::audio::AudioStatus::Unavailable(_))
+            }),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        // A failure is announced before fallback finishes silencing the phone.
+        drop(backend.audio_state.lock().await);
         assert!(backend.is_healthy().await);
         assert!(matches!(
             *backend.audio.status_watch().borrow(),
@@ -1577,7 +1680,32 @@ mod tests {
 
         device.lock().await.reject_volume = false;
         backend.set_audio_active(true).await.unwrap();
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            status.wait_for(|status| {
+                matches!(status, provider_core::audio::AudioStatus::Available(_))
+            }),
+        )
+        .await
+        .unwrap()
+        .unwrap();
         assert!(backend.audio.current_codec().is_some());
+        assert_eq!(device.lock().await.volume, 15);
+
+        backend.set_audio_active(false).await.unwrap();
+        assert_eq!(device.lock().await.volume, 0);
+        assert!(device.lock().await.dnd);
+        backend.audio_publisher.mark_stopped();
+        backend.set_audio_active(true).await.unwrap();
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            status.wait_for(|status| {
+                matches!(status, provider_core::audio::AudioStatus::Available(_))
+            }),
+        )
+        .await
+        .unwrap()
+        .unwrap();
         assert_eq!(device.lock().await.volume, 15);
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1595,6 +1723,7 @@ mod tests {
             ready: watch::channel(true).0,
             restart: backend.restart.clone(),
             audio_state: backend.audio_state.clone(),
+            audio_active: backend.audio_active.clone(),
         };
         assert!(tokio::time::timeout(
             Duration::from_secs(1),
@@ -1622,7 +1751,17 @@ mod tests {
             state.capture_error = Some("Android audio capture is unavailable".into());
             state.applied = None;
         }
+        backend.audio_publisher.mark_stopped();
         backend.set_audio_active(true).await.unwrap();
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            status.wait_for(|status| {
+                matches!(status, provider_core::audio::AudioStatus::Unavailable(_))
+            }),
+        )
+        .await
+        .unwrap()
+        .unwrap();
         assert!(backend.is_healthy().await);
         assert_eq!(device.lock().await.volume, 0);
         assert!(device.lock().await.dnd);
@@ -1630,6 +1769,7 @@ mod tests {
             *backend.audio.status_watch().borrow(),
             provider_core::audio::AudioStatus::Unavailable(_)
         ));
+        worker.abort();
         server.abort();
     }
 
@@ -1707,6 +1847,7 @@ mod tests {
             audio: audio_channel().0,
             audio_publisher: audio_channel().1,
             audio_state: Arc::new(Mutex::new(AudioState::default())),
+            audio_active: watch::channel(false).0,
             live: Arc::new(Mutex::new(Some(Arc::new(Live {
                 control: Mutex::new(client),
                 geometry,
