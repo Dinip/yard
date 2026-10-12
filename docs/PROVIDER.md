@@ -517,6 +517,10 @@ Its wire format was read off a real device by `examples/scrcpy_probe.rs`, not
 inferred from scrcpy's source, because that source changes between releases.
 Re-run the probe when bumping the pin: the version string in `scrcpy.rs` must
 match the jar, and the server refuses a mismatch rather than half-working.
+Startup errors identify the failed handshake stage and include scrcpy's console
+output, limited to 16 KiB and a 250 ms read. If audio startup and its video-only
+retry both fail, the warning retains both errors rather than only reporting EOF
+from the second attempt. Reading diagnostics never delays live video or input.
 
 Video arrives as Annex-B and is rewritten to length-prefixed NALUs, with the
 config packet's SPS/PPS lifted into an `avcC` sent once out of band. Both halves
@@ -542,8 +546,10 @@ The provider raises media volume automatically for every authorized reservation
 and sets it to zero on release, capture teardown and graceful shutdown. Idle
 Android devices also enter total-silence Do Not Disturb. Every volume transition
 exits DND first, including muting during bring-up, capture restarts and release.
-The provider reads the volume back and retries briefly while Android applies the
-DND change, then restores total silence for an idle device even if muting fails.
+The provider sets volume and reads it back with separate commands, so a setter
+that returns no text is not mistaken for a failed volume change. It retries
+briefly while Android applies the DND change, then restores total silence for an
+idle device even if muting fails.
 A command reply alone does not prove the volume changed: Android can silently
 reject it while DND is active, even when setting it to zero.
 
@@ -558,6 +564,9 @@ a session, the provider keeps video running and stops forwarding audio packets.
 Volume/DND failures retry on the regular poll and clear the browser warning when
 they recover. Capture failures stay disabled until an explicit device restart or
 provider restart retries capture, so a broken encoder cannot cause a restart loop.
+Repeated identical audio-configuration failures log once until configuration
+succeeds or the reason changes. Identical scrcpy startup failures also log once
+until a connection succeeds or the reason changes; both retries keep running.
 Unrecognized volume replies include Android's command output in the warning,
 so unsupported commands and permission errors can be distinguished from a
 volume readback that stayed at the wrong level.

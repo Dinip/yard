@@ -916,6 +916,7 @@ struct AudioState {
     applied: Option<bool>,
     capturing: bool,
     capture_error: Option<String>,
+    configuration_error: Option<String>,
 }
 
 impl AudioState {
@@ -935,7 +936,10 @@ impl AudioState {
             match result {
                 Err(err) => {
                     let reason = format!("Could not configure device audio: {err:#}");
-                    warn!(%serial, %reason, "browser audio disabled; device remains usable");
+                    if self.configuration_error.as_ref() != Some(&reason) {
+                        warn!(%serial, %reason, "browser audio disabled; device remains usable");
+                        self.configuration_error = Some(reason.clone());
+                    }
                     publisher.set_unavailable(reason);
                     self.applied = None;
                     // A failed raise may have changed volume. Keep the phone silent on fallback.
@@ -951,6 +955,7 @@ impl AudioState {
                             .await;
                 }
                 Ok(()) => {
+                    self.configuration_error = None;
                     if let Some(reason) = &self.capture_error {
                         publisher.set_unavailable(reason.clone());
                     } else if self.capturing {
@@ -988,11 +993,14 @@ impl AudioState {
         let result = async {
             let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
             loop {
+                // A setter may return no output even when it succeeds; query the readback separately.
+                adb.shell(
+                    serial,
+                    &format!("cmd media_session volume --stream 3 --set {volume}"),
+                )
+                .await?;
                 let output = adb
-                    .shell(
-                        serial,
-                        &format!("cmd media_session volume --stream 3 --set {volume} --get"),
-                    )
+                    .shell(serial, "cmd media_session volume --stream 3 --get")
                     .await?;
                 let actual = media_volume_current(&output).with_context(|| {
                     format!("verifying Android media volume: {}", output.trim())
@@ -1058,14 +1066,23 @@ fn media_volume_max(output: &str) -> Option<u32> {
 async fn supervise(supervisor: Supervisor) {
     close_legacy_tcp_listener(&supervisor.adb, &supervisor.options.serial).await;
 
+    let mut previous_error = None;
     loop {
-        if let Err(err) = run_once(&supervisor).await {
-            warn!(
-                serial = %supervisor.options.serial,
-                error = %format!("{err:#}"),
-                "scrcpy session ended; retrying in {}s",
-                RECONNECT_DELAY.as_secs()
-            );
+        let outcome = run_once(&supervisor).await;
+        if *supervisor.ready.borrow() {
+            previous_error = None;
+        }
+        if let Err(err) = outcome {
+            let reason = format!("{err:#}");
+            if previous_error.as_ref() != Some(&reason) {
+                warn!(
+                    serial = %supervisor.options.serial,
+                    error = %reason,
+                    "scrcpy session ended; retrying in {}s",
+                    RECONNECT_DELAY.as_secs()
+                );
+                previous_error = Some(reason);
+            }
         }
 
         // Publish the teardown before sleeping, so the device reads as
@@ -1109,7 +1126,10 @@ async fn run_once(supervisor: &Supervisor) -> Result<()> {
             let reason = format!("scrcpy could not start with Android audio: {err:#}");
             let session =
                 ScrcpySession::start(&supervisor.adb, serial, &supervisor.options.scrcpy, false)
-                    .await?;
+                    .await
+                    .with_context(|| {
+                        format!("video-only scrcpy retry after audio startup failed: {err:#}")
+                    })?;
             supervisor.audio_publisher.set_unavailable(reason.clone());
             supervisor.audio_state.lock().await.capture_error = Some(reason);
             session
@@ -1118,6 +1138,7 @@ async fn run_once(supervisor: &Supervisor) -> Result<()> {
     };
 
     let ScrcpySession {
+        mut server,
         video,
         audio,
         control,
@@ -1211,7 +1232,10 @@ async fn run_once(supervisor: &Supervisor) -> Result<()> {
             )
             .await;
     }
-    outcome
+    match outcome {
+        Err(err) => Err(scrcpy::with_server_log(err, &mut server).await),
+        Ok(()) => Ok(()),
+    }
 }
 
 async fn pump_audio(supervisor: &Supervisor, audio: Option<TcpStream>) {
@@ -1533,6 +1557,26 @@ mod tests {
     async fn audio_recovers_from_idle_dnd_with_nonzero_media_volume() {
         use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
+        struct LogWriter(Arc<std::sync::Mutex<Vec<u8>>>);
+        impl std::io::Write for LogWriter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let logs = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let writer = logs.clone();
+        let _logging = tracing::subscriber::set_default(
+            tracing_subscriber::fmt()
+                .with_ansi(false)
+                .without_time()
+                .with_writer(move || LogWriter(writer.clone()))
+                .finish(),
+        );
+
         struct DeviceAudio {
             dnd: bool,
             volume: u32,
@@ -1589,15 +1633,13 @@ mod tests {
                         let requested = command
                             .strip_prefix("cmd media_session volume --stream 3 --set ")
                             .unwrap()
-                            .strip_suffix(" --get")
-                            .unwrap()
                             .parse::<u32>()
                             .unwrap();
                         if !*dnd && !*pending_exit && !*reject_volume {
                             *volume = requested;
                         }
                         *pending_exit = false;
-                        format!("[V] volume is {volume} in range [0..15]")
+                        String::new()
                     }
                 };
                 socket.write_all(output.as_bytes()).await.unwrap();
@@ -1677,6 +1719,25 @@ mod tests {
             provider_core::audio::AudioStatus::Unavailable(_)
         ));
         assert!(device.lock().await.dnd);
+
+        backend
+            .audio_state
+            .lock()
+            .await
+            .reconcile(
+                &backend.adb,
+                &backend.options.serial,
+                &backend.audio_publisher,
+                &backend.audio_active,
+            )
+            .await;
+        let output = String::from_utf8(logs.lock().unwrap().clone()).unwrap();
+        assert_eq!(
+            output
+                .matches("browser audio disabled; device remains usable")
+                .count(),
+            1
+        );
 
         device.lock().await.reject_volume = false;
         backend.set_audio_active(true).await.unwrap();

@@ -95,7 +95,7 @@ static NEXT_SCID: AtomicU32 = AtomicU32::new(1);
 pub struct ScrcpySession {
     /// Held open for the lifetime of the session: closing it kills the server
     /// process on the device, which is the only cleanup that matters.
-    _server: AdbStream,
+    pub(crate) server: AdbStream,
     pub video: TcpStream,
     pub audio: Option<TcpStream>,
     pub control: TcpStream,
@@ -171,7 +171,7 @@ impl ScrcpySession {
         let control = dial(adb, serial, &socket_name).await?;
 
         let mut session = Self {
-            _server: server,
+            server,
             video,
             audio,
             control,
@@ -179,7 +179,13 @@ impl ScrcpySession {
             width: 0,
             height: 0,
         };
-        session.read_handshake().await?;
+        if let Err(err) = session.read_handshake().await {
+            return Err(with_server_log(
+                err.context(format!("scrcpy video handshake, audio={capture_audio}")),
+                &mut session.server,
+            )
+            .await);
+        }
 
         info!(
             serial,
@@ -199,7 +205,10 @@ impl ScrcpySession {
             .context("reading the scrcpy dummy byte")?;
 
         let mut name = [0u8; 64];
-        self.video.read_exact(&mut name).await?;
+        self.video
+            .read_exact(&mut name)
+            .await
+            .context("reading the scrcpy device name")?;
         let end = name
             .iter()
             .position(|&byte| byte == 0)
@@ -207,7 +216,10 @@ impl ScrcpySession {
         self.device_name = String::from_utf8_lossy(&name[..end]).into_owned();
 
         let mut codec = [0u8; 4];
-        self.video.read_exact(&mut codec).await?;
+        self.video
+            .read_exact(&mut codec)
+            .await
+            .context("reading the scrcpy video codec")?;
         let codec = u32::from_be_bytes(codec);
         if codec != CODEC_H264 {
             bail!(
@@ -218,7 +230,10 @@ impl ScrcpySession {
 
         // The geometry that follows the codec id is a session block, the same
         // one a reset re-sends later.
-        match read_frame(&mut self.video).await? {
+        match read_frame(&mut self.video)
+            .await
+            .context("reading the scrcpy video geometry")?
+        {
             VideoFrame::Session { width, height } => {
                 self.width = width;
                 self.height = height;
@@ -229,6 +244,22 @@ impl ScrcpySession {
         }
 
         Ok(())
+    }
+}
+
+pub(crate) async fn with_server_log(error: anyhow::Error, server: &mut AdbStream) -> anyhow::Error {
+    // Keep startup exceptions even when the process stays alive or its log never reaches EOF.
+    let mut log = Vec::new();
+    let _ = tokio::time::timeout(
+        Duration::from_millis(250),
+        server.inner_mut().take(16 * 1024).read_to_end(&mut log),
+    )
+    .await;
+    let output = String::from_utf8_lossy(&log);
+    if output.trim().is_empty() {
+        error.context("scrcpy produced no server output")
+    } else {
+        error.context(format!("scrcpy server output: {}", output.trim()))
     }
 }
 
@@ -633,6 +664,43 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn startup_errors_include_console_output_without_waiting_for_process_exit() {
+        for bytes in [
+            vec![],
+            b"[server] ERROR: encoder could not start\n".to_vec(),
+            vec![b'x'; 32 * 1024],
+        ] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let mut server = AdbStream::connect(&listener.local_addr().unwrap().to_string())
+                .await
+                .unwrap();
+            let (mut peer, _) = listener.accept().await.unwrap();
+            peer.write_all(&bytes).await.unwrap();
+            // Hold the process open: diagnostics must keep partial output when their wait expires.
+            let error = tokio::time::timeout(
+                Duration::from_secs(1),
+                with_server_log(anyhow!("early eof"), &mut server),
+            )
+            .await
+            .unwrap();
+            let reason = format!("{error:#}");
+            assert!(reason.ends_with("early eof"));
+            if bytes.is_empty() {
+                assert!(reason.contains("no server output"));
+            } else {
+                let end = bytes.len().min(16 * 1024);
+                assert_eq!(
+                    reason,
+                    format!(
+                        "scrcpy server output: {}: early eof",
+                        String::from_utf8_lossy(&bytes[..end]).trim()
+                    )
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn video_handshake_does_not_wait_for_audio() {
         for codec in [Some(0u32), Some(1), Some(CODEC_OPUS), Some(0x1234), None] {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -646,7 +714,7 @@ mod tests {
             let control = TcpStream::connect(&addr).await.unwrap();
             let (_control_peer, _) = listener.accept().await.unwrap();
             let mut session = ScrcpySession {
-                _server: server,
+                server,
                 video,
                 audio: Some(audio),
                 control,
