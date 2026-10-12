@@ -95,10 +95,9 @@ static NEXT_SCID: AtomicU32 = AtomicU32::new(1);
 pub struct ScrcpySession {
     /// Held open for the lifetime of the session: closing it kills the server
     /// process on the device, which is the only cleanup that matters.
-    _server: AdbStream,
+    pub(crate) server: AdbStream,
     pub video: TcpStream,
     pub audio: Option<TcpStream>,
-    pub audio_error: Option<String>,
     pub control: TcpStream,
     pub device_name: String,
     pub width: i64,
@@ -127,6 +126,18 @@ impl Default for ScrcpyOptions {
     }
 }
 
+fn server_command(options: &ScrcpyOptions, scid: u32, capture_audio: bool) -> String {
+    // Samsung's media stack can overflow its 255-byte argv buffer; omit pinned server defaults.
+    // Waking and holding the screen on prevent idle devices from leaving viewers with black video.
+    let audio = if capture_audio { "" } else { " audio=false" };
+    format!(
+        "CLASSPATH={REMOTE_PATH} app_process / com.genymobile.scrcpy.Server {SERVER_VERSION} \
+         scid={scid:08x} log_level=info tunnel_forward=true max_size={} video_bit_rate={} max_fps={} \
+         stay_awake=true{audio}",
+        options.max_size, options.bit_rate, options.max_fps
+    )
+}
+
 impl ScrcpySession {
     /// Push the server, start it, connect all sockets, and read the handshake.
     pub async fn start(
@@ -140,19 +151,7 @@ impl ScrcpySession {
             .context("pushing the scrcpy server")?;
 
         let scid = NEXT_SCID.fetch_add(1, Ordering::Relaxed) & 0x7FFF_FFFF;
-        let command = format!(
-            // `stay_awake` and `power_on` are what make this a farm device rather
-            // than a phone: without them the display dozes on its own timeout
-            // and every later viewer gets a black screen that looks exactly
-            // like a broken stream. scrcpy restores both settings on cleanup,
-            // so the device is left as it was found.
-            "CLASSPATH={REMOTE_PATH} app_process / com.genymobile.scrcpy.Server {SERVER_VERSION} \
-             scid={scid:08x} log_level=info video=true audio={capture_audio} control=true \
-             tunnel_forward=true video_codec=h264 max_size={} video_bit_rate={} max_fps={} \
-             audio_source=output audio_codec=opus audio_dup=false \
-             stay_awake=true power_on=true cleanup=true",
-            options.max_size, options.bit_rate, options.max_fps
-        );
+        let command = server_command(options, scid, capture_audio);
 
         let server = adb
             .shell_stream(serial, &command)
@@ -172,18 +171,20 @@ impl ScrcpySession {
         let control = dial(adb, serial, &socket_name).await?;
 
         let mut session = Self {
-            _server: server,
+            server,
             video,
             audio,
-            audio_error: None,
             control,
             device_name: String::new(),
             width: 0,
             height: 0,
         };
-        session.read_handshake().await?;
-        if session.audio_error.is_some() {
-            return Ok(session);
+        if let Err(err) = session.read_handshake().await {
+            return Err(with_server_log(
+                err.context(format!("scrcpy video handshake, audio={capture_audio}")),
+                &mut session.server,
+            )
+            .await);
         }
 
         info!(
@@ -197,14 +198,6 @@ impl ScrcpySession {
     }
 
     async fn read_handshake(&mut self) -> Result<()> {
-        // Audio encoder failures can kill scrcpy before video sends its first frame.
-        if let Some(audio) = self.audio.as_mut() {
-            if let Err(err) = read_audio_codec(audio).await {
-                self.audio_error = Some(format!("{err:#}"));
-                self.audio = None;
-                return Ok(());
-            }
-        }
         let mut dummy = [0u8; 1];
         self.video
             .read_exact(&mut dummy)
@@ -212,7 +205,10 @@ impl ScrcpySession {
             .context("reading the scrcpy dummy byte")?;
 
         let mut name = [0u8; 64];
-        self.video.read_exact(&mut name).await?;
+        self.video
+            .read_exact(&mut name)
+            .await
+            .context("reading the scrcpy device name")?;
         let end = name
             .iter()
             .position(|&byte| byte == 0)
@@ -220,7 +216,10 @@ impl ScrcpySession {
         self.device_name = String::from_utf8_lossy(&name[..end]).into_owned();
 
         let mut codec = [0u8; 4];
-        self.video.read_exact(&mut codec).await?;
+        self.video
+            .read_exact(&mut codec)
+            .await
+            .context("reading the scrcpy video codec")?;
         let codec = u32::from_be_bytes(codec);
         if codec != CODEC_H264 {
             bail!(
@@ -231,7 +230,10 @@ impl ScrcpySession {
 
         // The geometry that follows the codec id is a session block, the same
         // one a reset re-sends later.
-        match read_frame(&mut self.video).await? {
+        match read_frame(&mut self.video)
+            .await
+            .context("reading the scrcpy video geometry")?
+        {
             VideoFrame::Session { width, height } => {
                 self.width = width;
                 self.height = height;
@@ -245,7 +247,23 @@ impl ScrcpySession {
     }
 }
 
-async fn read_audio_codec(audio: &mut TcpStream) -> Result<()> {
+pub(crate) async fn with_server_log(error: anyhow::Error, server: &mut AdbStream) -> anyhow::Error {
+    // Keep startup exceptions even when the process stays alive or its log never reaches EOF.
+    let mut log = Vec::new();
+    let _ = tokio::time::timeout(
+        Duration::from_millis(250),
+        server.inner_mut().take(16 * 1024).read_to_end(&mut log),
+    )
+    .await;
+    let output = String::from_utf8_lossy(&log);
+    if output.trim().is_empty() {
+        error.context("scrcpy produced no server output")
+    } else {
+        error.context(format!("scrcpy server output: {}", output.trim()))
+    }
+}
+
+pub async fn read_audio_codec(audio: &mut TcpStream) -> Result<()> {
     let mut codec = [0u8; 4];
     tokio::time::timeout(Duration::from_secs(3), audio.read_exact(&mut codec))
         .await
@@ -645,10 +663,70 @@ pub async fn read_device_message(control: &mut TcpStream) -> Result<Option<Strin
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn failed_audio_can_fall_back_before_video_starts() {
-        use tokio::io::AsyncWriteExt as _;
+    #[test]
+    fn launch_command_fits_samsung_argv_buffer_with_audio_or_without_it() {
+        for options in [
+            ScrcpyOptions::default(),
+            ScrcpyOptions {
+                max_size: u32::MAX,
+                bit_rate: u32::MAX,
+                max_fps: u32::MAX,
+            },
+        ] {
+            for capture_audio in [true, false] {
+                let command = server_command(&options, 0x7fff_ffff, capture_audio);
+                // Bound the whole shell command, including CLASSPATH, more strictly than argv alone.
+                assert!(command.len() < 255, "{} bytes: {command}", command.len());
+                let args: Vec<_> = command.split_ascii_whitespace().collect();
+                assert_eq!(args.contains(&"audio=false"), !capture_audio);
+                assert!(args.contains(&"tunnel_forward=true"));
+                assert!(args.contains(&"stay_awake=true"));
+                assert!(args.contains(&format!("max_size={}", options.max_size).as_str()));
+                assert!(args.contains(&format!("video_bit_rate={}", options.bit_rate).as_str()));
+                assert!(args.contains(&format!("max_fps={}", options.max_fps).as_str()));
+            }
+        }
+    }
 
+    #[tokio::test]
+    async fn startup_errors_include_console_output_without_waiting_for_process_exit() {
+        for bytes in [
+            vec![],
+            b"[server] ERROR: encoder could not start\n".to_vec(),
+            vec![b'x'; 32 * 1024],
+        ] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let mut server = AdbStream::connect(&listener.local_addr().unwrap().to_string())
+                .await
+                .unwrap();
+            let (mut peer, _) = listener.accept().await.unwrap();
+            peer.write_all(&bytes).await.unwrap();
+            // Hold the process open: diagnostics must keep partial output when their wait expires.
+            let error = tokio::time::timeout(
+                Duration::from_secs(1),
+                with_server_log(anyhow!("early eof"), &mut server),
+            )
+            .await
+            .unwrap();
+            let reason = format!("{error:#}");
+            assert!(reason.ends_with("early eof"));
+            if bytes.is_empty() {
+                assert!(reason.contains("no server output"));
+            } else {
+                let end = bytes.len().min(16 * 1024);
+                assert_eq!(
+                    reason,
+                    format!(
+                        "scrcpy server output: {}: early eof",
+                        String::from_utf8_lossy(&bytes[..end]).trim()
+                    )
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn video_handshake_does_not_wait_for_audio() {
         for codec in [Some(0u32), Some(1), Some(CODEC_OPUS), Some(0x1234), None] {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let addr = listener.local_addr().unwrap().to_string();
@@ -661,10 +739,9 @@ mod tests {
             let control = TcpStream::connect(&addr).await.unwrap();
             let (_control_peer, _) = listener.accept().await.unwrap();
             let mut session = ScrcpySession {
-                _server: server,
+                server,
                 video,
-                audio: codec.map(|_| audio),
-                audio_error: None,
+                audio: Some(audio),
                 control,
                 device_name: String::new(),
                 width: 0,
@@ -673,27 +750,24 @@ mod tests {
             if let Some(codec) = codec {
                 audio_peer.write_all(&codec.to_be_bytes()).await.unwrap();
             }
-            let video_only = codec.is_none();
-            if codec == Some(CODEC_OPUS) || video_only {
-                let mut metadata = vec![0u8; 65];
-                metadata.extend_from_slice(&CODEC_H264.to_be_bytes());
-                metadata.extend_from_slice(&SESSION_MARKER.to_be_bytes());
-                metadata.extend_from_slice(&1080u32.to_be_bytes());
-                metadata.extend_from_slice(&1920u32.to_be_bytes());
-                video_peer.write_all(&metadata).await.unwrap();
-            }
-            drop(video_peer);
-            tokio::time::timeout(Duration::from_secs(1), session.read_handshake())
+            let mut metadata = vec![0u8; 65];
+            metadata.extend_from_slice(&CODEC_H264.to_be_bytes());
+            metadata.extend_from_slice(&SESSION_MARKER.to_be_bytes());
+            metadata.extend_from_slice(&1080u32.to_be_bytes());
+            metadata.extend_from_slice(&1920u32.to_be_bytes());
+            video_peer.write_all(&metadata).await.unwrap();
+            tokio::time::timeout(Duration::from_millis(100), session.read_handshake())
                 .await
                 .unwrap()
                 .unwrap();
-            if codec == Some(CODEC_OPUS) || video_only {
-                assert!(session.audio_error.is_none());
-                assert_eq!((session.width, session.height), (1080, 1920));
-                assert_eq!(session.audio.is_none(), video_only);
-            } else {
-                assert!(session.audio_error.is_some());
-                assert!(session.audio.is_none());
+            assert_eq!((session.width, session.height), (1080, 1920));
+            if let Some(codec) = codec {
+                assert_eq!(
+                    read_audio_codec(session.audio.as_mut().unwrap())
+                        .await
+                        .is_ok(),
+                    codec == CODEC_OPUS
+                );
             }
         }
     }

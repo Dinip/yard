@@ -37,9 +37,8 @@ async fn main() -> Result<()> {
     let scid = 0x0000_0042u32;
     let command = format!(
         "CLASSPATH={REMOTE_PATH} app_process / com.genymobile.scrcpy.Server {SERVER_VERSION} \
-         scid={scid:08x} log_level=info video=true audio=true control=true tunnel_forward=true \
-         video_codec=h264 max_size=1024 video_bit_rate=4000000 max_fps=30 \
-         audio_source=output audio_codec=opus audio_dup=false cleanup=true"
+         scid={scid:08x} log_level=info tunnel_forward=true \
+         max_size=1024 video_bit_rate=4000000 max_fps=30"
     );
     println!("starting: {command}");
 

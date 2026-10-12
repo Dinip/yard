@@ -349,6 +349,7 @@ pub trait DeviceBackend: Send + Sync + 'static {
     async fn restart(&self) -> Result<()>;
 
     /// Enables captured media for a reservation, or silences an idle device.
+    /// Activation may run in the background; audio status reports readiness or failure.
     async fn set_audio_active(&self, _active: bool) -> Result<()> {
         Ok(())
     }
