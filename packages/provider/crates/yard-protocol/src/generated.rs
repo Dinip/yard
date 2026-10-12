@@ -431,6 +431,8 @@ pub enum ServerMessage {
         sample_rate: i64,
         channels: i64,
     },
+    #[serde(rename = "audio.unavailable", rename_all = "camelCase")]
+    AudioUnavailable { reason: String },
     #[serde(rename = "clipboard", rename_all = "camelCase")]
     Clipboard {
         #[serde(default)]

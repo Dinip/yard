@@ -269,6 +269,10 @@ export const serverFixtures = {
     sampleRate: 48_000,
     channels: 2,
   },
+  audioUnavailable: {
+    type: "audio.unavailable",
+    reason: "Android audio capture is unavailable",
+  },
   clipboard: { type: "clipboard", text: "copied" },
   clipboardEmpty: { type: "clipboard", text: null },
   installProgress: { type: "install.progress", progress: 0.42, stage: "uploading" },

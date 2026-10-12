@@ -379,6 +379,12 @@ remain admin-only hardware controls because they affect the physical device. Pla
 after the user interacts with the console so browser autoplay policy is
 satisfied. Canvas recordings remain video-only.
 
+An `audio.unavailable` message disables playback and the volume slider without
+interrupting video or input. Both the main console and popout show a persistent
+warning. It clears when a fresh `audio.codec` arrives and the browser configures
+playback successfully. Unsupported or failed browser audio decoders show the same
+warning. Disabling audio cancels queued playback and pending codec configuration.
+
 ### A device somebody else is holding
 
 `/devices/:id` offers **Ask to join** rather than only naming the holder. The

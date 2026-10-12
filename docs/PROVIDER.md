@@ -525,10 +525,13 @@ matter: the Annex-B path tears in Chrome under motion.
 Audio uses scrcpy's `output` source and is forwarded as Opus packets without
 decoding or transcoding. Android implements that source with playback capture's
 remote-submix path: captured media is routed to the provider instead of the
-device speaker. `audio_dup=false` is explicit, and an unavailable audio capture
-fails the backend session rather than falling back to audible, video-only use.
+device speaker. `audio_dup=false` is explicit. Audio is optional: an unavailable
+capture or rejected volume/DND command disables browser audio, reports a warning
+on the session plane and leaves video, input and reservation authorization working.
+The provider attempts to mute media and enable total-silence DND on fallback;
+devices rejecting both commands may still produce physical sound.
 
-This requires Android 11 or newer (Android 11 must be unlocked when scrcpy
+Audio capture requires Android 11 or newer (Android 11 must be unlocked when scrcpy
 starts). Android excludes ringtone, alarm and notification streams from this
 capture path, so the existing admin-only device-volume controls remain the farm
 safety control for those sounds. The user-facing **Browser audio** slider only
@@ -543,6 +546,13 @@ The provider reads the volume back and retries briefly while Android applies the
 DND change, then restores total silence for an idle device even if muting fails.
 A command reply alone does not prove the volume changed: Android can silently
 reject it while DND is active, even when setting it to zero.
+
+Audio configuration has bounded waits and cannot mark a device unhealthy. If
+capture cannot start, scrcpy reconnects with audio disabled. If audio stops during
+a session, the provider keeps video running and stops forwarding audio packets.
+Volume/DND failures retry on the regular poll and clear the browser warning when
+they recover. Capture failures stay disabled until an explicit device restart or
+provider restart retries capture, so a broken encoder cannot cause a restart loop.
 
 **Not everything on that socket is a packet.** A reset or a resize re-sends the
 session block bare — four bytes of flags, then width and height — and reading it

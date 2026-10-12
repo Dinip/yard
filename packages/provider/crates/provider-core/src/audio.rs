@@ -19,6 +19,13 @@ pub struct AudioCodecDescription {
     pub channels: u32,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AudioStatus {
+    Pending,
+    Available(AudioCodecDescription),
+    Unavailable(String),
+}
+
 /// One independently decodable encoded audio packet.
 #[derive(Debug)]
 pub struct AudioPacket {
@@ -29,7 +36,7 @@ pub struct AudioPacket {
 
 #[derive(Clone)]
 pub struct AudioHandle {
-    codec: watch::Receiver<Option<AudioCodecDescription>>,
+    status: watch::Receiver<AudioStatus>,
     packets: broadcast::Sender<Arc<AudioPacket>>,
 }
 
@@ -38,48 +45,69 @@ impl AudioHandle {
         self.packets.subscribe()
     }
 
-    pub fn codec_watch(&self) -> watch::Receiver<Option<AudioCodecDescription>> {
-        self.codec.clone()
+    pub fn status_watch(&self) -> watch::Receiver<AudioStatus> {
+        self.status.clone()
     }
 
     pub fn current_codec(&self) -> Option<AudioCodecDescription> {
-        self.codec.borrow().clone()
+        match &*self.status.borrow() {
+            AudioStatus::Available(codec) => Some(codec.clone()),
+            _ => None,
+        }
     }
 }
 
 #[derive(Clone)]
 pub struct AudioPublisher {
-    codec: Arc<watch::Sender<Option<AudioCodecDescription>>>,
+    status: Arc<watch::Sender<AudioStatus>>,
     packets: broadcast::Sender<Arc<AudioPacket>>,
 }
 
 impl AudioPublisher {
     pub fn set_codec(&self, description: AudioCodecDescription) {
-        let _ = self.codec.send(Some(description));
+        self.set_status(AudioStatus::Available(description));
+    }
+
+    pub fn set_unavailable(&self, reason: String) {
+        self.set_status(AudioStatus::Unavailable(reason));
+    }
+
+    fn set_status(&self, next: AudioStatus) {
+        self.status.send_if_modified(|current| {
+            if *current == next {
+                return false;
+            }
+            *current = next;
+            true
+        });
     }
 
     /// A send error only means nobody is listening yet. Capture stays active
     /// because it is also what routes media away from the device speaker.
     pub fn publish(&self, packet: AudioPacket) -> usize {
-        self.packets.send(Arc::new(packet)).unwrap_or(0)
+        if matches!(*self.status.borrow(), AudioStatus::Available(_)) {
+            self.packets.send(Arc::new(packet)).unwrap_or(0)
+        } else {
+            0
+        }
     }
 
     pub fn mark_stopped(&self) {
-        let _ = self.codec.send(None);
+        self.set_status(AudioStatus::Pending);
     }
 }
 
 pub fn channel() -> (AudioHandle, AudioPublisher) {
-    let (codec_tx, codec_rx) = watch::channel(None);
+    let (status_tx, status_rx) = watch::channel(AudioStatus::Pending);
     let (packets, _) = broadcast::channel(BACKLOG);
 
     (
         AudioHandle {
-            codec: codec_rx,
+            status: status_rx,
             packets: packets.clone(),
         },
         AudioPublisher {
-            codec: Arc::new(codec_tx),
+            status: Arc::new(status_tx),
             packets,
         },
     )
@@ -114,6 +142,11 @@ mod tests {
     async fn a_slow_listener_lags_without_blocking_capture() {
         let (handle, publisher) = channel();
         let mut packets = handle.subscribe();
+        publisher.set_codec(AudioCodecDescription {
+            codec: "opus".into(),
+            sample_rate: 48_000,
+            channels: 2,
+        });
 
         for timestamp_us in 0..(BACKLOG as u64 + 1) {
             publisher.publish(AudioPacket {
@@ -126,5 +159,46 @@ mod tests {
             packets.recv().await,
             Err(broadcast::error::RecvError::Lagged(1))
         ));
+    }
+
+    #[tokio::test]
+    async fn unavailable_audio_drops_packets_and_can_recover() {
+        let (handle, publisher) = channel();
+        let mut status = handle.status_watch();
+        let mut packets = handle.subscribe();
+        publisher.set_unavailable("capture failed".into());
+        status.changed().await.unwrap();
+        assert_eq!(
+            *status.borrow_and_update(),
+            AudioStatus::Unavailable("capture failed".into())
+        );
+        assert_eq!(
+            publisher.publish(AudioPacket {
+                data: vec![1],
+                timestamp_us: 0
+            }),
+            0
+        );
+        assert!(packets.try_recv().is_err());
+
+        let codec = AudioCodecDescription {
+            codec: "opus".into(),
+            sample_rate: 48_000,
+            channels: 2,
+        };
+        publisher.set_codec(codec.clone());
+        status.changed().await.unwrap();
+        status.borrow_and_update();
+        assert_eq!(handle.current_codec(), Some(codec.clone()));
+        publisher.set_codec(codec);
+        assert!(!status.has_changed().unwrap());
+        assert_eq!(
+            publisher.publish(AudioPacket {
+                data: vec![2],
+                timestamp_us: 1
+            }),
+            1
+        );
+        assert_eq!(packets.recv().await.unwrap().data, vec![2]);
     }
 }

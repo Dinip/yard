@@ -522,6 +522,7 @@ export function DeviceConsole({
               <BrowserVolume
                 volume={browserVolume}
                 available={active && session.audioAvailable}
+                unavailable={Boolean(session.audioWarning)}
                 onChange={changeBrowserVolume}
               />
             )}
@@ -530,6 +531,14 @@ export function DeviceConsole({
       )}
 
       <div className="flex min-h-0 flex-1 flex-col gap-2">
+        {active && session.audioWarning && (
+          <div
+            role="status"
+            className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs"
+          >
+            Browser audio unavailable. Video and controls still work. {session.audioWarning}
+          </div>
+        )}
         <div ref={screenRef} className="relative flex min-h-0 flex-1">
           <DeviceScreen
             session={session}
@@ -763,10 +772,12 @@ type ConsoleSection = { key: string; label: string; actions: ConsoleAction[] };
 function BrowserVolume({
   volume,
   available,
+  unavailable,
   onChange,
 }: {
   volume: number;
   available: boolean;
+  unavailable: boolean;
   onChange: (volume: number) => void;
 }) {
   const Icon = volume === 0 ? VolumeX : volume < 50 ? Volume1 : Volume2;
@@ -800,7 +811,7 @@ function BrowserVolume({
         <span className="text-[10px] text-muted-foreground tabular-nums">{volume}%</span>
       </div>
       {control}
-      {!available && (
+      {!available && !unavailable && (
         <span className="text-[10px] text-muted-foreground">Waiting for Android audio…</span>
       )}
     </div>

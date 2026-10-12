@@ -36,7 +36,9 @@ use provider_core::ports::{PortLease, PortPool};
 use yard_protocol::{AppInfo, Display, FileEntry, FileKind, FileListing, Platform};
 
 use crate::bridge::{DeviceAuthorizer, DeviceServices};
-use provider_core::audio::{channel as audio_channel, AudioHandle, AudioPublisher};
+use provider_core::audio::{
+    channel as audio_channel, AudioCodecDescription, AudioHandle, AudioPublisher,
+};
 use provider_core::video::{channel, VideoGeometry, VideoHandle, VideoPublisher};
 use tokio::net::TcpStream;
 use tokio::sync::{watch, Mutex};
@@ -143,6 +145,7 @@ pub struct AndroidBackend {
     adb: Adb,
     video: VideoHandle,
     audio: AudioHandle,
+    audio_publisher: AudioPublisher,
     audio_state: Arc<Mutex<AudioState>>,
     live: Arc<Mutex<Option<Arc<Live>>>>,
     ready: watch::Receiver<bool>,
@@ -174,6 +177,7 @@ impl AndroidBackend {
             adb: adb.clone(),
             video,
             audio,
+            audio_publisher: audio_publisher.clone(),
             audio_state: audio_state.clone(),
             live: live.clone(),
             ready: ready_rx,
@@ -782,28 +786,21 @@ impl DeviceBackend for AndroidBackend {
 
     async fn restart(&self) -> BackendResult<()> {
         info!(serial = %self.options.serial, "restarting the scrcpy session");
+        self.audio_state.lock().await.capture_error = None;
         self.restart.notify_one();
         Ok(())
     }
 
     async fn set_audio_active(&self, active: bool) -> BackendResult<()> {
-        if active {
-            self.live().await?;
-        }
         let mut state = self.audio_state.lock().await;
-        if active && !state.capturing {
-            return Err(BackendError::Unavailable(
-                "audio capture is restarting".into(),
-            ));
-        }
         if state.active != active {
             state.active = active;
             state.applied = None;
         }
         state
-            .apply(&self.adb, &self.options.serial, active)
-            .await
-            .map_err(|err| BackendError::Failed(format!("{err:#}")))
+            .reconcile(&self.adb, &self.options.serial, &self.audio_publisher)
+            .await;
+        Ok(())
     }
 
     async fn remote_debug_port(&self) -> Option<u16> {
@@ -890,9 +887,48 @@ struct AudioState {
     active: bool,
     applied: Option<bool>,
     capturing: bool,
+    capture_error: Option<String>,
 }
 
 impl AudioState {
+    async fn reconcile(&mut self, adb: &Adb, serial: &str, publisher: &AudioPublisher) {
+        let active = self.active && self.capturing;
+        let result = tokio::time::timeout(Duration::from_secs(3), self.apply(adb, serial, active))
+            .await
+            .unwrap_or_else(|_| Err(anyhow!("Android audio configuration timed out")));
+        match result {
+            Err(err) => {
+                let reason = format!("Could not configure device audio: {err:#}");
+                warn!(%serial, %reason, "browser audio disabled; device remains usable");
+                publisher.set_unavailable(reason);
+                self.applied = None;
+                // A failed raise may have changed volume. Keep the phone silent on fallback.
+                if active {
+                    let _ = tokio::time::timeout(
+                        Duration::from_secs(3),
+                        self.apply(adb, serial, false),
+                    )
+                    .await;
+                }
+                let _ = tokio::time::timeout(Duration::from_secs(1), set_dnd(adb, serial, "none"))
+                    .await;
+            }
+            Ok(()) => {
+                if let Some(reason) = &self.capture_error {
+                    publisher.set_unavailable(reason.clone());
+                } else if self.capturing {
+                    publisher.set_codec(AudioCodecDescription {
+                        codec: "opus".into(),
+                        sample_rate: 48_000,
+                        channels: 2,
+                    });
+                } else {
+                    publisher.mark_stopped();
+                }
+            }
+        }
+    }
+
     async fn apply(&mut self, adb: &Adb, serial: &str, active: bool) -> Result<()> {
         if self.applied == Some(active) {
             return Ok(());
@@ -1006,15 +1042,32 @@ async fn run_once(supervisor: &Supervisor) -> Result<()> {
         let mut state = supervisor.audio_state.lock().await;
         state.capturing = false;
         state.applied = None;
-        state.apply(&supervisor.adb, serial, false).await?;
+        state
+            .reconcile(&supervisor.adb, serial, &supervisor.audio_publisher)
+            .await;
     }
-    let session = ScrcpySession::start(&supervisor.adb, serial, &supervisor.options.scrcpy).await?;
+    let capture_audio = supervisor.audio_state.lock().await.capture_error.is_none();
+    let mut session = ScrcpySession::start(
+        &supervisor.adb,
+        serial,
+        &supervisor.options.scrcpy,
+        capture_audio,
+    )
+    .await?;
+    if let Some(reason) = session.audio_error.take() {
+        supervisor.audio_state.lock().await.capture_error = Some(reason);
+        // An encoder configuration error can terminate scrcpy itself. Reconnect without audio.
+        drop(session);
+        session = ScrcpySession::start(&supervisor.adb, serial, &supervisor.options.scrcpy, false)
+            .await?;
+    }
     {
         // Raise media only after capture has taken it away from the speaker.
         let mut state = supervisor.audio_state.lock().await;
-        state.capturing = true;
-        let active = state.active;
-        state.apply(&supervisor.adb, serial, active).await?;
+        state.capturing = session.audio.is_some();
+        state
+            .reconcile(&supervisor.adb, serial, &supervisor.audio_publisher)
+            .await;
     }
 
     let ScrcpySession {
@@ -1086,7 +1139,7 @@ async fn run_once(supervisor: &Supervisor) -> Result<()> {
 
     let outcome = tokio::select! {
         result = scrcpy::pump_video(video, supervisor.video_publisher.clone(), geometry) => result,
-        result = scrcpy::pump_audio(audio, supervisor.audio_publisher.clone()) => result,
+        _ = pump_audio(supervisor, audio) => unreachable!(),
         _ = supervisor.restart.notified() => Err(anyhow!("restart requested")),
     };
 
@@ -1095,9 +1148,33 @@ async fn run_once(supervisor: &Supervisor) -> Result<()> {
     {
         let mut state = supervisor.audio_state.lock().await;
         state.capturing = false;
-        state.apply(&supervisor.adb, serial, false).await?;
+        state
+            .reconcile(&supervisor.adb, serial, &supervisor.audio_publisher)
+            .await;
     }
     outcome
+}
+
+async fn pump_audio(supervisor: &Supervisor, audio: Option<TcpStream>) {
+    if let Some(audio) = audio {
+        if let Err(err) = scrcpy::pump_audio(audio, supervisor.audio_publisher.clone()).await {
+            let reason = format!("Android audio capture stopped: {err:#}");
+            supervisor.audio_publisher.set_unavailable(reason.clone());
+            let mut state = supervisor.audio_state.lock().await;
+            state.capturing = false;
+            state.capture_error = Some(reason);
+            state.applied = None;
+            state
+                .reconcile(
+                    &supervisor.adb,
+                    &supervisor.options.serial,
+                    &supervisor.audio_publisher,
+                )
+                .await;
+        }
+    }
+    // Ending this future would tear down video through run_once's select.
+    std::future::pending::<()>().await;
 }
 
 /// The display's current rotation, in degrees.
@@ -1472,6 +1549,87 @@ mod tests {
         );
         assert_eq!(state.applied, None);
         assert!(device.lock().await.dnd);
+
+        let (audio, audio_publisher) = audio_channel();
+        state.capturing = true;
+        let backend = AndroidBackend {
+            options: AndroidOptions::parse("test", &serde_json::Map::new()).unwrap(),
+            name: None,
+            adb,
+            video: channel().0,
+            audio,
+            audio_publisher,
+            audio_state: Arc::new(Mutex::new(state)),
+            live: Arc::new(Mutex::new(None)),
+            ready: watch::channel(true).1,
+            restart: Arc::new(tokio::sync::Notify::new()),
+            pointer: Mutex::new(BTreeMap::new()),
+            clipboard_sequence: std::sync::atomic::AtomicU64::new(1),
+            exposed: Mutex::new(None),
+        };
+        backend.set_audio_active(true).await.unwrap();
+        assert!(backend.is_healthy().await);
+        assert!(matches!(
+            *backend.audio.status_watch().borrow(),
+            provider_core::audio::AudioStatus::Unavailable(_)
+        ));
+        assert!(device.lock().await.dnd);
+
+        device.lock().await.reject_volume = false;
+        backend.set_audio_active(true).await.unwrap();
+        assert!(backend.audio.current_codec().is_some());
+        assert_eq!(device.lock().await.volume, 15);
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let audio_socket = TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (peer, _) = listener.accept().await.unwrap();
+        drop(peer);
+        let supervisor = Supervisor {
+            options: backend.options.clone(),
+            adb: backend.adb.clone(),
+            video_publisher: channel().1,
+            audio_publisher: backend.audio_publisher.clone(),
+            live: backend.live.clone(),
+            ready: watch::channel(true).0,
+            restart: backend.restart.clone(),
+            audio_state: backend.audio_state.clone(),
+        };
+        assert!(tokio::time::timeout(
+            Duration::from_secs(1),
+            pump_audio(&supervisor, Some(audio_socket))
+        )
+        .await
+        .is_err());
+        assert!(backend.is_healthy().await);
+        assert_eq!(device.lock().await.volume, 0);
+        assert!(device.lock().await.dnd);
+        assert!(!backend.audio_state.lock().await.capturing);
+        assert!(matches!(
+            *backend.audio.status_watch().borrow(),
+            provider_core::audio::AudioStatus::Unavailable(_)
+        ));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(10), pump_audio(&supervisor, None))
+                .await
+                .is_err()
+        );
+
+        {
+            let mut state = backend.audio_state.lock().await;
+            state.capturing = false;
+            state.capture_error = Some("Android audio capture is unavailable".into());
+            state.applied = None;
+        }
+        backend.set_audio_active(true).await.unwrap();
+        assert!(backend.is_healthy().await);
+        assert_eq!(device.lock().await.volume, 0);
+        assert!(device.lock().await.dnd);
+        assert!(matches!(
+            *backend.audio.status_watch().borrow(),
+            provider_core::audio::AudioStatus::Unavailable(_)
+        ));
         server.abort();
     }
 
@@ -1547,6 +1705,7 @@ mod tests {
             adb: Adb::new(adb::DEFAULT_ADB_SERVER),
             video: channel().0,
             audio: audio_channel().0,
+            audio_publisher: audio_channel().1,
             audio_state: Arc::new(Mutex::new(AudioState::default())),
             live: Arc::new(Mutex::new(Some(Arc::new(Live {
                 control: Mutex::new(client),

@@ -27,6 +27,7 @@ export interface DeviceSessionApi {
   fallbackUrl: string | null;
   /** True after the browser accepted the provider's audio codec. */
   audioAvailable: boolean;
+  audioWarning: string | null;
   /** Resume Web Audio from a trusted user gesture. */
   activateAudio: () => void;
   /**
@@ -80,6 +81,7 @@ export function useDeviceSession(
   const [unsupported, setUnsupported] = useState(false);
   const [fallbackUrl, setFallbackUrl] = useState<string | null>(null);
   const [audioAvailable, setAudioAvailable] = useState(false);
+  const [audioWarning, setAudioWarning] = useState<string | null>(null);
 
   const sessionRef = useRef<DeviceSession | null>(null);
   /**
@@ -129,12 +131,22 @@ export function useDeviceSession(
     if (!enabled) return;
 
     let disposed = false;
-    const audio =
-      audioEnabled && typeof AudioContext !== "undefined"
-        ? new BrowserAudio(audioVolumeRef.current)
-        : null;
-    audioRef.current = audio;
     setAudioAvailable(false);
+    setAudioWarning(null);
+    let audioRevision = 0;
+    let audio: BrowserAudio | null = null;
+    if (audioEnabled && typeof AudioContext !== "undefined") {
+      try {
+        audio = new BrowserAudio(audioVolumeRef.current, (message) => {
+          if (disposed) return;
+          setAudioAvailable(false);
+          setAudioWarning(message);
+        });
+      } catch {
+        setAudioWarning("This browser could not start device audio.");
+      }
+    }
+    audioRef.current = audio;
     // A fresh session is not revoked, whatever the last one ended as.
     revokedReason.current = undefined;
     setRevoked(false);
@@ -152,7 +164,9 @@ export function useDeviceSession(
           rendererRef.current?.destroy();
           rendererRef.current = null;
           audio?.reset();
+          audioRevision++;
           setAudioAvailable(false);
+          setAudioWarning(null);
         }
       },
       onMessage: (message) => {
@@ -209,10 +223,32 @@ export function useDeviceSession(
             // picture is now sideways.
             rendererRef.current?.setRenderRotation(message.display.renderRotation);
             break;
-          case "audio.codec":
-            void audio?.configure(message).then((supported) => {
-              if (!disposed) setAudioAvailable(supported);
-            });
+          case "audio.codec": {
+            const revision = ++audioRevision;
+            if (!audio) {
+              setAudioWarning("This browser does not support device audio.");
+              break;
+            }
+            void audio.configure(message).then(
+              (supported) => {
+                if (disposed || revision !== audioRevision) return;
+                setAudioAvailable(supported);
+                setAudioWarning(supported ? null : "This browser does not support device audio.");
+              },
+              () => {
+                if (disposed || revision !== audioRevision) return;
+                audio.reset();
+                setAudioAvailable(false);
+                setAudioWarning("This browser could not start device audio.");
+              },
+            );
+            break;
+          }
+          case "audio.unavailable":
+            audioRevision++;
+            audio?.reset();
+            setAudioAvailable(false);
+            setAudioWarning(message.reason);
             break;
           case "clipboard": {
             const waiters = clipboardWaiters.current;
@@ -266,6 +302,7 @@ export function useDeviceSession(
       audio?.destroy();
       audioRef.current = null;
       setAudioAvailable(false);
+      setAudioWarning(null);
     };
   }, [deviceId, enabled, canvasRef, audioEnabled]);
 
@@ -278,6 +315,7 @@ export function useDeviceSession(
     unsupported,
     fallbackUrl,
     audioAvailable,
+    audioWarning,
     activateAudio,
     readClipboard,
     send,

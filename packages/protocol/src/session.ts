@@ -85,6 +85,7 @@ export const ServerMessage = named(
       sampleRate: z.number().int(),
       channels: z.number().int(),
     }),
+    z.object({ type: z.literal("audio.unavailable"), reason: z.string() }),
     z.object({ type: z.literal("clipboard"), text: z.string().nullable() }),
     z.object({
       type: z.literal("install.progress"),
