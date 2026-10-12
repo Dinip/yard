@@ -35,8 +35,13 @@ export class BrowserAudio {
   private decoder: AudioDecoder | null = null;
   private firstTimestamp: bigint | null = null;
   private nextStart = 0;
+  private revision = 0;
+  private readonly sources = new Set<AudioBufferSourceNode>();
 
-  constructor(volume: number) {
+  constructor(
+    volume: number,
+    private readonly onError: (message: string) => void = () => {},
+  ) {
     // Resampling each short Opus buffer independently creates boundary clicks.
     this.context = new AudioContext({ latencyHint: "interactive", sampleRate: 48_000 });
     this.gain = this.context.createGain();
@@ -45,14 +50,19 @@ export class BrowserAudio {
   }
 
   async configure(info: AudioCodecInfo): Promise<boolean> {
-    if (!(await isAudioStreamSupported(info))) return false;
-
-    closeQuietly(this.decoder);
-    this.firstTimestamp = null;
-    this.nextStart = 0;
+    this.reset();
+    const revision = this.revision;
+    if (!(await isAudioStreamSupported(info)) || revision !== this.revision) return false;
     this.decoder = new AudioDecoder({
-      output: (data) => this.play(data),
-      error: (error) => console.warn("[audio]", error),
+      output: (data) => {
+        if (revision === this.revision) this.play(data);
+        else data.close();
+      },
+      error: () => {
+        if (revision !== this.revision) return;
+        this.reset();
+        this.onError("This browser could not decode device audio.");
+      },
     });
     this.decoder.configure(configFor(info));
     return true;
@@ -80,20 +90,28 @@ export class BrowserAudio {
 
     const timestamp = new DataView(frame.buffer, frame.byteOffset + 1, 8).getBigUint64(0);
     this.firstTimestamp ??= timestamp;
-    decoder.decode(
-      new EncodedAudioChunk({
-        type: "key",
-        timestamp: Number(timestamp - this.firstTimestamp),
-        data: frame.subarray(HEADER_BYTES),
-      }),
-    );
+    try {
+      decoder.decode(
+        new EncodedAudioChunk({
+          type: "key",
+          timestamp: Number(timestamp - this.firstTimestamp),
+          data: frame.subarray(HEADER_BYTES),
+        }),
+      );
+    } catch {
+      this.reset();
+      this.onError("This browser could not decode device audio.");
+    }
   }
 
   reset() {
+    this.revision++;
     closeQuietly(this.decoder);
     this.decoder = null;
     this.firstTimestamp = null;
     this.nextStart = 0;
+    for (const source of this.sources) source.stop();
+    this.sources.clear();
   }
 
   destroy() {
@@ -128,6 +146,8 @@ export class BrowserAudio {
       const source = this.context.createBufferSource();
       source.buffer = buffer;
       source.connect(this.gain);
+      this.sources.add(source);
+      source.onended = () => this.sources.delete(source);
       source.start(this.nextStart);
       this.nextStart += buffer.duration;
     } finally {

@@ -43,6 +43,7 @@ class StubAudioContext {
   } as unknown as GainNode;
 
   starts: number[] = [];
+  stops = 0;
 
   constructor(readonly options: AudioContextOptions) {
     contexts.push(this);
@@ -61,7 +62,12 @@ class StubAudioContext {
   }
 
   createBufferSource() {
-    return { buffer: null, connect() {}, start: (at: number) => this.starts.push(at) };
+    return {
+      buffer: null,
+      connect() {},
+      start: (at: number) => this.starts.push(at),
+      stop: () => this.stops++,
+    };
   }
 
   resume() {
@@ -113,6 +119,63 @@ afterEach(() => {
 });
 
 describe("BrowserAudio", () => {
+  test("disabling audio stops queued playback and prevents further decoding", async () => {
+    const audio = new BrowserAudio(1);
+    await audio.configure({ type: "audio.codec", codec: "opus", sampleRate: 48_000, channels: 2 });
+    decoders[0]!.init.output({
+      numberOfChannels: 2,
+      numberOfFrames: 960,
+      sampleRate: 48_000,
+      copyTo() {},
+      close() {},
+    } as unknown as AudioData);
+    audio.reset();
+    audio.decodeChunk(packet(8_000_000n, [1]));
+    expect(contexts[0]!.stops).toBe(1);
+    expect(decoders[0]!.state).toBe("closed");
+    expect(decoders[0]!.chunks).toHaveLength(0);
+    audio.destroy();
+  });
+
+  test("a decoder failure disables playback and reports a warning", async () => {
+    const warnings: string[] = [];
+    const audio = new BrowserAudio(1, (message) => warnings.push(message));
+    await audio.configure({ type: "audio.codec", codec: "opus", sampleRate: 48_000, channels: 2 });
+    decoders[0]!.init.error(new DOMException("decoder failed"));
+    audio.decodeChunk(packet(8_000_000n, [1]));
+    expect(warnings).toEqual(["This browser could not decode device audio."]);
+    expect(decoders[0]!.chunks).toHaveLength(0);
+    audio.destroy();
+  });
+
+  test("an in-flight codec check cannot re-enable disabled audio", async () => {
+    const original = StubAudioDecoder.isConfigSupported;
+    let resolve!: (result: { supported: boolean; config: AudioDecoderConfig }) => void;
+    StubAudioDecoder.isConfigSupported = () =>
+      new Promise((done) => {
+        resolve = done;
+      });
+    const audio = new BrowserAudio(1);
+    try {
+      const configuring = audio.configure({
+        type: "audio.codec",
+        codec: "opus",
+        sampleRate: 48_000,
+        channels: 2,
+      });
+      audio.reset();
+      resolve({
+        supported: true,
+        config: { codec: "opus", sampleRate: 48_000, numberOfChannels: 2 },
+      });
+      expect(await configuring).toBe(false);
+      expect(decoders).toHaveLength(0);
+    } finally {
+      StubAudioDecoder.isConfigSupported = original;
+      audio.destroy();
+    }
+  });
+
   test("uses the source sample rate and keeps playback contiguous across packet jitter", async () => {
     const audio = new BrowserAudio(1);
     await audio.configure({ type: "audio.codec", codec: "opus", sampleRate: 48_000, channels: 2 });

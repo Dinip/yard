@@ -147,6 +147,7 @@ struct Harness {
     /// The backend behind `DEVICE_ID`, so a test can rotate it or change its
     /// codec the way a real device does mid-session.
     device: Arc<backend_mock::MockBackend>,
+    android: Arc<backend_mock::MockBackend>,
 }
 
 async fn start() -> Harness {
@@ -208,10 +209,8 @@ preload_dir: {}
     let mut supervisor = Supervisor::with_preload_store(sessions.clone(), preload_store);
     let device = backend_mock::MockBackend::new(DEVICE_ID, Platform::Ios, "Mock iPhone");
     supervisor.add(DEVICE_ID.into(), device.clone());
-    supervisor.add(
-        OTHER_DEVICE.into(),
-        backend_mock::MockBackend::new(OTHER_DEVICE, Platform::Android, "Mock Pixel"),
-    );
+    let android = backend_mock::MockBackend::new(OTHER_DEVICE, Platform::Android, "Mock Pixel");
+    supervisor.add(OTHER_DEVICE.into(), android.clone());
     let supervisor = Arc::new(supervisor);
     supervisor.bootstrap().await;
 
@@ -244,6 +243,7 @@ preload_dir: {}
         preload_dir,
         supervisor,
         device,
+        android,
     }
 }
 
@@ -954,6 +954,147 @@ async fn an_android_session_announces_and_streams_opus() {
     let packet = packet.expect("no Opus packet arrived");
     assert_eq!(packet.len(), 12);
     assert_eq!(&packet[9..], &[0xf8, 0xff, 0xfe]);
+}
+
+#[tokio::test]
+async fn audio_warnings_preserve_video_reach_new_viewers_and_clear_on_recovery() {
+    use futures::{SinkExt as _, StreamExt as _};
+    use provider_core::audio::AudioCodecDescription;
+    use tokio_tungstenite::tungstenite::Message;
+
+    let h = start().await;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    h.sessions
+        .authorize(
+            OTHER_DEVICE,
+            Authorization {
+                reservation_id: RESERVATION.into(),
+                user_id: "user-1".into(),
+                adb_keys: Vec::new(),
+            },
+        )
+        .await;
+    let token = h.signer.token(&h.issuer, OTHER_DEVICE, RESERVATION, 60);
+    let url = format!(
+        "{}/s/{OTHER_DEVICE}?token={token}",
+        h.base.replace("http://", "ws://")
+    );
+    let (mut socket, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
+    loop {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "audio status did not arrive"
+        );
+        let message = tokio::time::timeout(Duration::from_secs(2), socket.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        if let Message::Text(text) = message {
+            if serde_json::from_str::<serde_json::Value>(&text).unwrap()["type"] == "audio.codec" {
+                break;
+            }
+        }
+    }
+
+    let publisher = h.android.audio_publisher().unwrap();
+    let reason = "Android media volume stayed at 8, wanted 0";
+    publisher.set_unavailable(reason.into());
+    loop {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "audio status did not arrive"
+        );
+        let message = tokio::time::timeout(Duration::from_secs(2), socket.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        if let Message::Text(text) = message {
+            let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+            if value["type"] == "audio.unavailable" {
+                assert_eq!(value["reason"], reason);
+                break;
+            }
+        }
+    }
+    loop {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "audio status did not arrive"
+        );
+        let message = tokio::time::timeout(Duration::from_secs(2), socket.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        if let Message::Binary(bytes) = message {
+            assert_ne!(bytes[0], yard_protocol::AUDIO_PACKET);
+            break;
+        }
+    }
+
+    socket
+        .send(Message::Text(
+            r#"{"type":"key","key":"Home","down":true}"#.into(),
+        ))
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while h.android.state.events.lock().await.is_empty() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(matches!(
+        h.android.state.events.lock().await[0],
+        InputEvent::Key { .. }
+    ));
+
+    let (mut late_viewer, _) = tokio_tungstenite::connect_async(&url).await.unwrap();
+    let first = late_viewer.next().await.unwrap().unwrap();
+    assert!(matches!(first, Message::Text(_)));
+    let second = late_viewer.next().await.unwrap().unwrap();
+    let Message::Text(text) = second else {
+        panic!("expected audio warning");
+    };
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&text).unwrap()["type"],
+        "audio.unavailable"
+    );
+
+    publisher.set_codec(AudioCodecDescription {
+        codec: "opus".into(),
+        sample_rate: 48_000,
+        channels: 2,
+    });
+    let mut announced = false;
+    loop {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "audio status did not arrive"
+        );
+        let message = tokio::time::timeout(Duration::from_secs(2), socket.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        match message {
+            Message::Text(text) => {
+                if serde_json::from_str::<serde_json::Value>(&text).unwrap()["type"]
+                    == "audio.codec"
+                {
+                    announced = true;
+                }
+            }
+            Message::Binary(bytes) if bytes[0] == yard_protocol::AUDIO_PACKET => {
+                assert!(announced, "audio resumed before its codec");
+                break;
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Rotation, on the wire.

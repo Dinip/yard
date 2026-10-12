@@ -73,6 +73,11 @@ byte is `0 = key`, `1 = delta`, `2 = key-with-reset`. Audio is
 message announces the codec, sample rate and channel count first. Both travel
 directly between browser and provider on the session socket.
 
+`audio.unavailable` carries a `reason` when capture or audio configuration fails.
+It disables browser playback without closing the session or affecting video and
+input. A later `audio.codec` announces recovery. New viewers receive the current
+audio status, including any warning, and unavailable audio sends no binary packets.
+
 ## Control plane — provider ↔ coordinator ✅ built
 
 `GET /api/providers/connect`, upgraded to WSS, `Authorization: Bearer <pft_…>`.
@@ -189,7 +194,7 @@ to the browser as nothing but an abnormal socket close.
 | Direction | Messages |
 |---|---|
 | browser → provider (`ClientMessage`) | `pointer.down/move/up`, `key`, `text`, `clipboard.get/set`, `rotate`, `keyframe`, `pong` |
-| provider → browser (`ServerMessage`) | `codec` and `audio.codec` handshakes, `display`, `clipboard`, `install.progress`, `install.result`, `session.closed`, `error`, `ping` |
+| provider → browser (`ServerMessage`) | `codec` and `audio.codec` handshakes, `audio.unavailable`, `display`, `clipboard`, `install.progress`, `install.result`, `session.closed`, `error`, `ping` |
 
 Pointer coordinates are **normalised 0..1, not pixels**: the browser needs no
 knowledge of the true resolution, and a mid-session rotation cannot

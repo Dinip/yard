@@ -96,6 +96,7 @@ pub struct MockBackend {
     name: String,
     video: VideoHandle,
     audio: Option<AudioHandle>,
+    audio_publisher: Option<AudioPublisher>,
     /// Kept so a rotation can publish the new geometry, the same way a real
     /// backend does when its encoder restarts.
     publisher: VideoPublisher,
@@ -190,6 +191,7 @@ impl MockBackend {
             name: name.into(),
             video,
             audio,
+            audio_publisher: audio_publisher.clone(),
             publisher: publisher.clone(),
             state,
             started: Instant::now(),
@@ -217,6 +219,10 @@ impl MockBackend {
     /// The write side, so a test can drive a mid-session codec change.
     pub fn publisher(&self) -> VideoPublisher {
         self.publisher.clone()
+    }
+
+    pub fn audio_publisher(&self) -> Option<AudioPublisher> {
+        self.audio_publisher.clone()
     }
 
     /// Unrotated panel dimensions.

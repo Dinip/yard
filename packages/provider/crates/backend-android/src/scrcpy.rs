@@ -52,7 +52,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context as _, Result};
-use provider_core::audio::{AudioCodecDescription, AudioPacket, AudioPublisher};
+use provider_core::audio::{AudioPacket, AudioPublisher};
 use provider_core::video::{AccessUnit, CodecDescription, VideoPublisher};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::TcpStream;
@@ -97,7 +97,8 @@ pub struct ScrcpySession {
     /// process on the device, which is the only cleanup that matters.
     _server: AdbStream,
     pub video: TcpStream,
-    pub audio: TcpStream,
+    pub audio: Option<TcpStream>,
+    pub audio_error: Option<String>,
     pub control: TcpStream,
     pub device_name: String,
     pub width: i64,
@@ -128,7 +129,12 @@ impl Default for ScrcpyOptions {
 
 impl ScrcpySession {
     /// Push the server, start it, connect all sockets, and read the handshake.
-    pub async fn start(adb: &Adb, serial: &str, options: &ScrcpyOptions) -> Result<Self> {
+    pub async fn start(
+        adb: &Adb,
+        serial: &str,
+        options: &ScrcpyOptions,
+        capture_audio: bool,
+    ) -> Result<Self> {
         adb.push(serial, REMOTE_PATH, SERVER_JAR, 0o644)
             .await
             .context("pushing the scrcpy server")?;
@@ -141,7 +147,7 @@ impl ScrcpySession {
             // like a broken stream. scrcpy restores both settings on cleanup,
             // so the device is left as it was found.
             "CLASSPATH={REMOTE_PATH} app_process / com.genymobile.scrcpy.Server {SERVER_VERSION} \
-             scid={scid:08x} log_level=info video=true audio=true control=true \
+             scid={scid:08x} log_level=info video=true audio={capture_audio} control=true \
              tunnel_forward=true video_codec=h264 max_size={} video_bit_rate={} max_fps={} \
              audio_source=output audio_codec=opus audio_dup=false \
              stay_awake=true power_on=true cleanup=true",
@@ -158,19 +164,27 @@ impl ScrcpySession {
         // Socket order is part of scrcpy's wire protocol. Dialling control
         // second would make the server accept it as audio and wait forever for
         // the control socket that never arrives.
-        let audio = dial(adb, serial, &socket_name).await?;
+        let audio = if capture_audio {
+            Some(dial(adb, serial, &socket_name).await?)
+        } else {
+            None
+        };
         let control = dial(adb, serial, &socket_name).await?;
 
         let mut session = Self {
             _server: server,
             video,
             audio,
+            audio_error: None,
             control,
             device_name: String::new(),
             width: 0,
             height: 0,
         };
         session.read_handshake().await?;
+        if session.audio_error.is_some() {
+            return Ok(session);
+        }
 
         info!(
             serial,
@@ -183,6 +197,14 @@ impl ScrcpySession {
     }
 
     async fn read_handshake(&mut self) -> Result<()> {
+        // Audio encoder failures can kill scrcpy before video sends its first frame.
+        if let Some(audio) = self.audio.as_mut() {
+            if let Err(err) = read_audio_codec(audio).await {
+                self.audio_error = Some(format!("{err:#}"));
+                self.audio = None;
+                return Ok(());
+            }
+        }
         let mut dummy = [0u8; 1];
         self.video
             .read_exact(&mut dummy)
@@ -219,17 +241,21 @@ impl ScrcpySession {
             }
         }
 
-        let mut audio_codec = [0u8; 4];
-        self.audio
-            .read_exact(&mut audio_codec)
-            .await
-            .context("reading audio codec")?;
-        match u32::from_be_bytes(audio_codec) {
-            CODEC_OPUS => Ok(()),
-            0 => bail!("Android audio capture is unavailable; refusing an audible device session"),
-            1 => bail!("scrcpy could not configure Android audio capture"),
-            other => bail!("the device negotiated audio codec {other:#010x}, not opus"),
-        }
+        Ok(())
+    }
+}
+
+async fn read_audio_codec(audio: &mut TcpStream) -> Result<()> {
+    let mut codec = [0u8; 4];
+    tokio::time::timeout(Duration::from_secs(3), audio.read_exact(&mut codec))
+        .await
+        .context("Android audio capture did not start")?
+        .context("reading audio codec")?;
+    match u32::from_be_bytes(codec) {
+        CODEC_OPUS => Ok(()),
+        0 => bail!("Android audio capture is unavailable"),
+        1 => bail!("scrcpy could not configure Android audio capture"),
+        other => bail!("the device negotiated audio codec {other:#010x}, not opus"),
     }
 }
 
@@ -430,16 +456,8 @@ pub async fn pump_video(
 
 /// Read Opus from scrcpy and publish it without decoding or transcoding.
 ///
-/// The handshake has already refused a zero codec id here: continuing video
-/// after capture failed would restore speaker playback, which violates the
-/// farm's silence requirement.
+/// Keep draining capture even while browser playback is disabled.
 pub async fn pump_audio(mut audio: TcpStream, publisher: AudioPublisher) -> Result<()> {
-    publisher.set_codec(AudioCodecDescription {
-        codec: "opus".into(),
-        sample_rate: 48_000,
-        channels: 2,
-    });
-
     loop {
         let packet = match read_frame(&mut audio).await.context("reading audio")? {
             VideoFrame::Session { .. } => bail!("audio stream carried a video session block"),
@@ -626,6 +644,59 @@ pub async fn read_device_message(control: &mut TcpStream) -> Result<Option<Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn failed_audio_can_fall_back_before_video_starts() {
+        use tokio::io::AsyncWriteExt as _;
+
+        for codec in [Some(0u32), Some(1), Some(CODEC_OPUS), Some(0x1234), None] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap().to_string();
+            let server = AdbStream::connect(&addr).await.unwrap();
+            let (_server_peer, _) = listener.accept().await.unwrap();
+            let video = TcpStream::connect(&addr).await.unwrap();
+            let (mut video_peer, _) = listener.accept().await.unwrap();
+            let audio = TcpStream::connect(&addr).await.unwrap();
+            let (mut audio_peer, _) = listener.accept().await.unwrap();
+            let control = TcpStream::connect(&addr).await.unwrap();
+            let (_control_peer, _) = listener.accept().await.unwrap();
+            let mut session = ScrcpySession {
+                _server: server,
+                video,
+                audio: codec.map(|_| audio),
+                audio_error: None,
+                control,
+                device_name: String::new(),
+                width: 0,
+                height: 0,
+            };
+            if let Some(codec) = codec {
+                audio_peer.write_all(&codec.to_be_bytes()).await.unwrap();
+            }
+            let video_only = codec.is_none();
+            if codec == Some(CODEC_OPUS) || video_only {
+                let mut metadata = vec![0u8; 65];
+                metadata.extend_from_slice(&CODEC_H264.to_be_bytes());
+                metadata.extend_from_slice(&SESSION_MARKER.to_be_bytes());
+                metadata.extend_from_slice(&1080u32.to_be_bytes());
+                metadata.extend_from_slice(&1920u32.to_be_bytes());
+                video_peer.write_all(&metadata).await.unwrap();
+            }
+            drop(video_peer);
+            tokio::time::timeout(Duration::from_secs(1), session.read_handshake())
+                .await
+                .unwrap()
+                .unwrap();
+            if codec == Some(CODEC_OPUS) || video_only {
+                assert!(session.audio_error.is_none());
+                assert_eq!((session.width, session.height), (1080, 1920));
+                assert_eq!(session.audio.is_none(), video_only);
+            } else {
+                assert!(session.audio_error.is_some());
+                assert!(session.audio.is_none());
+            }
+        }
+    }
 
     #[test]
     fn a_touch_is_thirty_two_bytes_in_the_order_the_server_parses() {

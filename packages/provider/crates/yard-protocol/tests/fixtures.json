@@ -328,6 +328,10 @@
       "sampleRate": 48000,
       "channels": 2
     },
+    "audioUnavailable": {
+      "type": "audio.unavailable",
+      "reason": "Android audio capture is unavailable"
+    },
     "clipboard": {
       "type": "clipboard",
       "text": "copied"
