@@ -126,6 +126,18 @@ impl Default for ScrcpyOptions {
     }
 }
 
+fn server_command(options: &ScrcpyOptions, scid: u32, capture_audio: bool) -> String {
+    // Samsung's media stack can overflow its 255-byte argv buffer; omit pinned server defaults.
+    // Waking and holding the screen on prevent idle devices from leaving viewers with black video.
+    let audio = if capture_audio { "" } else { " audio=false" };
+    format!(
+        "CLASSPATH={REMOTE_PATH} app_process / com.genymobile.scrcpy.Server {SERVER_VERSION} \
+         scid={scid:08x} log_level=info tunnel_forward=true max_size={} video_bit_rate={} max_fps={} \
+         stay_awake=true{audio}",
+        options.max_size, options.bit_rate, options.max_fps
+    )
+}
+
 impl ScrcpySession {
     /// Push the server, start it, connect all sockets, and read the handshake.
     pub async fn start(
@@ -139,19 +151,7 @@ impl ScrcpySession {
             .context("pushing the scrcpy server")?;
 
         let scid = NEXT_SCID.fetch_add(1, Ordering::Relaxed) & 0x7FFF_FFFF;
-        let command = format!(
-            // `stay_awake` and `power_on` are what make this a farm device rather
-            // than a phone: without them the display dozes on its own timeout
-            // and every later viewer gets a black screen that looks exactly
-            // like a broken stream. scrcpy restores both settings on cleanup,
-            // so the device is left as it was found.
-            "CLASSPATH={REMOTE_PATH} app_process / com.genymobile.scrcpy.Server {SERVER_VERSION} \
-             scid={scid:08x} log_level=info video=true audio={capture_audio} control=true \
-             tunnel_forward=true video_codec=h264 max_size={} video_bit_rate={} max_fps={} \
-             audio_source=output audio_codec=opus audio_dup=false \
-             stay_awake=true power_on=true cleanup=true",
-            options.max_size, options.bit_rate, options.max_fps
-        );
+        let command = server_command(options, scid, capture_audio);
 
         let server = adb
             .shell_stream(serial, &command)
@@ -662,6 +662,31 @@ pub async fn read_device_message(control: &mut TcpStream) -> Result<Option<Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn launch_command_fits_samsung_argv_buffer_with_audio_or_without_it() {
+        for options in [
+            ScrcpyOptions::default(),
+            ScrcpyOptions {
+                max_size: u32::MAX,
+                bit_rate: u32::MAX,
+                max_fps: u32::MAX,
+            },
+        ] {
+            for capture_audio in [true, false] {
+                let command = server_command(&options, 0x7fff_ffff, capture_audio);
+                // Bound the whole shell command, including CLASSPATH, more strictly than argv alone.
+                assert!(command.len() < 255, "{} bytes: {command}", command.len());
+                let args: Vec<_> = command.split_ascii_whitespace().collect();
+                assert_eq!(args.contains(&"audio=false"), !capture_audio);
+                assert!(args.contains(&"tunnel_forward=true"));
+                assert!(args.contains(&"stay_awake=true"));
+                assert!(args.contains(&format!("max_size={}", options.max_size).as_str()));
+                assert!(args.contains(&format!("video_bit_rate={}", options.bit_rate).as_str()));
+                assert!(args.contains(&format!("max_fps={}", options.max_fps).as_str()));
+            }
+        }
+    }
 
     #[tokio::test]
     async fn startup_errors_include_console_output_without_waiting_for_process_exit() {

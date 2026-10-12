@@ -513,6 +513,15 @@ with `tunnel_forward=true`, which makes it listen on a device-side abstract
 socket that the adb transport can open directly — no `adb reverse`, no host port
 per device.
 
+The launch command stays below 255 bytes, including CLASSPATH. Some Samsung
+firmware crashes in the media stack when `app_process` arguments exceed that
+limit ([upstream report](https://github.com/Genymobile/scrcpy/issues/6781)). The
+provider omits redundant fixed options and relies on the pinned server's
+defaults for H.264 video, Opus output audio without duplication, enabled control,
+power-on and cleanup. A regression test bounds both audio-enabled and video-only
+commands with the longest numeric settings. The hardware probe also omits these
+redundant defaults.
+
 Its wire format was read off a real device by `examples/scrcpy_probe.rs`, not
 inferred from scrcpy's source, because that source changes between releases.
 Re-run the probe when bumping the pin: the version string in `scrcpy.rs` must
@@ -529,8 +538,8 @@ matter: the Annex-B path tears in Chrome under motion.
 Audio uses scrcpy's `output` source and is forwarded as Opus packets without
 decoding or transcoding. Android implements that source with playback capture's
 remote-submix path: captured media is routed to the provider instead of the
-device speaker. `audio_dup=false` is explicit. Audio is optional: an unavailable
-capture or rejected volume/DND command disables browser audio, reports a warning
+device speaker. The pinned server defaults to `audio_dup=false`. Audio is
+optional: an unavailable capture or rejected volume/DND command disables browser audio, reports a warning
 on the session plane and leaves video, input and reservation authorization working.
 The provider attempts to mute media and enable total-silence DND on fallback;
 devices rejecting both commands may still produce physical sound.
