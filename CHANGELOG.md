@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.2](https://github.com/Dinip/yard/compare/v0.6.1...v0.6.2) (2026-10-12)
+
+
+### Bug Fixes
+
+* **android:** avoid audio startup delays and Samsung crashes ([#87](https://github.com/Dinip/yard/issues/87)) ([c8535ab](https://github.com/Dinip/yard/commit/c8535abacf7daac4745b01fd6d815e85cbbe30b3))
+
 ## [0.6.1](https://github.com/Dinip/yard/compare/v0.6.0...v0.6.1) (2026-10-12)
 
 
