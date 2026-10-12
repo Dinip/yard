@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1](https://github.com/Dinip/yard/compare/v0.6.0...v0.6.1) (2026-10-12)
+
+
+### Bug Fixes
+
+* **android:** keep devices usable when browser audio fails ([#85](https://github.com/Dinip/yard/issues/85)) ([6dbe7ce](https://github.com/Dinip/yard/commit/6dbe7ced6bf69c1264ccadc7151c1ced9e6254de))
+
 ## [0.6.0](https://github.com/Dinip/yard/compare/v0.5.0...v0.6.0) (2026-10-09)
 
 
