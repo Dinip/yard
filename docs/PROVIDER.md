@@ -537,10 +537,12 @@ volume.
 
 The provider raises media volume automatically for every authorized reservation
 and sets it to zero on release, capture teardown and graceful shutdown. Idle
-Android devices also enter total-silence Do Not Disturb. Authorization exits
-DND before raising volume, then reads the volume back and retries briefly while
-Android applies the DND change. A command reply alone does not prove the volume
-changed: Android can silently reject it while DND is active.
+Android devices also enter total-silence Do Not Disturb. Every volume transition
+exits DND first, including muting during bring-up, capture restarts and release.
+The provider reads the volume back and retries briefly while Android applies the
+DND change, then restores total silence for an idle device even if muting fails.
+A command reply alone does not prove the volume changed: Android can silently
+reject it while DND is active, even when setting it to zero.
 
 **Not everything on that socket is a packet.** A reset or a resize re-sends the
 session block bare — four bytes of flags, then width and height — and reading it

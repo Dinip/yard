@@ -898,9 +898,7 @@ impl AudioState {
             return Ok(());
         }
         // Total-silence DND rejects media-volume changes until its exit has propagated.
-        if active {
-            set_dnd(adb, serial, "all").await?;
-        }
+        set_dnd(adb, serial, "all").await?;
         let volume = if active {
             let output = adb
                 .shell(serial, "cmd media_session volume --stream 3 --get")
@@ -909,29 +907,34 @@ impl AudioState {
         } else {
             0
         };
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
-        loop {
-            let output = adb
-                .shell(
-                    serial,
-                    &format!("cmd media_session volume --stream 3 --set {volume} --get"),
-                )
-                .await?;
-            let actual = media_volume_current(&output).context("verifying Android media volume")?;
-            if actual == volume {
-                break;
+        let result = async {
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+            loop {
+                let output = adb
+                    .shell(
+                        serial,
+                        &format!("cmd media_session volume --stream 3 --set {volume} --get"),
+                    )
+                    .await?;
+                let actual =
+                    media_volume_current(&output).context("verifying Android media volume")?;
+                if actual == volume {
+                    return Ok(());
+                }
+                if tokio::time::Instant::now() >= deadline {
+                    return Err(anyhow!(
+                        "Android media volume stayed at {actual}, wanted {volume}"
+                    ));
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
             }
-            if tokio::time::Instant::now() >= deadline {
-                return Err(anyhow!(
-                    "Android media volume stayed at {actual}, wanted {volume}"
-                ));
-            }
-            tokio::time::sleep(Duration::from_millis(50)).await;
         }
-        // Idle total-silence DND also covers alarms, whose minimum volume may be nonzero.
+        .await;
+        // Restore idle silence even if muting failed; DND also covers nonzero-minimum alarms.
         if !active {
             set_dnd(adb, serial, "none").await?;
         }
+        result?;
         self.applied = Some(active);
         Ok(())
     }
@@ -1371,6 +1374,107 @@ fn staging_suffix() -> String {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn audio_recovers_from_idle_dnd_with_nonzero_media_volume() {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+        struct DeviceAudio {
+            dnd: bool,
+            volume: u32,
+            pending_exit: bool,
+            reject_volume: bool,
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let adb = Adb::new(listener.local_addr().unwrap().to_string());
+        // DND can retain a nonzero volume and reject changes even after acknowledging exit.
+        let device = Arc::new(Mutex::new(DeviceAudio {
+            dnd: true,
+            volume: 8,
+            pending_exit: false,
+            reject_volume: false,
+        }));
+        let peer = device.clone();
+        let server = tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut command = String::new();
+                for _ in 0..2 {
+                    let mut length = [0u8; 4];
+                    socket.read_exact(&mut length).await.unwrap();
+                    let n =
+                        usize::from_str_radix(std::str::from_utf8(&length).unwrap(), 16).unwrap();
+                    let mut service = vec![0u8; n];
+                    socket.read_exact(&mut service).await.unwrap();
+                    command = String::from_utf8(service).unwrap();
+                    socket.write_all(b"OKAY").await.unwrap();
+                }
+                let command = command.strip_prefix("shell:").unwrap();
+                let mut held = peer.lock().await;
+                let DeviceAudio {
+                    dnd,
+                    volume,
+                    pending_exit,
+                    reject_volume,
+                } = &mut *held;
+                let output = match command {
+                    "cmd notification set_dnd all" => {
+                        *pending_exit = *dnd;
+                        *dnd = false;
+                        String::new()
+                    }
+                    "cmd notification set_dnd none" => {
+                        *dnd = true;
+                        String::new()
+                    }
+                    "cmd media_session volume --stream 3 --get" => {
+                        format!("[V] volume is {volume} in range [0..15]")
+                    }
+                    _ => {
+                        let requested = command
+                            .strip_prefix("cmd media_session volume --stream 3 --set ")
+                            .unwrap()
+                            .strip_suffix(" --get")
+                            .unwrap()
+                            .parse::<u32>()
+                            .unwrap();
+                        if !*dnd && !*pending_exit && !*reject_volume {
+                            *volume = requested;
+                        }
+                        *pending_exit = false;
+                        format!("[V] volume is {volume} in range [0..15]")
+                    }
+                };
+                socket.write_all(output.as_bytes()).await.unwrap();
+            }
+        });
+
+        let mut state = AudioState::default();
+        for active in [false, false, true, false] {
+            // Bring-up and capture restarts invalidate the cached audio policy.
+            state.applied = None;
+            state.apply(&adb, "test", active).await.unwrap();
+            assert_eq!(state.applied, Some(active));
+            let held = device.lock().await;
+            assert_eq!(held.dnd, !active);
+            assert_eq!(held.volume, if active { 15 } else { 0 });
+        }
+        {
+            let mut held = device.lock().await;
+            held.volume = 8;
+            held.reject_volume = true;
+        }
+        state.applied = None;
+        let err = state.apply(&adb, "test", false).await.unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Android media volume stayed at 8, wanted 0"
+        );
+        assert_eq!(state.applied, None);
+        assert!(device.lock().await.dnd);
+        server.abort();
+    }
+
     #[tokio::test]
     #[ignore = "requires YARD_TEST_ANDROID_SERIAL and an already-running output capture"]
     async fn reserved_audio_leaves_total_silence_before_raising_media_volume() {
