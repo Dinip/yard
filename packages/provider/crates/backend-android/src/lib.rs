@@ -919,6 +919,13 @@ struct AudioState {
     configuration_error: Option<String>,
 }
 
+const AUDIO_VOLUME_DEX: &[u8] = include_bytes!("../../../vendor/audio-volume.dex");
+const AUDIO_VOLUME_PATH: &str = "/data/local/tmp/yard-audio.dex";
+
+fn media_volume_command(volume: u32) -> String {
+    format!("CLASSPATH={AUDIO_VOLUME_PATH} app_process / com.yard.AudioVolume {volume}")
+}
+
 impl AudioState {
     async fn reconcile(
         &mut self,
@@ -981,6 +988,9 @@ impl AudioState {
         }
         // Total-silence DND rejects media-volume changes until its exit has propagated.
         set_dnd(adb, serial, "all").await?;
+        adb.push(serial, AUDIO_VOLUME_PATH, AUDIO_VOLUME_DEX, 0o644)
+            .await
+            .context("pushing the Android media-volume helper")?;
         let volume = if active {
             let output = adb
                 .shell(serial, "cmd media_session volume --stream 3 --get")
@@ -994,11 +1004,10 @@ impl AudioState {
             let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
             loop {
                 // A setter may return no output even when it succeeds; query the readback separately.
-                adb.shell(
-                    serial,
-                    &format!("cmd media_session volume --stream 3 --set {volume}"),
-                )
-                .await?;
+                let output = adb.shell(serial, &media_volume_command(volume)).await?;
+                if !output.trim().is_empty() {
+                    return Err(anyhow!("setting Android media volume: {output}"));
+                }
                 let output = adb
                     .shell(serial, "cmd media_session volume --stream 3 --get")
                     .await?;
@@ -1582,6 +1591,7 @@ mod tests {
             volume: u32,
             pending_exit: bool,
             reject_volume: bool,
+            helper_error: bool,
         }
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1592,6 +1602,7 @@ mod tests {
             volume: 8,
             pending_exit: false,
             reject_volume: false,
+            helper_error: false,
         }));
         let peer = device.clone();
         let server = tokio::spawn(async move {
@@ -1608,6 +1619,29 @@ mod tests {
                     command = String::from_utf8(service).unwrap();
                     socket.write_all(b"OKAY").await.unwrap();
                 }
+                if command == "sync:" {
+                    let mut pushed = Vec::new();
+                    loop {
+                        let mut header = [0u8; 8];
+                        socket.read_exact(&mut header).await.unwrap();
+                        if &header[..4] == b"DONE" {
+                            break;
+                        }
+                        let n = u32::from_le_bytes(header[4..].try_into().unwrap()) as usize;
+                        let mut data = vec![0u8; n];
+                        socket.read_exact(&mut data).await.unwrap();
+                        match &header[..4] {
+                            b"SEND" => {
+                                assert_eq!(data, format!("{AUDIO_VOLUME_PATH},420").as_bytes())
+                            }
+                            b"DATA" => pushed.extend(data),
+                            _ => panic!("unexpected sync command"),
+                        }
+                    }
+                    assert_eq!(pushed, AUDIO_VOLUME_DEX);
+                    socket.write_all(b"OKAY\0\0\0\0").await.unwrap();
+                    continue;
+                }
                 let command = command.strip_prefix("shell:").unwrap();
                 let mut held = peer.lock().await;
                 let DeviceAudio {
@@ -1615,6 +1649,7 @@ mod tests {
                     volume,
                     pending_exit,
                     reject_volume,
+                    helper_error,
                 } = &mut *held;
                 let output = match command {
                     "cmd notification set_dnd all" => {
@@ -1631,15 +1666,19 @@ mod tests {
                     }
                     _ => {
                         let requested = command
-                            .strip_prefix("cmd media_session volume --stream 3 --set ")
+                            .strip_prefix("CLASSPATH=/data/local/tmp/yard-audio.dex app_process / com.yard.AudioVolume ")
                             .unwrap()
                             .parse::<u32>()
                             .unwrap();
-                        if !*dnd && !*pending_exit && !*reject_volume {
+                        if !*dnd && !*pending_exit && !*reject_volume && !*helper_error {
                             *volume = requested;
                         }
                         *pending_exit = false;
-                        String::new()
+                        if *helper_error {
+                            "java.lang.SecurityException: permission denied".into()
+                        } else {
+                            String::new()
+                        }
                     }
                 };
                 socket.write_all(output.as_bytes()).await.unwrap();
@@ -1656,6 +1695,16 @@ mod tests {
             assert_eq!(held.dnd, !active);
             assert_eq!(held.volume, if active { 15 } else { 0 });
         }
+        device.lock().await.helper_error = true;
+        state.applied = None;
+        assert!(state
+            .apply(&adb, "test", true)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("setting Android media volume: java.lang.SecurityException"));
+        assert_eq!(state.applied, None);
+        device.lock().await.helper_error = false;
         {
             let mut held = device.lock().await;
             held.volume = 8;
