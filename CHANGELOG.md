@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.3](https://github.com/Dinip/yard/compare/v0.6.2...v0.6.3) (2026-10-14)
+
+
+### Bug Fixes
+
+* **android:** set media volume with the shell package identity ([#90](https://github.com/Dinip/yard/issues/90)) ([05437e1](https://github.com/Dinip/yard/commit/05437e14a631d849bb8e1876929474483a3a191d))
+
 ## [0.6.2](https://github.com/Dinip/yard/compare/v0.6.1...v0.6.2) (2026-10-12)
 
 
