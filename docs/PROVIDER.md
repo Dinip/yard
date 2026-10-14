@@ -562,6 +562,18 @@ idle device even if muting fails.
 A command reply alone does not prove the volume changed: Android can silently
 reject it while DND is active, even when setting it to zero.
 
+The setter is a small embedded DEX helper, pushed to `/data/local/tmp/yard-audio.dex`
+and run with `app_process`. Android 14 can reject `cmd media_session volume --set`
+because it supplies `com.android.server.media` as the calling package for shell
+UID 2000; the command still returns success and only logcat shows the AppOps
+denial. The helper calls the device's `IAudioService` with `com.android.shell`
+and resolves its Binder interface at runtime, avoiding transaction IDs that
+change between Android releases. Readback still uses `cmd media_session volume
+--get`, and a helper error disables audio with the existing silence fallback.
+Its source is `vendor/audio-volume/AudioVolume.java`; rebuild the committed DEX
+with `ANDROID_HOME=… sh packages/provider/scripts/build-audio-volume.sh`, using
+Java 17 and Android SDK build-tools 36.1.0. Provider builds need neither tool.
+
 Audio activation and its codec handshake run alongside video and input, so
 reservation authorization and the first video frame do not wait for audio.
 Volume/DND operations remain serialized. A transition from an active reservation
