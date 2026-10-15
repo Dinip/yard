@@ -100,6 +100,10 @@ bun run dev
 Then http://localhost:5173. Full instructions, including the first-admin
 bootstrap, are in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
+Upgrading an existing farm? Follow [the upgrade guide](docs/UPGRADING.md) before
+starting the new coordinator. YARD 0.6.5 migrates existing Microsoft accounts
+automatically on startup.
+
 ## Layout
 
 ```
@@ -124,6 +128,7 @@ packages/
 | [PROTOCOL.md](docs/PROTOCOL.md) | Wire contract |
 | [CLEANUP.md](docs/CLEANUP.md) | Resetting a device between users |
 | [DEVELOPMENT.md](docs/DEVELOPMENT.md) | Setup, commands, conventions |
+| [UPGRADING.md](docs/UPGRADING.md) | Release upgrade steps, account migration and rollback |
 | [DROP.md](docs/DROP.md) | Proposed Android and iOS share-target companion plan |
 
 `docs/REFERENCES.local.md` covers the STF sources kept on disk outside this

@@ -13,10 +13,6 @@ updates:
     directory: /
     patterns: ["*"]
     multi-ecosystem-group: dependencies
-    ignore:
-      # The 1.7 auth migration will be handled separately.
-      - dependency-name: better-auth
-        versions: [">=1.7.0"]
 
   - package-ecosystem: cargo
     directory: /

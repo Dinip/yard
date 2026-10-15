@@ -40,9 +40,8 @@ start on a bad config rather than failing on the first request. See
 
 better-auth with the Drizzle adapter.
 
-The coordinator and web client pin Better Auth to 1.6.33. Dependabot ignores 1.7+
-until the [breaking changes](https://better-auth.com/docs/guides/1-7-upgrade-guide)
-are handled. Update both pins and remove the ignore rule when migrating.
+The coordinator and web client pin Better Auth to 1.7.10. Existing Microsoft
+accounts migrate automatically before the HTTP listener opens.
 
 - **Microsoft / Entra ID** via `socialProviders.microsoft`. Configured only when
   both `MICROSOFT_CLIENT_ID` and `MICROSOFT_CLIENT_SECRET` are present; the
@@ -53,6 +52,19 @@ are handled. Update both pins and remove the ignore rule when migrating.
   ban *mutations* go through better-auth's client API rather than a tRPC
   procedure, because the plugin owns the session invalidation that must follow
   them.
+
+Before opening its HTTP listener, the coordinator runs the Microsoft `sub` to
+`oid` migration once, using trusted ID tokens saved by previous successful
+logins. It checks account, client and tenant bindings without requesting signing
+keys. Account updates and the internal `migration.auth.microsoft-oid-v1` setting
+are committed together. Later boots skip the completed migration. Disabled
+Microsoft login defers it until the provider is configured. Invalid or conflicting
+records stop startup with account-specific diagnostics and no partial updates.
+
+The bundled `cli/migrate-auth.ts` command remains available for optional previews
+and manual recovery. It reads without changes by default; `--apply` migrates and
+records completion using the same transaction as startup.
+See [UPGRADING.md](./UPGRADING.md#upgrading-to-065).
 
 ### The cookie-cache gotcha
 

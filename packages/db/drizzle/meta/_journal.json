@@ -71,6 +71,13 @@
       "when": 1791536784917,
       "tag": "0009_long_annihilus",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1792061166837,
+      "tag": "0010_yielding_gargoyle",
+      "breakpoints": true
     }
   ]
 }

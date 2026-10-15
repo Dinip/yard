@@ -10,7 +10,7 @@ import { env } from "../env.ts";
  *
  * Three rules make it safe to read from anywhere:
  *
- * - **Every key is declared here** with a zod schema and a default, so a bad
+ * - **Every policy key is declared here** with a zod schema and a default, so a bad
  *   row (hand-edited, or left over from an older shape) falls back rather than
  *   propagating a wrong type into policy code.
  * - **Defaults come from the env vars these replace**, so behaviour is
