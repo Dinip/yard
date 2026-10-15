@@ -40,6 +40,10 @@ start on a bad config rather than failing on the first request. See
 
 better-auth with the Drizzle adapter.
 
+The coordinator and web client pin Better Auth to 1.6.33. Dependabot ignores 1.7+
+until the [breaking changes](https://better-auth.com/docs/guides/1-7-upgrade-guide)
+are handled. Update both pins and remove the ignore rule when migrating.
+
 - **Microsoft / Entra ID** via `socialProviders.microsoft`. Configured only when
   both `MICROSOFT_CLIENT_ID` and `MICROSOFT_CLIENT_SECRET` are present; the
   `user.capabilities` procedure reports what's live so the sign-in page renders
