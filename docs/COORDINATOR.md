@@ -40,7 +40,7 @@ start on a bad config rather than failing on the first request. See
 
 better-auth with the Drizzle adapter.
 
-The coordinator and web client pin Better Auth to 1.7.10. Existing Microsoft
+The coordinator and web client use Better Auth `^1.7.10`. Existing Microsoft
 accounts migrate automatically before the HTTP listener opens.
 
 - **Microsoft / Entra ID** via `socialProviders.microsoft`. Configured only when
