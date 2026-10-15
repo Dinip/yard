@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.4](https://github.com/Dinip/yard/compare/v0.6.3...v0.6.4) (2026-10-15)
+
+
+### Bug Fixes
+
+* **auth:** pin Better Auth to 1.6.33 ([#92](https://github.com/Dinip/yard/issues/92)) ([3adf511](https://github.com/Dinip/yard/commit/3adf51104bf0163c56734d68efe6de8ec2d8aa12))
+
 ## [0.6.3](https://github.com/Dinip/yard/compare/v0.6.2...v0.6.3) (2026-10-14)
 
 
