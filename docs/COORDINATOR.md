@@ -61,6 +61,10 @@ are committed together. Later boots skip the completed migration. Disabled
 Microsoft login defers it until the provider is configured. Invalid or conflicting
 records stop startup with account-specific diagnostics and no partial updates.
 
+This migration relies on the integrity of stored login records and does not
+re-verify their signatures. Expiry and retired signing keys are irrelevant to
+this backfill; normal login verification is unchanged.
+
 The bundled `cli/migrate-auth.ts` command remains available for optional previews
 and manual recovery. It reads without changes by default; `--apply` migrates and
 records completion using the same transaction as startup.
