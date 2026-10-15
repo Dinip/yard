@@ -26,6 +26,14 @@ in raw SQL. `reservation.lastActivityAt` shipped with this bug.
 them by name; a rename requires configuring the adapter's mapping in
 `packages/coordinator/src/auth.ts` at the same time.
 
+Better Auth 1.7 Microsoft accounts use the directory `oid` in `account_id`.
+Existing `sub` identifiers migrate automatically at coordinator startup, keeping
+the account and user row IDs unchanged. The internal setting
+`migration.auth.microsoft-oid-v1` records completion atomically with the updates;
+it is separate from the admin-editable policy registry. The auth schema also has
+lookup indexes on `session.user_id`, `account.user_id` and
+`verification.identifier`, matching the installed Better Auth schema.
+
 ## Farm tables (`farm.ts`)
 
 ### `provider`

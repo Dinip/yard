@@ -94,11 +94,13 @@ migrations applied by the entrypoint, a real signing key. The images are pulled
 from GHCR, so nothing is built here:
 
 ```bash
-cp .env.example .env.docker      # then fill in, or see below
-docker compose --env-file .env.docker up -d
-docker compose --env-file .env.docker exec coordinator \
+cp .env.example .env      # for a new deployment; then fill in, or see below
+docker compose up -d
+docker compose exec coordinator \
   bun /app/grant-admin.js you@example.com
 ```
+
+Compose loads `.env` automatically from the deployment directory.
 
 `PUBLIC_URL=http://farm.localhost` is worth knowing about: `*.localhost` is a
 *potentially trustworthy origin* in every browser, so WebCodecs gets its secure
@@ -114,7 +116,7 @@ providers refetch the JWKS.
 The production Linux shape includes a small usbmuxd sidecar:
 
 ```bash
-docker compose --env-file .env.docker --profile provider up -d
+docker compose --profile provider up -d
 ```
 
 The provider stays on the default Compose network, so Caddy still reaches it as
@@ -170,7 +172,7 @@ the host's daemons instead:
 
 ```bash
 bun packages/provider/scripts/usbmuxd-bridge.ts   # iOS only; leave it running
-docker compose --env-file .env.docker \
+docker compose \
   -f docker-compose.yml -f docker-compose.macos.yml --profile provider up -d
 ```
 
@@ -338,6 +340,14 @@ and `!` also a minor one while the version is below 1.0.0 — and a commit whose
 type is none of those is invisible to the changelog. To override the computed
 number, put `Release-As: 1.0.0` in a commit body.
 
+The automatic auth migration uses `fix(auth): migrate Microsoft accounts
+automatically on startup`. Preserve that title when squash-merging so
+release-please selects the next patch release, 0.6.5 from 0.6.4. Link the
+[YARD upgrade guide](./UPGRADING.md#upgrading-to-065) in the commit or PR body
+so users can find deployment and recovery instructions in the release notes.
+The bot updates version files and the changelog in its release PR; do not bump
+them by hand in the implementation PR.
+
 The first release will be `0.1.0`, and its changelog covers the whole history:
 there is no earlier tag to bound it. That version comes from `initial-version`
 in the config, not from bumping the manifest — with no release tag to find,
@@ -373,6 +383,13 @@ to match it, nothing reads it.
 The sign-in page renders only the methods that are actually configured — it
 reads `user.capabilities` — so a missing client ID shows as a missing button
 rather than a broken one.
+
+### Migrating existing Microsoft accounts to Better Auth 1.7
+
+Follow [the YARD 0.6.5 upgrade guide](./UPGRADING.md#upgrading-to-065) for Docker
+and source deployment instructions, schema migrations, account migration and
+rollback. Microsoft account identifiers migrate once before the coordinator
+opens its HTTP listener; the `migrate-auth` CLI is optional.
 
 ## Conventions
 

@@ -30,6 +30,8 @@ RUN mkdir -p /app/out \
  && bun build packages/db/src/migrate.ts \
       --target=bun --sourcemap=linked --outdir /app/out \
  && bun build packages/coordinator/src/cli/grant-admin.ts \
+      --target=bun --sourcemap=linked --outdir /app/out \
+ && bun build packages/coordinator/src/cli/migrate-auth.ts \
       --target=bun --sourcemap=linked --outdir /app/out
 
 FROM oven/bun:1-slim AS runtime
