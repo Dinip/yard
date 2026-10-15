@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.5](https://github.com/Dinip/yard/compare/v0.6.4...v0.6.5) (2026-10-15)
+
+
+### Bug Fixes
+
+* **auth:** migrate Microsoft accounts automatically on startup ([#95](https://github.com/Dinip/yard/issues/95)) ([5ec47ff](https://github.com/Dinip/yard/commit/5ec47ff9d9742dfa04518ff3dc2a27de1d48467b))
+
 ## [0.6.4](https://github.com/Dinip/yard/compare/v0.6.3...v0.6.4) (2026-10-15)
 
 
