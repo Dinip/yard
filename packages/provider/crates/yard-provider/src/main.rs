@@ -98,7 +98,17 @@ async fn main() -> Result<()> {
         supervisor.add_with_cleanup_paths(
             device.udid.clone(),
             backend,
-            device.cleanup_paths.clone(),
+            device
+                .cleanup_paths
+                .iter()
+                .cloned()
+                .chain(
+                    device
+                        .cleanup_app_paths
+                        .iter()
+                        .map(|entry| entry.synthetic_path()),
+                )
+                .collect(),
         );
     }
 

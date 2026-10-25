@@ -3,19 +3,23 @@
 > Status: Android is written end to end (increments 0 through 10) and the
 > release workflow builds the APK. Increments 0 through 9 are signed off on
 > hardware; increment 10's streaming download and reservation cleanup are the
-> two things left to watch on a device. Everything iOS is still a plan.
+> two things left to watch on a device. The iOS implementation now includes
+> Runner, a native Share Extension, capture-bound browser delivery, House Arrest
+> cleanup, automated tests and unsigned IPA releases. Physical iPhone
+> testing passed on an iPhone 13 with iOS 27 and seven-day Personal Team signing.
+> The remaining source-app and rollout checks are listed below.
 
-YARD Drop is a first-party Flutter companion that appears as an Android share
+YARD Drop is a first-party Flutter companion that appears as an Android and iOS share
 target. It accepts file attachments from any app and gives the tester two
 choices:
 
-- **Save on this device** copies the files to a user-visible Downloads folder.
+- **Save on this device** copies files to Android Downloads or a location chosen
+  through the iOS Files picker.
 - **Send to YARD browser** puts the files in a short-lived device inbox that the
   current YARD session can download.
 
-Android comes first. The iOS application and Share Extension are designed below,
-but their implementation does not begin until the Android flow has passed the
-end-to-end tests in this document.
+Android shipped first. The increment descriptions below preserve the original
+acceptance plan, including the physical-device checks required before rollout.
 
 ## Constraints
 
@@ -145,7 +149,9 @@ yard-drop-0.4.0+142-ios.ipa
 yard-drop-0.4.0+142-ios.ipa.sha256
 ```
 
-Only publish the Android files until iOS is implemented. Call the reusable
+The mobile workflow checks for changes under `apps/yard_drop/` since the
+previous release before building either platform. The IPA is unsigned; farm
+operators sign the app and extension using their own Apple account. Call the reusable
 mobile workflow from the existing release workflow because a tag created with
 `GITHUB_TOKEN` does not start another tag-triggered workflow.
 
@@ -922,6 +928,78 @@ Android is complete when all of these statements hold:
 - The company ZIP passes an end-to-end byte comparison on a real farm device.
 
 ## iOS design
+
+### Implementation notes
+
+`apps/yard_drop/ios` contains the Flutter 3.44.9 Runner and a native SwiftUI
+ShareExtension, sharing `DropStore.swift`. The fixed identifiers and signing
+setup are in [the companion README](../apps/yard_drop/README.md#ios).
+Both targets require iOS 27.0. CI selects GitHub's `xcode-27` runner.
+Runner uses UIScene and registers the capture channel after its implicit
+Flutter engine initializes. The extension never loads Flutter.
+
+The launch arguments are `--yard-drop arm <uuid> <expiry-epoch-ms>` and
+`--yard-drop publish <uuid>`. The provider restarts Drop for these launches,
+because a running process does not receive replacement command-line arguments.
+The browser discovers the installed companion by bundle ID or its unchanged
+product name, so user-signed bundles can use their own IDs. The native targets
+read their App Group from `YardAppGroup` in Info.plist. The browser creates a
+fresh ID for each Prepare iPhone action and only polls
+that capture's subtree after Finish transfer. Refreshing requires preparing a
+new capture. Revocation disables polling; existing file tokens still pass the
+provider's reservation check on every request.
+
+Captures last at most ten minutes. A cross-process lock serializes arm, queue
+and publish operations. Preparing removes older queued and published captures;
+an extension receiving a file during that change cannot queue under the new
+ID. Empty publication keeps the capture armed so Finish transfer can be retried
+when a share finishes. Successful publication clears the arm record.
+
+The extension stages opaque files with 64 KB copies, one representation per
+attachment. Metadata records failures without hiding successful attachments.
+Files export uses the system multi-file document picker. Ready browser batches
+write the same schema 1 manifest Android uses, with additional capture and UTI
+fields. In App Group staging, payloads use random `.bin` names; publication
+copies them to sanitized, unique display names before writing the ready marker.
+
+`cleanup_app_paths` is provider-local structured configuration. Validated
+entries become synthetic app paths internally, so the existing cleanup report
+and audit event cover House Arrest deletion without changing the wire protocol.
+See [CLEANUP.md](CLEANUP.md) for the required farm settings.
+
+Flutter CI builds simulator and unsigned release targets and runs native tests.
+The release workflow packages an unsigned IPA without Apple credentials. Users
+sign Runner and the extension with their own profiles and shared App Group; see
+[the signing guide](../apps/yard_drop/ios/SIGNING.md).
+
+Verified on 2026-10-25 with an iPhone 13 running iOS 27.0, using Xcode 27.2 and
+seven-day Personal Team profiles for both targets. The App Group had to be
+registered and selected in Xcode; automatic command-line provisioning initially
+produced profiles with empty group lists. After that setup, the release app and
+embedded extension signed and installed successfully.
+
+A 32 MB ZIP shared through Files passed both destinations. The tester operated
+the actual share sheet and document picker. The arm launch wrote the expected
+capture ID to the App Group, the extension queued a ready batch, and a second
+launch published it into Documents. Both the Files-saved copy and published
+copy pulled through House Arrest had SHA-256
+`0503896606b2d82c9954b9583cdbcb182393e22b5b9188a58552c10bf1c5f993`, matching
+the source. The temporary probe files were removed afterwards.
+
+The provider's opt-in `drop_documents_pull_and_cleanup_over_house_arrest` test
+also passed on that phone. It exercises the Rust backend's actual file pull,
+recursive app Documents cleanup and repeated cleanup of an absent subtree.
+Normal Cargo tests skip it; run it with an installed companion and
+`YARD_TEST_IOS_UDID` when testing hardware. Its fixture has a unique directory
+under `/Documents/YARD Drop` and does not wipe other batches.
+
+Still to check before wider rollout: Photos, Safari and the company ZIP,
+multiple attachments in the real extension, low space, extension termination,
+signing upgrades, and the full live web reservation/audit flow. Automated web
+tests cover capture commands, custom signed bundle IDs and capture-scoped inbox
+reading; the hardware check above used launch commands and House Arrest directly.
+
+### Original design
 
 iOS keeps the Flutter containing app but needs a native Share Extension target.
 The extension runs in a separate sandbox and may run while the containing app is

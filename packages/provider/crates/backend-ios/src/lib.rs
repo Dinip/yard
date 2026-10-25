@@ -1183,23 +1183,35 @@ impl DeviceBackend for IosBackend {
         Ok(())
     }
 
-    /// Empties the staging directory installs upload through.
-    ///
-    /// This is the whole of iOS's filesystem reach: AFC sees the media
-    /// partition, not an app's container, so there is nothing else a wipe could
-    /// touch. Configured `cleanup_paths` are interpreted relative to that same
-    /// AFC root.
+    /// Media paths use AFC; validated app Documents subtrees use House Arrest.
     async fn wipe_paths(&self, paths: &[String]) -> BackendResult<()> {
         let provider = device::usbmux_provider(&self.options.udid).await?;
-        let mut afc = AfcClient::connect(&*provider)
-            .await
-            .map_err(|err| anyhow!("afc connect: {err:?}"))?;
-
         for path in paths {
-            let path = path.trim_start_matches('/');
-            afc.remove_all(path)
-                .await
-                .map_err(|err| anyhow!("wiping {path}: {err:?}"))?;
+            let (mut afc, inner) = match IosPath::parse(path) {
+                IosPath::App { bundle, path } => {
+                    let house = HouseArrestClient::connect(&*provider)
+                        .await
+                        .map_err(|err| anyhow!("house_arrest connect: {err:?}"))?;
+                    let afc = house
+                        .vend_documents(bundle)
+                        .await
+                        .map_err(|err| anyhow!("vend documents: {err:?}"))?;
+                    (afc, path)
+                }
+                _ => {
+                    let afc = AfcClient::connect(&*provider)
+                        .await
+                        .map_err(|err| anyhow!("afc connect: {err:?}"))?;
+                    (afc, path.trim_start_matches('/').to_owned())
+                }
+            };
+            match afc.remove_all(&inner).await {
+                Ok(()) => {}
+                Err(idevice::IdeviceError::Afc(
+                    idevice::services::afc::errors::AfcError::ObjectNotFound,
+                )) => {}
+                Err(err) => return Err(anyhow!("wiping {path}: {err:?}").into()),
+            }
         }
         Ok(())
     }
@@ -1226,9 +1238,11 @@ impl DeviceBackend for IosBackend {
             &mut adapter,
             &session.handshake
         )?;
+        // Launch arguments are process state: a warm Drop must restart for a new capture command.
+        let restart = args.first().is_some_and(|arg| arg == "--yard-drop");
         let args: Vec<&str> = args.iter().map(String::as_str).collect();
         client
-            .launch_application(app_id, &args, false, false, None, None, None)
+            .launch_application(app_id, &args, restart, false, None, None, None)
             .await
             .map_err(|err| BackendError::Failed(format!("launch {app_id}: {err:?}")))?;
         Ok(())
@@ -1750,5 +1764,50 @@ mod tests {
     fn external_power_stands_in_for_a_missing_charging_flag() {
         let reading = parse_battery(&dict(&[("ExternalConnected", 1u64.into())]));
         assert_eq!(reading.charging, Some(true));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires YARD_TEST_IOS_UDID and the signed YARD Drop companion"]
+    async fn drop_documents_pull_and_cleanup_over_house_arrest() {
+        let udid = std::env::var("YARD_TEST_IOS_UDID").unwrap();
+        let options = serde_json::json!({ "auto_mount_ddi": false });
+        let backend = IosBackend::new(
+            IosOptions::parse(&udid, options.as_object().unwrap()).unwrap(),
+            None,
+        );
+        let provider = device::usbmux_provider(&udid).await.unwrap();
+        let house = HouseArrestClient::connect(&*provider).await.unwrap();
+        let mut afc = house
+            .vend_documents("com.dinispimpao.yard.drop")
+            .await
+            .unwrap();
+        let id = uuid::Uuid::new_v4();
+        let directory = format!("/Documents/YARD Drop/probe-{id}");
+        afc.mk_dir(&directory).await.unwrap();
+        let remote_path = format!("{directory}/probe.bin");
+        let expected = b"YARD Drop House Arrest fixture";
+        let mut remote = afc.open(&remote_path, AfcFopenMode::Wr).await.unwrap();
+        remote.write_entire(expected).await.unwrap();
+        remote.close().await.unwrap();
+        let local = std::env::temp_dir().join(format!("yard-drop-{id}.bin"));
+        let count = backend
+            .pull_file(
+                &format!("app:com.dinispimpao.yard.drop:{remote_path}"),
+                &local,
+            )
+            .await
+            .unwrap();
+        assert_eq!(count, expected.len() as u64);
+        assert_eq!(tokio::fs::read(&local).await.unwrap(), expected);
+        tokio::fs::remove_file(local).await.unwrap();
+        let paths = [format!("app:com.dinispimpao.yard.drop:{directory}")];
+        backend.wipe_paths(&paths).await.unwrap();
+        assert!(matches!(
+            afc.get_file_info(directory).await,
+            Err(idevice::IdeviceError::Afc(
+                idevice::services::afc::errors::AfcError::ObjectNotFound
+            ))
+        ));
+        backend.wipe_paths(&paths).await.unwrap();
     }
 }

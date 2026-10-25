@@ -10,12 +10,10 @@ on:
   pull_request:
     paths:
       - "apps/yard_drop/**"
-      - ".github/workflows/flutter.yml"
   push:
     branches: [main]
     paths:
       - "apps/yard_drop/**"
-      - ".github/workflows/flutter.yml"
 
 permissions:
   contents: read
@@ -39,7 +37,7 @@ jobs:
           java-version: "17"
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: 3.35.6
+          flutter-version: 3.44.9
           channel: stable
           cache: true
       - run: flutter pub get
@@ -47,3 +45,23 @@ jobs:
       - run: flutter analyze
       - run: flutter test
       - run: flutter build apk --debug
+
+  ios:
+    runs-on: xcode-27
+    steps:
+      - uses: actions/checkout@v7
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.44.9
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter build ios --simulator --debug --build-number=1
+      - name: Test the native share and capture code
+        run: |
+          DEVICE_ID=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; print(next(d["udid"] for devices in json.load(sys.stdin)["devices"].values() for d in devices if d["name"].startswith("iPhone")))')
+          xcodebuild test -workspace ios/Runner.xcworkspace -scheme Runner \
+            -destination "platform=iOS Simulator,id=$DEVICE_ID" \
+            CODE_SIGNING_ALLOWED=NO
+          python3 ios/test_handoff.py "$DEVICE_ID"
+      - run: flutter build ios --release --no-codesign --build-number=1

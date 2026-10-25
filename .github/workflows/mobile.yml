@@ -19,7 +19,29 @@ defaults:
     working-directory: apps/yard_drop
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    outputs:
+      drop: ${{ steps.diff.outputs.drop }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: diff
+        run: |
+          PREVIOUS=$(git describe --tags --match 'v[0-9]*' --abbrev=0 HEAD^ 2>/dev/null || true)
+          if [ -z "$PREVIOUS" ] || ! git diff --quiet "$PREVIOUS" HEAD -- apps/yard_drop/; then
+            echo 'drop=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'drop=false' >> "$GITHUB_OUTPUT"
+          fi
+
   android:
+    needs: changes
+    if: needs.changes.outputs.drop == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -29,7 +51,7 @@ jobs:
           java-version: "17"
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: 3.35.6
+          flutter-version: 3.44.9
           channel: stable
           cache: true
       - run: flutter pub get
@@ -51,3 +73,40 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "v${{ inputs.version }}" "$RUNNER_TEMP/yard-drop-${{ inputs.version }}.apk" --clobber
+
+  ios:
+    needs: changes
+    if: needs.changes.outputs.drop == 'true'
+    runs-on: xcode-27
+    steps:
+      - uses: actions/checkout@v7
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.44.9
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: Build the unsigned IPA
+        env:
+          YARD_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          BUILD_NUMBER=$((GITHUB_RUN_NUMBER * 100 + GITHUB_RUN_ATTEMPT))
+          printf 'YARD_COMMIT = %s\n' "${GITHUB_SHA:0:7}" > ios/Flutter/BuildInfo.xcconfig
+          flutter build ios --release --no-codesign \
+            --build-name="$YARD_VERSION" --build-number="$BUILD_NUMBER" \
+            --dart-define=YARD_VERSION="$YARD_VERSION" \
+            --dart-define=YARD_BUILD_NUMBER="$BUILD_NUMBER" \
+            --dart-define=YARD_COMMIT="${GITHUB_SHA:0:7}"
+          mkdir -p "$RUNNER_TEMP/unsigned/Payload"
+          ditto build/ios/iphoneos/Runner.app "$RUNNER_TEMP/unsigned/Payload/Runner.app"
+          ARTIFACT="yard-drop-$YARD_VERSION+$BUILD_NUMBER-ios-unsigned.ipa"
+          cd "$RUNNER_TEMP/unsigned"
+          zip -qry "$RUNNER_TEMP/$ARTIFACT" Payload
+          cd "$RUNNER_TEMP"
+          shasum -a 256 "$ARTIFACT" > "$ARTIFACT.sha256"
+      - name: Attach the unsigned IPA to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          YARD_VERSION: ${{ inputs.version }}
+        run: gh release upload "v$YARD_VERSION" "$RUNNER_TEMP"/yard-drop-*-ios-unsigned.ipa "$RUNNER_TEMP"/yard-drop-*-ios-unsigned.ipa.sha256

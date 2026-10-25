@@ -3,7 +3,8 @@ description: 'YARD Drop: the YARD - Device Farm share companion.'
 publish_to: none
 version: 0.6.5
 environment:
-  sdk: ^3.9.2
+  sdk: ^3.12.2
+  flutter: '>=3.44.9'
 dependencies:
   flutter:
     sdk: flutter

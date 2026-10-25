@@ -455,9 +455,7 @@ export function DeviceConsole({
           run: () => installInput.current?.click(),
         },
         { key: "browse", label: "Files", icon: FolderOpen, run: () => setFilesOpen(true) },
-        // The companion app is Android-only, so on iOS this would open a
-        // dialog that can never fill.
-        ...(platform === "android"
+        ...(platform === "android" || platform === "ios"
           ? [
               {
                 key: "drop",
@@ -735,7 +733,14 @@ export function DeviceConsole({
         onOpenChange={setFilesOpen}
       />
 
-      <DeviceDropDialog deviceId={deviceId} open={dropOpen} onOpenChange={setDropOpen} />
+      <DeviceDropDialog
+        key={deviceId}
+        deviceId={deviceId}
+        platform={platform}
+        active={active && !session.revoked}
+        open={dropOpen}
+        onOpenChange={setDropOpen}
+      />
     </div>
   );
 }

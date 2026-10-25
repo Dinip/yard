@@ -725,6 +725,18 @@ no `pm clear`. The paths `wipe_paths` acts on come from the device's own
 `cleanup_paths` in `provider.yaml`, guarded against `/system` and friends at
 config load. See [CLEANUP.md](CLEANUP.md).
 
+For an iOS app container, `cleanup_app_paths` supplies structured `bundle_id`
+and `path` entries. Only iOS devices accept them, and a path must name a
+subtree beneath `/Documents`, with no empty, `.` or `..` components. The host
+converts each validated entry to `app:<bundle>:<path>` for the existing cleanup
+runner. The iOS backend vends that app's Documents through House Arrest and
+removes the subtree. Missing directories are already clean. Ordinary
+`cleanup_paths` still refer to the AFC media domain.
+
+Launching an app with the YARD Drop `--yard-drop` prefix restarts an existing
+process so iOS delivers each arm or publish command as fresh launch arguments.
+Launches without that prefix retain their existing behavior.
+
 `set_screen_awake` is absolute rather than a toggle: callers ask for the state
 they want, and a backend that can only toggle is responsible for getting there.
 `true` means more than a lit panel — it must leave the device at a usable home

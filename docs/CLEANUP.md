@@ -137,7 +137,7 @@ if that turns out to matter in practice.
 | Uninstall apps installed during the session | `cleanup.uninstallApps` | on | `pm uninstall` | `AppService` uninstall |
 | Reset screen state — HOME, rotation, clipboard | `cleanup.resetScreen` | on | keyevent + rotate + clipboard | home button + rotate |
 | Clear data of surviving third-party apps | `cleanup.clearAppData` | **off** | `pm clear` | unsupported |
-| Wipe configured scratch directories | `cleanup.wipeFolders` | **off** | `rm -rf` per entry | staged `.ipa` |
+| Wipe configured scratch directories | `cleanup.wipeFolders` | **off** | `rm -rf` per entry | AFC media paths and configured app Documents subtrees |
 
 Plus `cleanup.enabled` (off), which enables the ordinary reset steps,
 `cleanup.timeoutSeconds` (120), and the two pattern lists that scope
@@ -217,6 +217,27 @@ A device running the YARD Drop companion needs its saved folder covered, which
 name `/sdcard/Download/YARD Drop` itself, or a tester's files wait there for
 whoever reserves the device next. See
 [apps/yard_drop/README.md](../apps/yard_drop/README.md).
+
+On iOS, app Documents are a separate filesystem domain. Configure them with
+`cleanup_app_paths`, rather than putting an app path into `cleanup_paths`:
+
+```yaml
+devices:
+  - udid: <ios-udid>
+    backend: ios
+    cleanup_app_paths:
+      - bundle_id: com.dinispimpao.yard.drop
+        path: /Documents/YARD Drop
+```
+
+Enable `cleanup.enabled` and `cleanup.wipeFolders` for this to run on release.
+The provider refuses non-iOS entries, empty or malformed bundle IDs, the
+Documents root, traversal and empty path components at startup. House Arrest
+deletes only the configured subtree, leaves the app installed, and reports
+`app:com.dinispimpao.yard.drop:/Documents/YARD Drop` in the cleanup audit row.
+The private App Group is inaccessible to the provider. YARD Drop only publishes
+batches with the browser's matching, unexpired capture ID, and a new Prepare
+iPhone operation purges the previous capture before sharing begins.
 
 The provider intersects the coordinator's step set with what its backend
 supports and what its own config allows. A step nobody configured is a no-op,

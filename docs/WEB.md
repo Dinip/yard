@@ -187,11 +187,18 @@ src/hooks/use-device-session.ts
 src/components/device-screen.tsx       canvas + input capture
 src/components/device-console.tsx      screen + controls + drop target
 src/components/device-files-dialog.tsx browse the device, download a file
-src/components/device-drop-dialog.tsx  files shared into YARD Drop (Android)
+src/components/device-drop-dialog.tsx  files shared into YARD Drop (Android/iOS)
 src/lib/drop-inbox.ts                  read YARD Drop's batches off a device
 src/lib/popout.ts                      open the popout, sized to the device
 src/lib/side-panels.ts                 which flanks are open, per user
 ```
+
+On iOS, Receive shared files prepares a ten-minute capture through the existing
+app-launch command. Finish transfer launches the companion again to publish
+only that capture, and the dialog polls its House Arrest Documents path. The
+app's installed product name lets a user-signed build use a different bundle
+ID. A browser refresh starts a new capture; revocation disables polling. File
+listing and downloads still go directly to the provider.
 
 `DeviceConsole` is shared verbatim by `/devices/:id` and the popout, so there is
 one control surface, not two that drift.
@@ -201,7 +208,7 @@ one control surface, not two that drift.
 The actions are built once as three sections — **Device** (Back, Home, Recents,
 and for an admin Volume up, Volume down, Lock and Reboot),
 **Screen** (Rotate, Screenshot, Record) and **Files** (Install, Files, Receive
-shared files on Android, Copy from device, Paste to device) — and the `controls` prop chooses how they are drawn.
+shared files on Android and iOS, Copy from device, Paste to device) — and the `controls` prop chooses how they are drawn.
 
 - `"rail"` — a bordered strip left of the screen: one **labelled** button per
   row, a heading per section. It sits beside the screen rather than under it

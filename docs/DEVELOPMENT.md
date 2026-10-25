@@ -5,8 +5,8 @@
 - [Bun](https://bun.sh) ≥ 1.3
 - Docker (for Postgres; also for the full stack)
 - Rust toolchain — phases 3+ only
-- [Flutter](https://docs.flutter.dev/get-started/install) ≥ 3.35 — the YARD Drop
-  Android companion only; nothing else in the repository needs it
+- [Flutter](https://docs.flutter.dev/get-started/install) 3.44.9 — the YARD Drop
+  Android and iOS companion only; nothing else in the repository needs it
 
 ## First run
 
@@ -223,18 +223,25 @@ cargo fmt --check
 bun run protocol:check    # tests + regen + diff, as CI runs it
 ```
 
-The Android companion, from `apps/yard_drop`:
+The Android and iOS companion, from `apps/yard_drop`:
 
 ```bash
 flutter pub get
 flutter analyze
 flutter test
 flutter build apk --debug
+flutter build ios --simulator --debug --build-number=1  # macOS with Xcode 27+
+xcodebuild test -workspace ios/Runner.xcworkspace -scheme Runner \
+  -destination 'platform=iOS Simulator,name=<available iPhone>' CODE_SIGNING_ALLOWED=NO
 ```
 
 These deliberately stay out of the root Bun scripts: a contributor who never
 touches the app should not need a Flutter toolchain, and `flutter.yml` is the
-only workflow that installs one. See
+workflow that checks both platforms. Flutter 3.44 uses Swift Package Manager
+for iOS and the UIScene lifecycle. The capture channel registers in
+`didInitializeImplicitFlutterEngine`, after the implicit engine exists. Android
+keeps its existing Kotlin Gradle plugin with Flutter's generated compatibility
+flags. See
 [apps/yard_drop/README.md](../apps/yard_drop/README.md).
 
 `protocol:check` is the drift guard: `generated.rs` is committed, so a zod schema
