@@ -741,6 +741,9 @@ Drop until retry without making the whole device unavailable. iOS writes a
 two-minute App Group lease, refreshed every 30 seconds, through the CoreDevice
 file service over the existing USB/RSD tunnel. It never launches Runner. Set
 `options.drop_app_group` for a companion signed with a custom group identifier.
+File-service rejection warnings include the command, group identifier or path,
+and iOS's nested error description when present. These distinguish container
+access failures from lease-file operations without logging file contents.
 
 `drop:/` lists only completed batches for the current reservation. Returned
 paths include that reservation ID; a stale path, traversal or symbolic link is

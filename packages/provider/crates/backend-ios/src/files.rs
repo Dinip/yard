@@ -264,24 +264,50 @@ async fn request_reply(
     client: &mut RemoteXpcClient<Box<dyn ReadWrite>>,
     request: Dictionary,
 ) -> Result<plist::Dictionary> {
+    let operation = [
+        "Cmd",
+        "OperationType",
+        "Identifier",
+        "Path",
+        "OldPath",
+        "NewPath",
+    ]
+    .into_iter()
+    .filter_map(|key| {
+        request
+            .get(key)
+            .and_then(XPCObject::as_string)
+            .map(|value| format!("{key}={value:?}"))
+    })
+    .collect::<Vec<_>>()
+    .join(" ");
     let response = tokio::time::timeout(std::time::Duration::from_secs(5), async {
         client.send_object(request, true).await?;
         client.recv().await
     })
     .await
     .context("iOS file service timed out")??;
+    parse_reply(response, &operation)
+}
+
+fn parse_reply(response: plist::Value, operation: &str) -> Result<plist::Dictionary> {
     let response = response
         .into_dictionary()
         .context("file service returned a non-dictionary")?;
     if let Some(error) = response.get("EncodedError") {
-        bail!(
-            "iOS file service: {}",
-            response
-                .get("LocalizedDescription")
-                .unwrap_or(error)
-                .as_string()
-                .unwrap_or("operation rejected")
-        );
+        let description = response
+            .get("LocalizedDescription")
+            .and_then(plist::Value::as_string)
+            .or_else(|| {
+                error
+                    .as_dictionary()?
+                    .get("NSLocalizedDescription")?
+                    .as_string()
+            })
+            .or_else(|| error.as_string())
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("{error:?}"));
+        bail!("iOS file service {operation}: {description}");
     }
     Ok(response)
 }
@@ -289,6 +315,64 @@ async fn request_reply(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn file_service_rejections_preserve_the_reason_and_operation() {
+        for (encoded, expected) in [
+            (
+                plist::Value::Dictionary(plist::Dictionary::from_iter([(
+                    "NSLocalizedDescription",
+                    plist::Value::String("The application group is not accessible.".into()),
+                )])),
+                "The application group is not accessible.",
+            ),
+            (
+                plist::Value::String("Permission denied".into()),
+                "Permission denied",
+            ),
+            (
+                plist::Value::Dictionary(plist::Dictionary::from_iter([(
+                    "Code",
+                    plist::Value::Integer(11007.into()),
+                )])),
+                "11007",
+            ),
+        ] {
+            let response =
+                plist::Value::Dictionary(plist::Dictionary::from_iter([("EncodedError", encoded)]));
+            let error = parse_reply(response, "CreateSession group.company.drop")
+                .unwrap_err()
+                .to_string();
+            assert!(
+                error.contains("CreateSession group.company.drop"),
+                "{error}"
+            );
+            assert!(error.contains(expected), "{error}");
+        }
+        let response = plist::Value::Dictionary(plist::Dictionary::from_iter([
+            ("EncodedError", plist::Value::Boolean(true)),
+            (
+                "LocalizedDescription",
+                plist::Value::String("Device is locked".into()),
+            ),
+        ]));
+        assert!(parse_reply(response, "OpenDirectory Library")
+            .unwrap_err()
+            .to_string()
+            .contains("Device is locked"));
+    }
+
+    #[test]
+    fn successful_file_service_replies_are_unchanged() {
+        let response = plist::Dictionary::from_iter([(
+            "NewSessionID",
+            plist::Value::String("session-id".into()),
+        )]);
+        assert_eq!(
+            parse_reply(plist::Value::Dictionary(response.clone()), "CreateSession").unwrap(),
+            response
+        );
+    }
 
     #[test]
     fn file_transfer_length_is_bounded_before_allocating() {
