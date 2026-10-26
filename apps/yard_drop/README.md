@@ -115,9 +115,10 @@ certificate, provisioning profile or signing secret. An unsigned IPA cannot be
 installed on an ordinary iPhone until its user signs both the app and extension.
 
 Use `python3 ios/sign-release.py --help` to download the latest release and sign
-it with your team, custom bundle IDs and App Group using existing Xcode profiles
-and a Keychain identity. See [iOS signing instructions](ios/SIGNING.md) for the
-command and profile setup, including Xcode's free seven-day Personal Team provisioning.
+it with your team, custom bundle IDs and App Group using Xcode's signed-in account
+and Release Testing export flow. No manual certificate import is required.
+See [iOS signing instructions](ios/SIGNING.md) for company account setup and
+the separate source-build route for Xcode's free seven-day Personal Team provisioning.
 Both targets must share an App Group authorized by their profiles. The native
 App Group identifier is read from `YardAppGroup` in each target's Info.plist, so
 users can change it when signing. Set the provider device option

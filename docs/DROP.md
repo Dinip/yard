@@ -940,7 +940,8 @@ run for every release. Users sign Runner and
 the extension with their own profiles and shared
 App Group. `apps/yard_drop/ios/sign-release.py` downloads the latest release,
 checks its checksum and signs both bundles with custom IDs and an App Group,
-using existing profiles and a Keychain identity for the selected team.
+using Xcode's signed-in account and automatic Release Testing export for the
+selected team, including cloud-managed distribution signing.
 See [the signing guide](../apps/yard_drop/ios/SIGNING.md).
 
 The flow matches Android: share files, choose YARD - Device Farm, then Send to

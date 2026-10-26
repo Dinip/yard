@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Download the latest YARD Drop IPA and sign it with locally provisioned IDs."""
+"""Download the latest YARD Drop IPA and export it using your Xcode account."""
 
 import argparse
 from datetime import datetime, timezone
@@ -18,54 +18,6 @@ import zipfile
 
 def run(*args):
     return subprocess.check_output([str(arg) for arg in args])
-
-
-def select_profiles(team, bundle_ids, group, directories):
-    identities = set(re.findall(
-        r"\b[0-9A-F]{40}\b",
-        run("security", "find-identity", "-v", "-p", "codesigning").decode().upper(),
-    ))
-    matches = [[], []]
-    for directory in directories:
-        for path in sorted(directory.glob("*.mobileprovision")):
-            profile = plistlib.loads(run("security", "cms", "-D", "-i", path))
-            entitlements = profile.get("Entitlements", {})
-            if (
-                profile.get("TeamIdentifier") != [team]
-                or entitlements.get("com.apple.developer.team-identifier") != team
-                or profile["ExpirationDate"] <= datetime.now(timezone.utc).replace(tzinfo=None)
-                or group not in entitlements.get("com.apple.security.application-groups", [])
-                or not (profile.get("ProvisionedDevices") or profile.get("ProvisionsAllDevices"))
-            ):
-                continue
-            certificates = {
-                hashlib.sha1(cert).hexdigest().upper()
-                for cert in profile.get("DeveloperCertificates", [])
-            } & identities
-            for index, bundle_id in enumerate(bundle_ids):
-                app_id = entitlements.get("application-identifier", "")
-                if app_id.partition(".")[2] == bundle_id and certificates:
-                    matches[index].append((profile, path, certificates))
-    for candidates in matches:
-        candidates.sort(key=lambda item: item[0]["ExpirationDate"], reverse=True)
-    for app in matches[0]:
-        for extension in matches[1]:
-            common = app[2] & extension[2]
-            app_devices = set(app[0].get("ProvisionedDevices", []))
-            extension_devices = set(extension[0].get("ProvisionedDevices", []))
-            prefixes = [item[0]["Entitlements"]["application-identifier"].partition(".")[0]
-                        for item in [app, extension]]
-            if common and prefixes[0] == prefixes[1] and (
-                app[0].get("ProvisionsAllDevices")
-                or extension[0].get("ProvisionsAllDevices")
-                or app_devices & extension_devices
-            ):
-                return [app[:2], extension[:2]], sorted(common)[0]
-    raise ValueError(
-        "No compatible profiles and Keychain private key found. In Xcode, provision "
-        f"{bundle_ids[0]} and {bundle_ids[1]} for team {team}, both with App Group "
-        f"{group} and a common destination device. See ios/SIGNING.md."
-    )
 
 
 def download_release(directory):
@@ -90,7 +42,7 @@ def download_release(directory):
     return ipa
 
 
-def sign_release(ipa, directory, bundle_ids, group, profiles, identity):
+def prepare_archive(ipa, directory, bundle_ids, group, team):
     # Validate paths before ditto extracts an archive into the signing workspace.
     with zipfile.ZipFile(ipa) as archive:
         for entry in archive.infolist():
@@ -105,37 +57,78 @@ def sign_release(ipa, directory, bundle_ids, group, profiles, identity):
     if (list((unpacked / "Payload").glob("*.app")) != [app]
             or list((app / "PlugIns").iterdir()) != [extension]):
         raise ValueError("Expected Runner.app with exactly one ShareExtension.appex.")
-    entitlement_paths = []
-    for bundle, bundle_id, (profile, profile_path) in zip(
-        [app, extension], bundle_ids, profiles
-    ):
+    for bundle, bundle_id in zip([app, extension], bundle_ids):
         info_path = bundle / "Info.plist"
         info = plistlib.loads(info_path.read_bytes())
         info["CFBundleIdentifier"] = bundle_id
         info["YardAppGroup"] = group
         info_path.write_bytes(plistlib.dumps(info))
-        shutil.copyfile(profile_path, bundle / "embedded.mobileprovision")
-        allowed = profile["Entitlements"]
-        entitlements = {
-            "application-identifier": allowed["application-identifier"],
-            "com.apple.developer.team-identifier": allowed["com.apple.developer.team-identifier"],
-            "com.apple.security.application-groups": [group],
-            "get-task-allow": allowed.get("get-task-allow", False),
-        }
-        entitlement_path = directory / f"{bundle.name}.entitlements"
-        entitlement_path.write_bytes(plistlib.dumps(entitlements))
-        entitlement_paths.append(entitlement_path)
-        print(f"{bundle_id}: {profile['Name']}, expires {profile['ExpirationDate']}", flush=True)
+        (bundle / "embedded.mobileprovision").unlink(missing_ok=True)
+    entitlements = directory / "app-group.entitlements"
+    entitlements.write_bytes(plistlib.dumps({"com.apple.security.application-groups": [group]}))
     nested = [path for path in app.rglob("*") if path.suffix in {".framework", ".dylib"}]
     for code in sorted(nested, key=lambda path: len(path.parts), reverse=True):
-        run("codesign", "--force", "--sign", identity, "--timestamp=none", code)
-    for bundle, entitlements in reversed(list(zip([app, extension], entitlement_paths))):
-        run("codesign", "--force", "--sign", identity, "--timestamp=none",
+        run("codesign", "--force", "--sign", "-", "--timestamp=none", code)
+    # Export reads capabilities from signatures, so seed both bundles without an Apple certificate.
+    for bundle in [extension, app]:
+        run("codesign", "--force", "--sign", "-", "--timestamp=none",
             "--generate-entitlement-der", "--entitlements", entitlements, bundle)
+    archive = directory / "Runner.xcarchive"
+    applications = archive / "Products/Applications"
+    applications.mkdir(parents=True)
+    shutil.move(app, applications / app.name)
+    info = plistlib.loads((applications / app.name / "Info.plist").read_bytes())
+    (archive / "Info.plist").write_bytes(plistlib.dumps({
+        "ArchiveVersion": 2,
+        "CreationDate": datetime.now(timezone.utc).replace(tzinfo=None),
+        "Name": "Runner",
+        "SchemeName": "Runner",
+        "ApplicationProperties": {
+            "ApplicationPath": "Applications/Runner.app",
+            "CFBundleIdentifier": bundle_ids[0],
+            "CFBundleShortVersionString": info["CFBundleShortVersionString"],
+            "CFBundleVersion": info["CFBundleVersion"],
+            "SigningIdentity": "-",
+            "Team": team,
+        },
+    }))
+    return archive
+
+
+def export_archive(archive, directory, bundle_ids, group, team):
+    options = directory / "ExportOptions.plist"
+    options.write_bytes(plistlib.dumps({
+        "method": "release-testing",
+        "destination": "export",
+        "signingStyle": "automatic",
+        "teamID": team,
+        "manageAppVersionAndBuildNumber": False,
+    }))
+    exported = directory / "exported"
+    subprocess.run([
+        "xcodebuild", "-exportArchive", "-archivePath", str(archive),
+        "-exportOptionsPlist", str(options), "-exportPath", str(exported),
+        "-allowProvisioningUpdates",
+    ], check=True)
+    ipas = list(exported.glob("*.ipa"))
+    if len(ipas) != 1:
+        raise ValueError("Xcode did not export exactly one signed IPA.")
+    verified = directory / "verified"
+    run("ditto", "-x", "-k", ipas[0], verified)
+    app = verified / "Payload/Runner.app"
     run("codesign", "--verify", "--deep", "--strict", "--verbose=2", app)
-    signed = directory / "signed.ipa"
-    run("ditto", "-c", "-k", "--keepParent", unpacked / "Payload", signed)
-    return signed
+    for bundle, bundle_id in zip([app, app / "PlugIns/ShareExtension.appex"], bundle_ids):
+        entitlements = plistlib.loads(run("codesign", "--display", "--entitlements", "-", "--xml", bundle))
+        info = plistlib.loads((bundle / "Info.plist").read_bytes())
+        if (
+            info["CFBundleIdentifier"] != bundle_id
+            or info.get("YardAppGroup") != group
+            or entitlements.get("com.apple.developer.team-identifier") != team
+            or entitlements.get("application-identifier", "").partition(".")[2] != bundle_id
+            or entitlements.get("com.apple.security.application-groups") != [group]
+        ):
+            raise ValueError(f"Xcode exported unexpected IDs, team or App Group for {bundle_id}.")
+    return ipas[0]
 
 
 def main():
@@ -160,19 +153,15 @@ def main():
         parser.error(f"Output already exists: {output}")
     if sys.platform != "darwin":
         parser.error("Signing requires macOS with Xcode command-line tools")
-    for command in ["gh", "security", "codesign", "ditto"]:
+    for command in ["gh", "xcodebuild", "codesign", "ditto"]:
         if not shutil.which(command):
             parser.error(f"Required command not found: {command}")
-    home = Path.home()
     bundle_ids = [args.bundle_id, args.extension_bundle_id]
-    profiles, identity = select_profiles(args.team, bundle_ids, args.app_group, [
-        home / "Library/Developer/Xcode/UserData/Provisioning Profiles",
-        home / "Library/MobileDevice/Provisioning Profiles",
-    ])
     with tempfile.TemporaryDirectory(prefix=".yard-drop-", dir=output.parent) as temporary:
         directory = Path(temporary)
         ipa = download_release(directory)
-        signed = sign_release(ipa, directory, bundle_ids, args.app_group, profiles, identity)
+        archive = prepare_archive(ipa, directory, bundle_ids, args.app_group, args.team)
+        signed = export_archive(archive, directory, bundle_ids, args.app_group, args.team)
         os.link(signed, output)
     print(f"Signed IPA: {output}\nProvider device option: drop_app_group: {args.app_group}")
 

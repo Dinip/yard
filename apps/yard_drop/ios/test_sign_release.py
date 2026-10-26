@@ -1,4 +1,3 @@
-from datetime import datetime, timedelta, timezone
 import hashlib
 import importlib.util
 import io
@@ -19,79 +18,24 @@ spec.loader.exec_module(signing)
 TEAM = "ABCDE12345"
 IDS = ["com.example.drop", "com.example.drop.ShareExtension"]
 GROUP = "group.com.example.drop"
-CERTIFICATE = b"test certificate"
-IDENTITY = hashlib.sha1(CERTIFICATE).hexdigest().upper()
-
-
-def profile(bundle_id):
-    return {
-        "Name": bundle_id,
-        "ExpirationDate": datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0) + timedelta(days=7),
-        "TeamIdentifier": [TEAM],
-        "DeveloperCertificates": [CERTIFICATE],
-        "ProvisionedDevices": ["test-iphone"],
-        "Entitlements": {
-            "application-identifier": f"{TEAM}.{bundle_id}",
-            "com.apple.developer.team-identifier": TEAM,
-            "com.apple.security.application-groups": [GROUP],
-            "get-task-allow": True,
-            "keychain-access-groups": [f"{TEAM}.*"],
-        },
-    }
-
-
+SUBPROCESS_RUN = subprocess.run
 class SigningTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.directory = Path(self.temporary.name)
-        self.profiles = []
-        for index, bundle_id in enumerate(IDS):
-            path = self.directory / f"{index}.mobileprovision"
-            value = profile(bundle_id)
-            path.write_bytes(plistlib.dumps(value))
-            self.profiles.append((value, path))
 
-    def security(self, *args):
-        if args[1] == "find-identity":
-            return f'1) {IDENTITY} "Apple Development: Test"'.encode()
-        return Path(args[-1]).read_bytes()
+    def make_ipa(self, path):
+        with zipfile.ZipFile(path, "w") as archive:
+            for bundle in ["Payload/Runner.app", "Payload/Runner.app/PlugIns/ShareExtension.appex"]:
+                archive.writestr(f"{bundle}/Info.plist", plistlib.dumps({
+                    "CFBundleIdentifier": "old.id", "YardAppGroup": "group.old",
+                    "CFBundleVersion": "123", "CFBundleShortVersionString": "1.0.0",
+                }))
+                archive.writestr(f"{bundle}/embedded.mobileprovision", b"old profile")
+            archive.writestr("Payload/Runner.app/Frameworks/App.framework/App", b"framework")
 
-    def test_selects_matching_profiles_and_keychain_identity(self):
-        with patch.object(signing, "run", side_effect=self.security):
-            profiles, identity = signing.select_profiles(TEAM, IDS, GROUP, [self.directory])
-        self.assertEqual(profiles, self.profiles)
-        self.assertEqual(identity, IDENTITY)
-
-    def test_refuses_incompatible_profiles(self):
-        original = self.profiles[1][0]
-        changes = [
-            {"TeamIdentifier": ["OTHER12345"]},
-            {"ExpirationDate": datetime(2000, 1, 1)},
-            {"DeveloperCertificates": [b"another certificate"]},
-            {"ProvisionedDevices": ["another-iphone"]},
-            {"ProvisionedDevices": []},
-            {"Entitlements": {**original["Entitlements"], "application-identifier": f"{TEAM}.*"}},
-            {"Entitlements": {**original["Entitlements"], "application-identifier": f"OLDPREFIX1.{IDS[1]}"}},
-            {"Entitlements": {**original["Entitlements"], "com.apple.developer.team-identifier": "OTHER12345"}},
-            {"Entitlements": {**original["Entitlements"], "com.apple.security.application-groups": []}},
-        ]
-        for change in changes:
-            with self.subTest(change=change):
-                value = {**original, **change}
-                self.profiles[1][1].write_bytes(plistlib.dumps(value))
-                with patch.object(signing, "run", side_effect=self.security):
-                    with self.assertRaisesRegex(ValueError, "No compatible profiles"):
-                        signing.select_profiles(TEAM, IDS, GROUP, [self.directory])
-
-    def test_requires_private_key_in_keychain(self):
-        with patch.object(signing, "run", side_effect=lambda *args: (
-            b"0 valid identities found" if args[1] == "find-identity" else Path(args[-1]).read_bytes()
-        )):
-            with self.assertRaises(ValueError):
-                signing.select_profiles(TEAM, IDS, GROUP, [self.directory])
-
-    def test_refuses_to_overwrite_before_accessing_keychain_or_github(self):
+    def test_refuses_to_overwrite_before_accessing_xcode_or_github(self):
         output = self.directory / "signed.ipa"
         output.write_bytes(b"keep this IPA")
         arguments = ["sign-release.py", "--team", TEAM, "--bundle-id", IDS[0],
@@ -126,15 +70,9 @@ class SigningTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "checksum"):
                 signing.download_release(self.directory)
 
-    def test_updates_both_bundles_and_signs_inside_out(self):
+    def test_prepares_both_bundles_with_app_group_for_xcode_export(self):
         ipa = self.directory / "unsigned.ipa"
-        with zipfile.ZipFile(ipa, "w") as archive:
-            for bundle in ["Payload/Runner.app", "Payload/Runner.app/PlugIns/ShareExtension.appex"]:
-                archive.writestr(f"{bundle}/Info.plist", plistlib.dumps({
-                    "CFBundleIdentifier": "old.id", "YardAppGroup": "group.old",
-                    "CFBundleVersion": "123", "CFBundleShortVersionString": "1.0.0",
-                }))
-            archive.writestr("Payload/Runner.app/Frameworks/App.framework/App", b"framework")
+        self.make_ipa(ipa)
         calls = []
 
         def command(*args):
@@ -144,29 +82,88 @@ class SigningTests(unittest.TestCase):
             return b""
 
         with patch.object(signing, "run", side_effect=command):
-            signed = signing.sign_release(ipa, self.directory, IDS, GROUP, self.profiles, IDENTITY)
-        self.assertTrue(zipfile.is_zipfile(signed))
-        with zipfile.ZipFile(signed) as archive:
-            for bundle, bundle_id, source in zip(
-                ["Payload/Runner.app", "Payload/Runner.app/PlugIns/ShareExtension.appex"],
-                IDS, self.profiles,
-            ):
-                info = plistlib.loads(archive.read(f"{bundle}/Info.plist"))
-                self.assertEqual(info["CFBundleIdentifier"], bundle_id)
-                self.assertEqual(info["YardAppGroup"], GROUP)
-                self.assertEqual(info["CFBundleVersion"], "123")
-                self.assertEqual(info["CFBundleShortVersionString"], "1.0.0")
-                self.assertEqual(archive.read(f"{bundle}/embedded.mobileprovision"), source[1].read_bytes())
+            archive = signing.prepare_archive(ipa, self.directory, IDS, GROUP, TEAM)
+        app = archive / "Products/Applications/Runner.app"
+        for bundle, bundle_id in zip([app, app / "PlugIns/ShareExtension.appex"], IDS):
+            info = plistlib.loads((bundle / "Info.plist").read_bytes())
+            self.assertEqual(info["CFBundleIdentifier"], bundle_id)
+            self.assertEqual(info["YardAppGroup"], GROUP)
+            self.assertEqual(info["CFBundleVersion"], "123")
+            self.assertEqual(info["CFBundleShortVersionString"], "1.0.0")
+            self.assertFalse((bundle / "embedded.mobileprovision").exists())
+        properties = plistlib.loads((archive / "Info.plist").read_bytes())["ApplicationProperties"]
+        self.assertEqual(properties["Team"], TEAM)
+        self.assertEqual(properties["CFBundleIdentifier"], IDS[0])
+        self.assertEqual(properties["ApplicationPath"], "Applications/Runner.app")
         codesign = [call for call in calls if call[0] == "codesign"]
         self.assertEqual([call[-1].name for call in codesign], [
-            "App.framework", "ShareExtension.appex", "Runner.app", "Runner.app",
+            "App.framework", "ShareExtension.appex", "Runner.app",
         ])
-        for call in codesign[1:3]:
+        for call in codesign:
+            self.assertEqual(call[call.index("--sign") + 1], "-")
+        for call in codesign[1:]:
             entitlements = plistlib.loads(call[-2].read_bytes())
-            self.assertEqual(entitlements["com.apple.security.application-groups"], [GROUP])
-            self.assertNotIn("keychain-access-groups", entitlements)
-            self.assertNotIn("*", entitlements["application-identifier"])
-        self.assertIn("--verify", codesign[-1])
+            self.assertEqual(entitlements, {"com.apple.security.application-groups": [GROUP]})
+
+    def exported_ipa(self, command, check, **kwargs):
+        if command[0] != "xcodebuild":
+            return SUBPROCESS_RUN(command, check=check, **kwargs)
+        options = Path(command[command.index("-exportOptionsPlist") + 1])
+        values = plistlib.loads(options.read_bytes())
+        self.assertEqual(values, {
+            "method": "release-testing", "destination": "export",
+            "signingStyle": "automatic", "teamID": TEAM,
+            "manageAppVersionAndBuildNumber": False,
+        })
+        self.assertTrue(check)
+        self.assertIn("-allowProvisioningUpdates", command)
+        exported = Path(command[command.index("-exportPath") + 1])
+        exported.mkdir(exist_ok=True)
+        ipa = exported / "Runner.ipa"
+        with zipfile.ZipFile(ipa, "w") as archive:
+            for bundle, bundle_id in zip(
+                ["Payload/Runner.app", "Payload/Runner.app/PlugIns/ShareExtension.appex"], IDS
+            ):
+                archive.writestr(f"{bundle}/Info.plist", plistlib.dumps({
+                    "CFBundleIdentifier": bundle_id, "YardAppGroup": GROUP,
+                }))
+
+    def verified_command(self, *args):
+        if args[0] == "ditto":
+            return subprocess.check_output([str(arg) for arg in args])
+        if "--display" in args:
+            bundle_id = IDS[1] if args[-1].suffix == ".appex" else IDS[0]
+            return plistlib.dumps({
+                "application-identifier": f"{TEAM}.{bundle_id}",
+                "com.apple.developer.team-identifier": TEAM,
+                "com.apple.security.application-groups": [GROUP],
+            })
+        return b""
+
+    def test_exports_with_xcode_account_and_verifies_both_targets(self):
+        with patch.object(signing.subprocess, "run", side_effect=self.exported_ipa):
+            with patch.object(signing, "run", side_effect=self.verified_command) as command:
+                ipa = signing.export_archive(self.directory / "Runner.xcarchive", self.directory, IDS, GROUP, TEAM)
+        self.assertTrue(zipfile.is_zipfile(ipa))
+        displayed = [call.args[-1].name for call in command.call_args_list if "--display" in call.args]
+        self.assertEqual(displayed, ["Runner.app", "ShareExtension.appex"])
+        self.assertTrue(any("--verify" in call.args for call in command.call_args_list))
+
+    def test_refuses_export_if_extension_loses_group_or_uses_wrong_team(self):
+        for changed in [{"com.apple.security.application-groups": []},
+                        {"com.apple.developer.team-identifier": "OTHER12345"},
+                        {"application-identifier": f"{TEAM}.wrong.id"}]:
+            with self.subTest(changed=changed):
+                def command(*args):
+                    result = self.verified_command(*args)
+                    if "--display" in args and args[-1].suffix == ".appex":
+                        result = plistlib.dumps({**plistlib.loads(result), **changed})
+                    return result
+
+                with patch.object(signing.subprocess, "run", side_effect=self.exported_ipa):
+                    with patch.object(signing, "run", side_effect=command):
+                        with self.assertRaisesRegex(ValueError, "unexpected IDs, team or App Group"):
+                            signing.export_archive(self.directory / "Runner.xcarchive", self.directory, IDS, GROUP, TEAM)
 
     def test_rejects_unsafe_archive_before_extraction(self):
         for name, mode in [("../escape", 0), ("/absolute", 0), ("Payload/link", stat.S_IFLNK)]:
@@ -178,7 +175,7 @@ class SigningTests(unittest.TestCase):
                     archive.writestr(entry, b"target")
                 with patch.object(signing, "run") as command:
                     with self.assertRaisesRegex(ValueError, "Unsafe IPA entry"):
-                        signing.sign_release(ipa, self.directory, IDS, GROUP, self.profiles, IDENTITY)
+                        signing.prepare_archive(ipa, self.directory, IDS, GROUP, TEAM)
                     command.assert_not_called()
 
 

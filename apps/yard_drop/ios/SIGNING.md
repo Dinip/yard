@@ -55,14 +55,28 @@ test. It does not produce a universally installable IPA.
 
 ## Signing a downloaded unsigned IPA
 
-Use a Mac with Python 3.9 or newer, Xcode's command-line tools and the GitHub
-CLI. Sign in with `gh auth login` if the repository requires authentication.
-Add your Apple account in Xcode Settings and let Xcode create or download
-profiles for both bundle IDs and the shared App Group, as described above.
-The signing certificate and its private key must be in your login Keychain.
-No Flutter installation or source build is needed to sign the downloaded IPA.
+This script follows Xcode's **Archive > Distribute App > Release Testing**
+workflow, also called Ad Hoc distribution. Use it when you already sign in to
+Xcode with your company Apple account and your admin has registered the two
+bundle IDs and their shared App Group.
 
-From `apps/yard_drop`, run:
+You do not need to import or export a certificate manually. Xcode handles
+signing through your account, including cloud-managed distribution certificates
+when your team grants access. See Apple's
+[cloud signing guide](https://developer.apple.com/videos/play/wwdc2021/10204/).
+This export route requires a paid team with Ad Hoc distribution access. For a
+free Personal Team, use the source-build instructions above.
+
+1. Use a Mac with Xcode 27 or newer, Python 3.9 or newer and the GitHub CLI.
+   No Flutter installation or source build is needed.
+2. In **Xcode > Settings > Apple Accounts**, sign in with the account you
+   normally use to export IPAs and check that the intended team appears.
+3. Ask your admin for the Runner bundle ID, extension bundle ID, shared App
+   Group and ten-character Team ID. Both app IDs must have that group enabled,
+   and the destination iPhones must be registered for Ad Hoc distribution.
+   Use the same account permissions as your normal Release Testing export.
+4. Sign in with `gh auth login` if GitHub requires authentication for the repo.
+5. From `apps/yard_drop`, run:
 
 ```bash
 python3 ios/sign-release.py \
@@ -73,34 +87,40 @@ python3 ios/sign-release.py \
   --output yard-drop-signed.ipa
 ```
 
-Use your ten-character Apple Team ID, not your account email. The extension ID
-must start with the Runner ID followed by a dot. Both IDs must already have
-explicit profiles for that team, with the requested App Group enabled. Changing
-these arguments does not register IDs, create profiles or change your Apple
-account. Use Xcode to provision new IDs first.
-
-The script selects compatible, unexpired profiles from Xcode's current and
-legacy profile directories and a matching identity with a Keychain private key.
-Both profiles must authorize at least one common destination device, or permit
-all devices. App Store profiles are excluded because they cannot install this
-IPA directly. For ad hoc deployment, use profiles containing the destination
-iPhones and an Apple Distribution identity. Personal Team profiles retain their
-seven-day expiry.
+Use the Team ID, not your account email. The extension ID must start with the
+Runner ID followed by a dot. The script does not ask for an Apple password or
+an API key. If Xcode's account session has expired, sign in again in Xcode.
+If export fails on permissions or profiles, resolve that with your admin just
+as you would for an export in Xcode.
 
 The script pins the latest GitHub release, downloads its unsigned IPA and
-SHA-256 checksum, verifies the checksum, and works in a temporary directory.
-It updates `CFBundleIdentifier` and `YardAppGroup` in both bundles, embeds their
-profiles, and signs the Flutter frameworks, extension and Runner in that order.
-Entitlements claim the explicit App ID, team, requested group and debugging
-permission allowed by each profile. It verifies the signatures before writing
-the output and refuses to overwrite an existing file. Release version and build
-numbers are preserved. It does not install the IPA or modify the Xcode project.
+SHA-256 checksum, and verifies the checksum. It updates both bundle IDs and
+`YardAppGroup` values in a temporary directory, then prepares an Xcode archive.
+Temporary ad hoc signatures carry the App Group entitlement into Xcode's
+export step on both Runner and the extension. These temporary signatures use
+no Apple certificate and are replaced during export.
+
+The script runs `xcodebuild -exportArchive` with automatic signing, your team,
+`method: release-testing` and `destination: export`. It uses Xcode's existing
+account login. `-allowProvisioningUpdates` permits Xcode to fetch or refresh
+signing assets, including creating managed profiles or certificates if required
+and allowed by your account. It does not register new bundle IDs, change their
+App Group settings or register devices. Your admin's existing setup remains a
+prerequisite. This follows Xcode's automatic export flow rather than pinning
+particular manually supplied profile files.
+
+After export, the script verifies signatures and checks that both bundles have
+the requested IDs, team and shared group. It preserves release version and
+build numbers, refuses to overwrite an existing output, and does not install
+the IPA or upload it to App Store Connect. Cloud signing still communicates
+with Apple's signing service, as Xcode normally does.
 
 If the latest release has no unsigned iOS IPA yet, the command fails. It does
 not silently choose an older release. The checksum detects a damaged download;
 it is downloaded from the same release and is not an independent signature.
 
-Test the script without an Apple account or signing key:
+Test the download, archive preparation, export options and verification without
+an Apple account or signing key. Account-backed export is mocked in these tests:
 
 ```bash
 python3 -m unittest discover -s ios -p 'test_sign_release.py'
