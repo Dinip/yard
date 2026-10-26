@@ -938,7 +938,10 @@ unsigned release targets and runs the native tests. Flutter CI runs when
 `apps/yard_drop/` or `.github/workflows/flutter.yml` changes. Mobile release builds
 run for every release. Users sign Runner and
 the extension with their own profiles and shared
-App Group. See [the signing guide](../apps/yard_drop/ios/SIGNING.md).
+App Group. `apps/yard_drop/ios/sign-release.py` downloads the latest release,
+checks its checksum and signs both bundles with custom IDs and an App Group,
+using existing profiles and a Keychain identity for the selected team.
+See [the signing guide](../apps/yard_drop/ios/SIGNING.md).
 
 The flow matches Android: share files, choose YARD - Device Farm, then Send to
 YARD browser. Receive shared files discovers them automatically. Save on this

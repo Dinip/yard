@@ -55,87 +55,56 @@ test. It does not produce a universally installable IPA.
 
 ## Signing a downloaded unsigned IPA
 
-Use a Mac with a signing identity and its private key in Keychain, plus two
-profiles from your own team. For an ad hoc deployment, both profiles must list
-the destination iPhones. A Personal Team can use profiles Xcode generated for
-the corresponding source targets and device, subject to their seven-day expiry.
+Use a Mac with Python 3.9 or newer, Xcode's command-line tools and the GitHub
+CLI. Sign in with `gh auth login` if the repository requires authentication.
+Add your Apple account in Xcode Settings and let Xcode create or download
+profiles for both bundle IDs and the shared App Group, as described above.
+The signing certificate and its private key must be in your login Keychain.
+No Flutter installation or source build is needed to sign the downloaded IPA.
 
-Verify the release checksum first. Work in a fresh directory and unpack the
-IPA:
-
-```bash
-YARD_UNSIGNED_IPA='yard-drop-0.6.5+101-ios-unsigned.ipa' # use your downloaded filename
-shasum -a 256 -c "$YARD_UNSIGNED_IPA.sha256"
-mkdir signing-work
-ditto -x -k "$YARD_UNSIGNED_IPA" signing-work
-security find-identity -v -p codesigning
-```
-
-Copy your profiles into the current directory as `Runner.mobileprovision` and
-`ShareExtension.mobileprovision`. Decode them and extract their entitlements:
+From `apps/yard_drop`, run:
 
 ```bash
-security cms -D -i Runner.mobileprovision > Runner-profile.plist
-security cms -D -i ShareExtension.mobileprovision > ShareExtension-profile.plist
-/usr/libexec/PlistBuddy -x -c 'Print :Entitlements' Runner-profile.plist > Runner-entitlements.plist
-/usr/libexec/PlistBuddy -x -c 'Print :Entitlements' ShareExtension-profile.plist > ShareExtension-entitlements.plist
+python3 ios/sign-release.py \
+  --team ABCDE12345 \
+  --bundle-id com.example.yarddrop \
+  --extension-bundle-id com.example.yarddrop.ShareExtension \
+  --app-group group.com.example.yarddrop \
+  --output yard-drop-signed.ipa
 ```
 
-The profiles must have explicit App IDs and the same single App Group. This
-updates the unsigned bundles to match the profiles, including custom IDs:
+Use your ten-character Apple Team ID, not your account email. The extension ID
+must start with the Runner ID followed by a dot. Both IDs must already have
+explicit profiles for that team, with the requested App Group enabled. Changing
+these arguments does not register IDs, create profiles or change your Apple
+account. Use Xcode to provision new IDs first.
+
+The script selects compatible, unexpired profiles from Xcode's current and
+legacy profile directories and a matching identity with a Keychain private key.
+Both profiles must authorize at least one common destination device, or permit
+all devices. App Store profiles are excluded because they cannot install this
+IPA directly. For ad hoc deployment, use profiles containing the destination
+iPhones and an Apple Distribution identity. Personal Team profiles retain their
+seven-day expiry.
+
+The script pins the latest GitHub release, downloads its unsigned IPA and
+SHA-256 checksum, verifies the checksum, and works in a temporary directory.
+It updates `CFBundleIdentifier` and `YardAppGroup` in both bundles, embeds their
+profiles, and signs the Flutter frameworks, extension and Runner in that order.
+Entitlements claim the explicit App ID, team, requested group and debugging
+permission allowed by each profile. It verifies the signatures before writing
+the output and refuses to overwrite an existing file. Release version and build
+numbers are preserved. It does not install the IPA or modify the Xcode project.
+
+If the latest release has no unsigned iOS IPA yet, the command fails. It does
+not silently choose an older release. The checksum detects a damaged download;
+it is downloaded from the same release and is not an independent signature.
+
+Test the script without an Apple account or signing key:
 
 ```bash
-python3 <<'PY'
-from pathlib import Path
-import plistlib, shutil
-
-app = Path('signing-work/Payload/Runner.app')
-extension = app / 'PlugIns/ShareExtension.appex'
-profiles = [plistlib.loads(Path(f'{name}-profile.plist').read_bytes())
-            for name in ['Runner', 'ShareExtension']]
-groups = [p['Entitlements'].get('com.apple.security.application-groups', [])
-          for p in profiles]
-assert len(groups[0]) == 1 and groups[0] == groups[1], 'Both profiles need the same App Group'
-assert profiles[0]['TeamIdentifier'] == profiles[1]['TeamIdentifier'], 'Use the same team'
-ids = [p['Entitlements']['application-identifier'].split('.', 1)[1]
-       for p in profiles]
-assert all('*' not in value for value in ids), 'Use explicit App IDs'
-assert ids[1].startswith(ids[0] + '.'), 'The extension ID must be below the app ID'
-for name, bundle, bundle_id in zip(['Runner', 'ShareExtension'], [app, extension], ids):
-    path = bundle / 'Info.plist'
-    info = plistlib.loads(path.read_bytes())
-    info['CFBundleIdentifier'] = bundle_id
-    info['YardAppGroup'] = groups[0][0]
-    path.write_bytes(plistlib.dumps(info))
-    shutil.copyfile(f'{name}.mobileprovision', bundle / 'embedded.mobileprovision')
-print('Bundles match the supplied profiles.')
-PY
+python3 -m unittest discover -s ios -p 'test_sign_release.py'
 ```
-
-Sign nested code first, then the extension, then the containing app. Replace
-the identity placeholder with the identity name reported by Keychain:
-
-```bash
-YARD_SIGNING_IDENTITY='Apple Development: <your identity>'
-YARD_APP='signing-work/Payload/Runner.app'
-YARD_EXTENSION="$YARD_APP/PlugIns/ShareExtension.appex"
-for code in "$YARD_APP"/Frameworks/* "$YARD_EXTENSION"/Frameworks/*; do
-  [ -e "$code" ] || continue
-  codesign --force --sign "$YARD_SIGNING_IDENTITY" "$code"
-done
-codesign --force --sign "$YARD_SIGNING_IDENTITY" --generate-entitlement-der \
-  --entitlements ShareExtension-entitlements.plist "$YARD_EXTENSION"
-codesign --force --sign "$YARD_SIGNING_IDENTITY" --generate-entitlement-der \
-  --entitlements Runner-entitlements.plist "$YARD_APP"
-codesign --verify --deep --strict --verbose=2 "$YARD_APP"
-cd signing-work
-zip -qry ../yard-drop-signed.ipa Payload
-```
-
-Use an Apple Distribution identity with distribution profiles when signing for
-ad hoc deployment. Signing locally does not extend a profile's expiry or add
-devices to it. A signing tool must preserve the Share Extension, sign both
-targets with their respective profiles, and preserve their shared App Group.
 
 ## Install and configure the farm
 
