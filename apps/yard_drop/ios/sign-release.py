@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Download the latest YARD Drop IPA and export it using your Xcode account."""
+"""Sign a local unsigned YARD Drop IPA using your Xcode account."""
 
 import argparse
 from datetime import datetime, timezone
-import hashlib
 import os
 from pathlib import Path, PurePosixPath
 import plistlib
@@ -18,28 +17,6 @@ import zipfile
 
 def run(*args):
     return subprocess.check_output([str(arg) for arg in args])
-
-
-def download_release(directory):
-    tag = run("gh", "release", "view", "--repo", "Dinip/yard",
-              "--json", "tagName", "--jq", ".tagName").decode().strip()
-    print(f"Downloading {tag}", flush=True)
-    run("gh", "release", "download", tag, "--repo", "Dinip/yard",
-        "--pattern", "yard-drop-*-ios-unsigned.ipa",
-        "--pattern", "yard-drop-*-ios-unsigned.ipa.sha256", "--dir", directory)
-    archives = list(directory.glob("*-ios-unsigned.ipa"))
-    if len(archives) != 1:
-        raise ValueError(f"Expected one unsigned iOS IPA in release {tag}.")
-    ipa = archives[0]
-    checksum = ipa.with_suffix(".ipa.sha256").read_text()
-    match = re.fullmatch(r"([0-9a-fA-F]{64}) [ *]" + re.escape(ipa.name) + r"\n?", checksum)
-    digest = hashlib.sha256()
-    with ipa.open("rb") as source:
-        for chunk in iter(lambda: source.read(1024 * 1024), b""):
-            digest.update(chunk)
-    if not match or digest.hexdigest() != match[1].lower():
-        raise ValueError("The downloaded IPA does not match its release checksum.")
-    return ipa
 
 
 def prepare_archive(ipa, directory, bundle_ids, group, team):
@@ -133,12 +110,16 @@ def export_archive(archive, directory, bundle_ids, group, team):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("ipa", type=Path, help="Path to the unsigned YARD Drop IPA")
     parser.add_argument("--team", required=True, help="Apple Team ID, not the account email")
     parser.add_argument("--bundle-id", required=True, help="Runner bundle ID")
     parser.add_argument("--extension-bundle-id", required=True, help="Share Extension bundle ID")
     parser.add_argument("--app-group", required=True, help="App Group shared by both targets")
     parser.add_argument("--output", type=Path, default=Path("yard-drop-signed.ipa"))
     args = parser.parse_args()
+    ipa = args.ipa.absolute()
+    if not ipa.is_file():
+        parser.error(f"Unsigned IPA is not a file: {ipa}")
     if not re.fullmatch(r"[A-Z0-9]{10}", args.team):
         parser.error("--team must be a 10-character Apple Team ID")
     for value in [args.bundle_id, args.extension_bundle_id, args.app_group]:
@@ -153,13 +134,12 @@ def main():
         parser.error(f"Output already exists: {output}")
     if sys.platform != "darwin":
         parser.error("Signing requires macOS with Xcode command-line tools")
-    for command in ["gh", "xcodebuild", "codesign", "ditto"]:
+    for command in ["xcodebuild", "codesign", "ditto"]:
         if not shutil.which(command):
             parser.error(f"Required command not found: {command}")
     bundle_ids = [args.bundle_id, args.extension_bundle_id]
     with tempfile.TemporaryDirectory(prefix=".yard-drop-", dir=output.parent) as temporary:
         directory = Path(temporary)
-        ipa = download_release(directory)
         archive = prepare_archive(ipa, directory, bundle_ids, args.app_group, args.team)
         signed = export_archive(archive, directory, bundle_ids, args.app_group, args.team)
         os.link(signed, output)

@@ -67,7 +67,7 @@ when your team grants access. See Apple's
 This export route requires a paid team with Ad Hoc distribution access. For a
 free Personal Team, use the source-build instructions above.
 
-1. Use a Mac with Xcode 27 or newer, Python 3.9 or newer and the GitHub CLI.
+1. Use a Mac with Xcode 27 or newer and Python 3.9 or newer.
    No Flutter installation or source build is needed.
 2. In **Xcode > Settings > Apple Accounts**, sign in with the account you
    normally use to export IPAs and check that the intended team appears.
@@ -75,11 +75,12 @@ free Personal Team, use the source-build instructions above.
    Group and ten-character Team ID. Both app IDs must have that group enabled,
    and the destination iPhones must be registered for Ad Hoc distribution.
    Use the same account permissions as your normal Release Testing export.
-4. Sign in with `gh auth login` if GitHub requires authentication for the repo.
-5. From `apps/yard_drop`, run:
+4. Download the unsigned IPA from a GitHub release or a Flutter workflow run.
+   For a release asset, verify its published SHA-256 checksum before signing.
+5. From `apps/yard_drop`, pass the path to your unsigned file:
 
 ```bash
-python3 ios/sign-release.py \
+python3 ios/sign-release.py /path/to/yard-drop-ios-unsigned.ipa \
   --team ABCDE12345 \
   --bundle-id com.example.yarddrop \
   --extension-bundle-id com.example.yarddrop.ShareExtension \
@@ -93,9 +94,8 @@ an API key. If Xcode's account session has expired, sign in again in Xcode.
 If export fails on permissions or profiles, resolve that with your admin just
 as you would for an export in Xcode.
 
-The script pins the latest GitHub release, downloads its unsigned IPA and
-SHA-256 checksum, and verifies the checksum. It updates both bundle IDs and
-`YardAppGroup` values in a temporary directory, then prepares an Xcode archive.
+The script reads the local IPA without modifying it. It updates both bundle IDs
+and `YardAppGroup` values in a temporary directory, then prepares an Xcode archive.
 Temporary ad hoc signatures carry the App Group entitlement into Xcode's
 export step on both Runner and the extension. These temporary signatures use
 no Apple certificate and are replaced during export.
@@ -115,11 +115,7 @@ build numbers, refuses to overwrite an existing output, and does not install
 the IPA or upload it to App Store Connect. Cloud signing still communicates
 with Apple's signing service, as Xcode normally does.
 
-If the latest release has no unsigned iOS IPA yet, the command fails. It does
-not silently choose an older release. The checksum detects a damaged download;
-it is downloaded from the same release and is not an independent signature.
-
-Test the download, archive preparation, export options and verification without
+Test local input handling, archive preparation, export options and verification without
 an Apple account or signing key. Account-backed export is mocked in these tests:
 
 ```bash

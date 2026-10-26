@@ -938,8 +938,8 @@ unsigned release targets and runs the native tests. Flutter CI runs when
 `apps/yard_drop/` or `.github/workflows/flutter.yml` changes. Mobile release builds
 run for every release. Users sign Runner and
 the extension with their own profiles and shared
-App Group. `apps/yard_drop/ios/sign-release.py` downloads the latest release,
-checks its checksum and signs both bundles with custom IDs and an App Group,
+App Group. `apps/yard_drop/ios/sign-release.py` accepts a local unsigned IPA
+and signs both bundles with custom IDs and an App Group,
 using Xcode's signed-in account and automatic Release Testing export for the
 selected team, including cloud-managed distribution signing.
 See [the signing guide](../apps/yard_drop/ios/SIGNING.md).

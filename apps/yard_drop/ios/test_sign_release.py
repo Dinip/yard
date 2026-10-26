@@ -1,4 +1,3 @@
-import hashlib
 import importlib.util
 import io
 from pathlib import Path
@@ -19,6 +18,8 @@ TEAM = "ABCDE12345"
 IDS = ["com.example.drop", "com.example.drop.ShareExtension"]
 GROUP = "group.com.example.drop"
 SUBPROCESS_RUN = subprocess.run
+
+
 class SigningTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -35,10 +36,12 @@ class SigningTests(unittest.TestCase):
                 archive.writestr(f"{bundle}/embedded.mobileprovision", b"old profile")
             archive.writestr("Payload/Runner.app/Frameworks/App.framework/App", b"framework")
 
-    def test_refuses_to_overwrite_before_accessing_xcode_or_github(self):
+    def test_refuses_to_overwrite_before_accessing_xcode(self):
+        ipa = self.directory / "unsigned.ipa"
+        self.make_ipa(ipa)
         output = self.directory / "signed.ipa"
         output.write_bytes(b"keep this IPA")
-        arguments = ["sign-release.py", "--team", TEAM, "--bundle-id", IDS[0],
+        arguments = ["sign-release.py", str(ipa), "--team", TEAM, "--bundle-id", IDS[0],
                      "--extension-bundle-id", IDS[1], "--app-group", GROUP,
                      "--output", str(output)]
         with patch.object(sys, "argv", arguments), patch.object(sys, "stderr", io.StringIO()):
@@ -49,26 +52,41 @@ class SigningTests(unittest.TestCase):
                 command.assert_not_called()
         self.assertEqual(output.read_bytes(), b"keep this IPA")
 
-    def test_pins_latest_release_and_checks_checksum(self):
-        calls = []
+    def test_signs_supplied_local_file_without_modifying_it(self):
+        ipa = self.directory / "my unsigned app.ipa"
+        self.make_ipa(ipa)
+        original = ipa.read_bytes()
+        output = self.directory / "signed.ipa"
+        arguments = ["sign-release.py", str(ipa), "--team", TEAM, "--bundle-id", IDS[0],
+                     "--extension-bundle-id", IDS[1], "--app-group", GROUP,
+                     "--output", str(output)]
 
-        def github(*args):
-            calls.append(args)
-            if args[2] == "view":
-                return b"v1.0.0\n"
-            ipa = self.directory / "yard-drop-1.0.0+1-ios-unsigned.ipa"
-            ipa.write_bytes(b"unsigned IPA fixture")
-            checksum = hashlib.sha256(ipa.read_bytes()).hexdigest()
-            ipa.with_suffix(".ipa.sha256").write_text(f"{checksum}  {ipa.name}\n")
-            return b""
+        def export(archive, directory, bundle_ids, group, team):
+            signed = directory / "signed.ipa"
+            signed.write_bytes(b"signed fixture")
+            return signed
 
-        with patch.object(signing, "run", side_effect=github):
-            ipa = signing.download_release(self.directory)
-        self.assertEqual(calls[1][3], "v1.0.0")
-        ipa.write_bytes(b"corrupted")
-        with patch.object(signing, "run", return_value=b"v1.0.0\n"):
-            with self.assertRaisesRegex(ValueError, "checksum"):
-                signing.download_release(self.directory)
+        with patch.object(sys, "argv", arguments), patch.object(sys, "platform", "darwin"):
+            with patch.object(signing.shutil, "which", return_value="tool") as which:
+                with patch.object(signing, "prepare_archive", return_value=Path("Runner.xcarchive")) as prepare:
+                    with patch.object(signing, "export_archive", side_effect=export):
+                        signing.main()
+        self.assertEqual(prepare.call_args.args[0], ipa)
+        self.assertEqual([call.args[0] for call in which.call_args_list], ["xcodebuild", "codesign", "ditto"])
+        self.assertEqual(output.read_bytes(), b"signed fixture")
+        self.assertEqual(ipa.read_bytes(), original)
+
+    def test_refuses_missing_input_or_directory_before_accessing_xcode(self):
+        for ipa in [self.directory / "missing.ipa", self.directory]:
+            with self.subTest(ipa=ipa):
+                arguments = ["sign-release.py", str(ipa), "--team", TEAM, "--bundle-id", IDS[0],
+                             "--extension-bundle-id", IDS[1], "--app-group", GROUP]
+                with patch.object(sys, "argv", arguments), patch.object(sys, "stderr", io.StringIO()):
+                    with patch.object(signing, "prepare_archive") as prepare:
+                        with self.assertRaises(SystemExit) as error:
+                            signing.main()
+                        self.assertEqual(error.exception.code, 2)
+                        prepare.assert_not_called()
 
     def test_prepares_both_bundles_with_app_group_for_xcode_export(self):
         ipa = self.directory / "unsigned.ipa"
