@@ -56,17 +56,16 @@ test. It does not produce a universally installable IPA.
 
 ## Signing a downloaded unsigned IPA
 
-By default, this script follows Xcode's **Archive > Distribute App > Release Testing**
-workflow, also called Ad Hoc distribution. Use it when you already sign in to
-Xcode with your company Apple account and your admin has registered the two
-bundle IDs and their shared App Group.
+By default, this script uses development signing, matching
+`flutter build ipa --export-method development`. Use it when you already sign
+in to Xcode with your Apple account and the two bundle IDs and their shared
+App Group are registered for your team.
 
-You do not need to import or export a certificate manually. Xcode handles
-signing through your account, including cloud-managed distribution certificates
-when your team grants access. See Apple's
-[cloud signing guide](https://developer.apple.com/videos/play/wwdc2021/10204/).
-This export route requires a paid team with Ad Hoc distribution access. For a
-free Personal Team, use the source-build instructions above.
+Xcode manages development signing through your account and its Apple Development
+identity. The default does not require an iOS Distribution certificate or cloud
+distribution signing permission. Existing development profiles must include the
+signing identity and destination devices. Personal Team profiles retain their
+seven-day limits. Both profiles must authorize the shared App Group.
 
 1. Use a Mac with Xcode 27 or newer and Python 3.9 or newer.
    No Flutter installation or source build is needed.
@@ -74,8 +73,8 @@ free Personal Team, use the source-build instructions above.
    normally use to export IPAs and check that the intended team appears.
 3. Ask your admin for the Runner bundle ID, extension bundle ID, shared App
    Group and ten-character Team ID. Both app IDs must have that group enabled,
-   and the destination iPhones must be registered for Ad Hoc distribution.
-   Use the same account permissions as your normal Release Testing export.
+   and the destination iPhones must be registered for development.
+   Use the same account and team as your working development build.
 4. Download the unsigned IPA from a GitHub release or a Flutter workflow run.
    For a release asset, verify its published SHA-256 checksum before signing.
 5. From `apps/yard_drop`, pass the path to your unsigned file:
@@ -86,12 +85,26 @@ python3 ios/sign-release.py /path/to/yard-drop-ios-unsigned.ipa \
   --bundle-id com.example.yarddrop \
   --extension-bundle-id com.example.yarddrop.ShareExtension \
   --app-group group.com.example.yarddrop \
+  --export-method development \
   --output yard-drop-signed.ipa
 ```
 
 Use the Team ID, not your account email. The extension ID must start with the
 Runner ID followed by a dot. The script does not ask for an Apple password or
 an API key. If Xcode's account session has expired, sign in again in Xcode.
+`--export-method` accepts the same names as Flutter:
+
+| Method | Signing purpose |
+|---|---|
+| `development` | Default. Development certificate and registered test devices. |
+| `ad-hoc` | Distribution certificate and registered test devices. |
+| `enterprise` | In-house distribution for an Enterprise Program team. |
+| `app-store` | Export for App Store submission; cannot install directly on an iPhone. |
+
+The script uses Xcode's current method names internally: `debugging` for
+`development`, `release-testing` for `ad-hoc`, and `app-store-connect` for
+`app-store`. Every method exports locally; none uploads to App Store Connect.
+
 If Xcode exports successfully but the script fails, reuse the settings from that
 successful export before assuming your account needs additional permissions.
 Xcode saves `ExportOptions.plist` beside the exported IPA. Add this option to
@@ -101,6 +114,7 @@ the command above:
 --export-options /path/to/successful-export/ExportOptions.plist
 ```
 
+Use `--export-options` instead of `--export-method`; they cannot be combined.
 This preserves Xcode's chosen method, signing style, certificate selector and
 profile mapping. The file must use the same team, and manual profile mappings
 must cover both requested bundle IDs. The script checks the team matches
@@ -117,7 +131,7 @@ no Apple certificate and are replaced during export.
 
 The script runs `xcodebuild -exportArchive` with your team and
 `destination: export`. Without `--export-options`, it selects automatic signing
-and `method: release-testing`. It uses Xcode's existing account login.
+with the requested method, defaulting to development. It uses Xcode's existing account login.
 `-allowProvisioningUpdates` permits Xcode to fetch or refresh
 signing assets, including creating managed profiles or certificates if required
 and allowed by your account. It does not register new bundle IDs, change their
@@ -128,8 +142,9 @@ profile mapping and downloads missing or updated profiles.
 After export, the script verifies signatures and checks that both bundles have
 the requested IDs, team and shared group. It preserves release version and
 build numbers, refuses to overwrite an existing output, and does not install
-the IPA or upload it to App Store Connect. Cloud signing still communicates
-with Apple's signing service, as Xcode normally does.
+the IPA or upload it to App Store Connect. Signing may communicate with Apple
+to refresh signing assets. Distribution methods may use cloud signing when
+the account has permission.
 
 Test local input handling, archive preparation, export options and verification without
 an Apple account or signing key. Account-backed export is mocked in these tests:

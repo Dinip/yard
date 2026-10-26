@@ -940,8 +940,9 @@ run for every release. Users sign Runner and
 the extension with their own profiles and shared
 App Group. `apps/yard_drop/ios/sign-release.py` accepts a local unsigned IPA
 and signs both bundles with custom IDs and an App Group,
-using Xcode's signed-in account and automatic Release Testing export for the
-selected team, including cloud-managed distribution signing.
+using Xcode's signed-in account and development signing for the selected team
+by default. `--export-method` selects development, ad hoc, enterprise or App
+Store export without uploading to Apple.
 An optional local `--export-options` plist reuses the settings from a successful
 Xcode export, including manual profile mappings.
 See [the signing guide](../apps/yard_drop/ios/SIGNING.md).

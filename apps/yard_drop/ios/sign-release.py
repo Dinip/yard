@@ -72,9 +72,13 @@ def prepare_archive(ipa, directory, bundle_ids, group, team):
     return archive
 
 
-def export_archive(archive, directory, bundle_ids, group, team, export_options=None):
+def export_archive(archive, directory, bundle_ids, group, team, export_options=None,
+                   export_method="development"):
     values = plistlib.loads(export_options.read_bytes()) if export_options else {
-        "method": "release-testing",
+        "method": {
+            "development": "debugging", "ad-hoc": "release-testing",
+            "enterprise": "enterprise", "app-store": "app-store-connect",
+        }[export_method],
         "signingStyle": "automatic",
     }
     if not isinstance(values, dict):
@@ -122,7 +126,10 @@ def main():
     parser.add_argument("--bundle-id", required=True, help="Runner bundle ID")
     parser.add_argument("--extension-bundle-id", required=True, help="Share Extension bundle ID")
     parser.add_argument("--app-group", required=True, help="App Group shared by both targets")
-    parser.add_argument("--export-options", type=Path, help="ExportOptions.plist from a successful Xcode export")
+    export = parser.add_mutually_exclusive_group()
+    export.add_argument("--export-method", choices=["development", "ad-hoc", "enterprise", "app-store"],
+                        default="development", help="Signing method, defaults to development")
+    export.add_argument("--export-options", type=Path, help="ExportOptions.plist from a successful Xcode export")
     parser.add_argument("--output", type=Path, default=Path("yard-drop-signed.ipa"))
     args = parser.parse_args()
     ipa = args.ipa.absolute()
@@ -151,7 +158,8 @@ def main():
     with tempfile.TemporaryDirectory(prefix=".yard-drop-", dir=output.parent) as temporary:
         directory = Path(temporary)
         archive = prepare_archive(ipa, directory, bundle_ids, args.app_group, args.team)
-        signed = export_archive(archive, directory, bundle_ids, args.app_group, args.team, args.export_options)
+        signed = export_archive(archive, directory, bundle_ids, args.app_group, args.team,
+                                args.export_options, args.export_method)
         os.link(signed, output)
     print(f"Signed IPA: {output}\nProvider device option: drop_app_group: {args.app_group}")
 

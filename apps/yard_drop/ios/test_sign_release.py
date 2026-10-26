@@ -63,7 +63,7 @@ class SigningTests(unittest.TestCase):
                      "--extension-bundle-id", IDS[1], "--app-group", GROUP,
                      "--output", str(output), "--export-options", str(options)]
 
-        def export(archive, directory, bundle_ids, group, team, export_options):
+        def export(archive, directory, bundle_ids, group, team, export_options, export_method):
             self.assertEqual(export_options, options)
             signed = directory / "signed.ipa"
             signed.write_bytes(b"signed fixture")
@@ -132,7 +132,7 @@ class SigningTests(unittest.TestCase):
         options = Path(command[command.index("-exportOptionsPlist") + 1])
         values = plistlib.loads(options.read_bytes())
         self.assertEqual(values, {
-            "method": "release-testing", "destination": "export",
+            "method": "debugging", "destination": "export",
             "signingStyle": "automatic", "teamID": TEAM,
             "manageAppVersionAndBuildNumber": False,
         })
@@ -192,6 +192,34 @@ class SigningTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "Stop before account-backed export"):
                 signing.export_archive(Path("Runner.xcarchive"), self.directory, IDS, GROUP, TEAM, source)
         self.assertEqual(plistlib.loads(source.read_bytes()), values)
+
+    def test_maps_flutter_export_methods_without_uploading(self):
+        for method, expected in [
+            ("development", "debugging"), ("ad-hoc", "release-testing"),
+            ("enterprise", "enterprise"), ("app-store", "app-store-connect"),
+        ]:
+            with self.subTest(method=method):
+                def export(command, check):
+                    options = Path(command[command.index("-exportOptionsPlist") + 1])
+                    actual = plistlib.loads(options.read_bytes())
+                    self.assertEqual(actual["method"], expected)
+                    self.assertEqual(actual["destination"], "export")
+                    raise RuntimeError("Stop before account-backed export")
+
+                with patch.object(signing.subprocess, "run", side_effect=export):
+                    with self.assertRaisesRegex(RuntimeError, "Stop before account-backed export"):
+                        signing.export_archive(Path("Runner.xcarchive"), self.directory, IDS,
+                                               GROUP, TEAM, export_method=method)
+
+    def test_export_method_and_options_cannot_be_combined(self):
+        arguments = ["sign-release.py", "unsigned.ipa", "--team", TEAM,
+                     "--bundle-id", IDS[0], "--extension-bundle-id", IDS[1],
+                     "--app-group", GROUP, "--export-method", "development",
+                     "--export-options", "working.plist"]
+        with patch.object(sys, "argv", arguments), patch.object(sys, "stderr", io.StringIO()):
+            with self.assertRaises(SystemExit) as error:
+                signing.main()
+        self.assertEqual(error.exception.code, 2)
 
     def test_refuses_invalid_or_mismatched_export_options_before_contacting_apple(self):
         source = self.directory / "invalid-export.plist"
