@@ -702,6 +702,7 @@ pub trait DeviceBackend: Send + Sync + 'static {
     async fn reboot(&self) -> Result<()>;
     async fn remote_debug(&self) -> Result<RemoteDebug>;      // android only
     async fn restart(&self) -> Result<()>;
+    async fn set_reservation(&self, reservation_id: Option<&str>) -> Result<()>;
     async fn set_screen_awake(&self, on: bool) -> Result<()>;
     async fn is_healthy(&self) -> bool;
     async fn clear_app_data(&self, app_id: &str) -> Result<()>;   // cleanup
@@ -733,9 +734,19 @@ runner. The iOS backend vends that app's Documents through House Arrest and
 removes the subtree. Missing directories are already clean. Ordinary
 `cleanup_paths` still refer to the AFC media domain.
 
-Launching an app with the YARD Drop `--yard-drop` prefix restarts an existing
-process so iOS delivers each arm or publish command as fresh launch arguments.
-Launches without that prefix retain their existing behavior.
+`set_reservation` binds iOS companion sharing to the current reservation. The
+supervisor invokes it before authorizing a new session, reconciles it against
+the current registry on revocation, and renews it during polling. Failures disable
+Drop until retry without making the whole device unavailable. iOS writes a
+two-minute App Group lease, refreshed every 30 seconds, through the CoreDevice
+file service over the existing USB/RSD tunnel. It never launches Runner. Set
+`options.drop_app_group` for a companion signed with a custom group identifier.
+
+`drop:/` lists only completed batches for the current reservation. Returned
+paths include that reservation ID; a stale path, traversal or symbolic link is
+refused. Downloads stream through the CoreDevice data service into the existing
+scratch-file response. Revocation invalidates the lease and purges queued files;
+replacement reservations never browse a predecessor's namespace.
 
 `set_screen_awake` is absolute rather than a toggle: callers ask for the state
 they want, and a backend that can only toggle is responsible for getting there.
@@ -758,6 +769,7 @@ scheme the browser treats as opaque:
 | `/` | Neither — a listing of the two trees below |
 | `media:/DCIM` | `com.apple.afc`: photos, downloads, books |
 | `app:<bundle>:/Documents` | `house_arrest` `VendDocuments`, per app |
+| `drop:/` | CoreDevice file service, current reservation only |
 
 The app tree starts at `/Documents` rather than the container root because a
 `VendDocuments` session **answers `Afc(PermDenied)` for everything above it** —

@@ -35,8 +35,7 @@ ten short-lived App IDs. Runner and ShareExtension use separate App IDs. See
 6. Both targets need the same registered App Group. Add it in Signing &
    Capabilities and select it on both targets. If changing the default group,
    update `YardAppGroup` in **both** targets' Info.plist to that same identifier.
-   Keep the `YARD - Device Farm` display name and `yard_drop` bundle name so
-   the browser can discover the signed app.
+   Set the provider device option `drop_app_group` to the same identifier.
 7. Choose the connected iPhone and use the Runner scheme. Set its Run build
    configuration to Release, then run it. Flutter's containing app must work
    without a debugger when opened from the share workflow.
@@ -146,11 +145,17 @@ Configurator. For a source build, Xcode installs it directly. Apple's
 describes signing and installation.
 
 Install before the reservation baseline. Keep the same bundle IDs, signing
-team and App Group for upgrades. In the provider's `cleanup_app_paths`, use the
-**actual signed Runner bundle ID**, even when it differs from the release's
-default. The browser detects the installed companion's ID by its product name.
+team and App Group for upgrades. The provider defaults to
+`group.com.dinispimpao.yard.drop`. If you changed the group, set it on that device:
 
-Before reserving the device for another user, enable `cleanup.enabled` and
-`cleanup.wipeFolders`, test that published Documents files are removed, and
-confirm the extension still shares successfully after a restart. Renew
-Personal Team provisioning before its seven-day expiry.
+```yaml
+options:
+  drop_app_group: group.com.example.yarddrop
+```
+
+Reserve the iPhone, share a file to YARD - Device Farm, and choose Send to YARD
+browser. It appears automatically in Receive shared files. Release and reserve
+again to verify the old batch is gone. Files saved through the Files picker use
+the selected destination; configure `cleanup_app_paths` for Runner Documents if
+those copies should also be wiped on release. Renew Personal Team provisioning
+before its seven-day expiry.

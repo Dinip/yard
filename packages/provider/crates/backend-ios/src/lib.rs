@@ -21,6 +21,8 @@
 
 pub mod ddi;
 pub mod device;
+mod drop;
+mod files;
 pub mod hevc;
 pub mod hid;
 pub mod media;
@@ -306,6 +308,7 @@ fn scale_battery_temperature(raw: f64) -> Option<f64> {
 #[derive(Clone, Debug)]
 pub struct IosOptions {
     pub udid: String,
+    pub drop_app_group: String,
     /// Which display to mirror. 0 is the built-in screen.
     pub display_id: i64,
     /// Force a fresh IDR while the screen is moving, to undo iOS's motion
@@ -325,6 +328,21 @@ impl IosOptions {
     pub fn parse(udid: &str, options: &serde_json::Map<String, serde_json::Value>) -> Result<Self> {
         Ok(Self {
             udid: udid.to_owned(),
+            drop_app_group: options
+                .get("drop_app_group")
+                .map(|value| {
+                    value
+                        .as_str()
+                        .filter(|v| {
+                            v.starts_with("group.")
+                                && v.bytes()
+                                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'-'))
+                        })
+                        .map(str::to_owned)
+                        .ok_or_else(|| anyhow!("drop_app_group must be an App Group identifier"))
+                })
+                .transpose()?
+                .unwrap_or_else(|| "group.com.dinispimpao.yard.drop".into()),
             display_id: options
                 .get("display_id")
                 .map(|value| {
@@ -474,6 +492,7 @@ pub struct IosBackend {
     publisher: VideoPublisher,
     geometry: Geometry,
     pointer: Mutex<Pointer>,
+    drop_inbox: Mutex<drop::Inbox>,
     /// Last diagnostics-relay battery read, with the time it was taken.
     ///
     /// A relay round trip is far too expensive to make on `info()`'s 15s
@@ -511,6 +530,7 @@ impl IosBackend {
             publisher,
             geometry,
             pointer: Mutex::new(Pointer::default()),
+            drop_inbox: Mutex::new(drop::Inbox::default()),
             battery: Mutex::new(None),
         })
     }
@@ -1238,13 +1258,29 @@ impl DeviceBackend for IosBackend {
             &mut adapter,
             &session.handshake
         )?;
-        // Launch arguments are process state: a warm Drop must restart for a new capture command.
-        let restart = args.first().is_some_and(|arg| arg == "--yard-drop");
         let args: Vec<&str> = args.iter().map(String::as_str).collect();
         client
-            .launch_application(app_id, &args, restart, false, None, None, None)
+            .launch_application(app_id, &args, false, false, None, None, None)
             .await
             .map_err(|err| BackendError::Failed(format!("launch {app_id}: {err:?}")))?;
+        Ok(())
+    }
+
+    async fn set_reservation(&self, reservation_id: Option<&str>) -> BackendResult<()> {
+        let mut inbox = self.drop_inbox.lock().await;
+        let changed = inbox.select(reservation_id)?;
+        if reservation_id.is_none() && !changed && !inbox.needs_sync() {
+            return Ok(());
+        }
+        if !inbox.should_refresh() {
+            return Ok(());
+        }
+        let mut files =
+            files::Files::group(self.session().await?, &self.options.drop_app_group).await?;
+        let result = inbox.bind(&mut files, reservation_id).await;
+        let closed = files.close().await;
+        result?;
+        closed?;
         Ok(())
     }
 
@@ -1266,6 +1302,16 @@ impl DeviceBackend for IosBackend {
     /// stat. Fine for a directory a person is looking at; it is the reason this
     /// is a browse rather than a recursive search.
     async fn list_files(&self, path: &str) -> BackendResult<FileListing> {
+        if path.starts_with("drop:") {
+            let mut inbox = self.drop_inbox.lock().await;
+            let mut files =
+                files::Files::group(self.session().await?, &self.options.drop_app_group).await?;
+            let result = inbox.list(&mut files, path).await;
+            let closed = files.close().await;
+            let listing = result?;
+            closed?;
+            return Ok(listing);
+        }
         let provider = device::usbmux_provider(&self.options.udid).await?;
 
         let (mut afc, prefix, inner) = match IosPath::parse(path) {
@@ -1332,6 +1378,16 @@ impl DeviceBackend for IosBackend {
     async fn pull_file(&self, path: &str, dest: &Path) -> BackendResult<u64> {
         use tokio::io::AsyncWriteExt as _;
 
+        if path.starts_with("drop:") {
+            let mut inbox = self.drop_inbox.lock().await;
+            let mut files =
+                files::Files::group(self.session().await?, &self.options.drop_app_group).await?;
+            let result = inbox.pull(&mut files, path, dest).await;
+            let closed = files.close().await;
+            let size = result?;
+            closed?;
+            return Ok(size);
+        }
         let provider = device::usbmux_provider(&self.options.udid).await?;
         let (mut afc, inner) = match IosPath::parse(path) {
             IosPath::Root => return Err(BackendError::Failed("that is not a file".into())),
@@ -1630,6 +1686,30 @@ mod tests {
         // A device is mounted for unless it says otherwise — the reboot that
         // drops the mount is nobody's job to notice.
         assert!(options.auto_mount_ddi);
+        assert_eq!(options.drop_app_group, "group.com.dinispimpao.yard.drop");
+    }
+
+    #[test]
+    fn custom_signing_requires_an_app_group_identifier() {
+        let mut options = serde_json::Map::new();
+        options.insert(
+            "drop_app_group".into(),
+            serde_json::json!("group.com.example.drop"),
+        );
+        assert_eq!(
+            IosOptions::parse("udid-1", &options)
+                .unwrap()
+                .drop_app_group,
+            "group.com.example.drop"
+        );
+        for invalid in [
+            serde_json::json!(false),
+            serde_json::json!("com.example.drop"),
+            serde_json::json!("group.bad/name"),
+        ] {
+            options.insert("drop_app_group".into(), invalid);
+            assert!(IosOptions::parse("udid-1", &options).is_err());
+        }
     }
 
     #[test]

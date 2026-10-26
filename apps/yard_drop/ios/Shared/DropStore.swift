@@ -6,8 +6,9 @@ enum DropError: LocalizedError {
 
   var errorDescription: String? {
     switch self {
-    case .invalidCapture: return "Open Receive shared files in YARD and prepare the iPhone first."
-    case .expiredCapture: return "This transfer expired. Prepare the iPhone again in YARD."
+    case .invalidCapture: return "Reserve this iPhone in YARD to send files to the browser."
+    case .expiredCapture:
+      return "The YARD connection expired. Reconnect the iPhone to its provider and share again."
     case .invalidBatch: return "The shared files are incomplete. Share them again."
     case .limit: return "Share up to 20 files, 512 MB per file and 2 GB in total."
     case .cancelled: return "The share was cancelled."
@@ -54,26 +55,6 @@ struct DropBatch: Codable {
   let files: [DropFile]
 }
 
-enum DropCommand {
-  case arm(DropCapture)
-  case publish(String)
-
-  init?(arguments: [String]) throws {
-    guard let index = arguments.firstIndex(of: "--yard-drop") else { return nil }
-    let values = Array(arguments.dropFirst(index + 1))
-    guard values.count >= 2, DropStore.validID(values[1]) else { throw DropError.invalidCapture }
-    switch values[0] {
-    case "arm":
-      guard values.count == 3, let expiry = Int64(values[2]) else { throw DropError.invalidCapture }
-      self = .arm(DropCapture(id: values[1], expiresAt: expiry))
-    case "publish":
-      guard values.count == 2 else { throw DropError.invalidCapture }
-      self = .publish(values[1])
-    default: throw DropError.invalidCapture
-    }
-  }
-}
-
 final class DropStore {
   static var groupID: String {
     Bundle.main.object(forInfoDictionaryKey: "YardAppGroup") as? String
@@ -84,21 +65,16 @@ final class DropStore {
   static let maxBatch: Int64 = 2 * 1024 * 1024 * 1024
   static let captureLifetime: Int64 = 10 * 60 * 1000
   let root: URL
-  let documents: URL
   private let fm = FileManager.default
 
-  init(root: URL, documents: URL) {
-    self.root = root
-    self.documents = documents
-  }
+  init(root: URL) { self.root = root }
 
   static func shared() throws -> DropStore {
     guard
       let group = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: groupID)
     else { throw DropError.invalidCapture }
     return DropStore(
-      root: group.appendingPathComponent("Library/Caches/YARD Drop"),
-      documents: FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+      root: group.appendingPathComponent("Library/Caches/YARD Drop")
     )
   }
 
@@ -127,7 +103,7 @@ final class DropStore {
     return name
   }
 
-  // The extension and Runner are separate processes; arm must not race a queued batch.
+  // Serialise extension instances while committing complete batches.
   private func locked<T>(_ action: () throws -> T) throws -> T {
     try fm.createDirectory(at: root, withIntermediateDirectories: true)
     let descriptor = open(root.appendingPathComponent(".lock").path, O_CREAT | O_RDWR, 0o600)
@@ -152,26 +128,7 @@ final class DropStore {
   }
 
   func activeCapture(now: Int64 = DropStore.now) -> DropCapture? {
-    try? locked {
-      do { return try readCapture(now: now) } catch DropError.expiredCapture {
-        try removeIfPresent(incoming)
-        try removeIfPresent(captureURL)
-        return nil
-      }
-    }
-  }
-
-  func arm(_ capture: DropCapture, now: Int64 = DropStore.now) throws {
-    try locked {
-      guard Self.validID(capture.id) else { throw DropError.invalidCapture }
-      guard capture.expiresAt > now, capture.expiresAt <= now + Self.captureLifetime
-      else { throw DropError.expiredCapture }
-      try removeIfPresent(incoming)
-      try removeIfPresent(captureURL)
-      // A new capture cannot offer the previous reservation's published files.
-      try removeIfPresent(documents.appendingPathComponent("YARD Drop/Inbox"))
-      try JSONEncoder().encode(capture).write(to: captureURL, options: .atomic)
-    }
+    try? locked { try readCapture(now: now) }
   }
 
   func makeStagingDirectory() throws -> URL {
@@ -196,7 +153,7 @@ final class DropStore {
     throws
   {
     try locked {
-      guard try readCapture(now: now) == capture else { throw DropError.invalidCapture }
+      guard try readCapture(now: now).id == capture.id else { throw DropError.invalidCapture }
       var queued = batch
       queued.captureId = capture.id
       try JSONEncoder().encode(queued).write(
@@ -206,60 +163,6 @@ final class DropStore {
       let destination = parent.appendingPathComponent(batch.batchId)
       try Data().write(to: staged.appendingPathComponent(Self.marker), options: .atomic)
       try fm.moveItem(at: staged, to: destination)
-    }
-  }
-
-  func publish(_ captureID: String, now: Int64 = DropStore.now) throws -> Int {
-    try locked {
-      let capture = try readCapture(now: now)
-      guard capture.id == captureID else { throw DropError.invalidCapture }
-      let source = incoming.appendingPathComponent(captureID)
-      let batches =
-        fm.fileExists(atPath: source.path)
-        ? try fm.contentsOfDirectory(at: source, includingPropertiesForKeys: nil) : []
-      let inbox = documents.appendingPathComponent("YARD Drop/Inbox/\(captureID)")
-      try fm.createDirectory(at: inbox, withIntermediateDirectories: true)
-      var count = 0
-      for directory in batches {
-        guard fm.fileExists(atPath: directory.appendingPathComponent(Self.marker).path) else {
-          continue
-        }
-        let batch = try JSONDecoder().decode(
-          DropBatch.self, from: Data(contentsOf: directory.appendingPathComponent("batch.json")))
-        guard batch.schemaVersion == 1, batch.captureId == captureID,
-          batch.batchId == directory.lastPathComponent, Self.validID(batch.batchId),
-          !batch.files.isEmpty, batch.files.count <= 20
-        else { throw DropError.invalidBatch }
-        let destination = inbox.appendingPathComponent(batch.batchId)
-        // A retry replaces an interrupted copy before writing the ready marker.
-        try removeIfPresent(destination)
-        try fm.createDirectory(at: destination, withIntermediateDirectories: true)
-        var total: Int64 = 0
-        var names: Set<String> = ["batch.json", Self.marker.lowercased()]
-        for file in batch.files {
-          guard file.name == Self.safeName(file.name),
-            names.insert(file.name.lowercased()).inserted,
-            file.stagedName == "\(file.id).bin", Self.validID(file.id), file.size >= 0
-          else { throw DropError.invalidBatch }
-          let size = try Self.copy(
-            directory.appendingPathComponent(file.stagedName),
-            to: destination.appendingPathComponent(file.name),
-            remaining: Self.maxBatch - total
-          )
-          guard size == file.size else { throw DropError.invalidBatch }
-          total += size
-        }
-        try JSONEncoder().encode(batch).write(
-          to: destination.appendingPathComponent("batch.json"), options: .atomic)
-        try Data().write(to: destination.appendingPathComponent(Self.marker), options: .atomic)
-        count += batch.files.count
-      }
-      // Keep an empty capture armed so Finish transfer can be retried after staging completes.
-      if count > 0 {
-        try removeIfPresent(incoming)
-        try removeIfPresent(captureURL)
-      }
-      return count
     }
   }
 

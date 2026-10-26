@@ -24,7 +24,7 @@ release without producing a different app on every device.
 | Size per file | 512 MB |
 | Size per batch | 2 GB |
 | Abandoned staging lifetime | 24 hours |
-| iOS browser capture lifetime | 10 minutes |
+| iOS browser lease | 2 minutes, renewed by the provider every 30 seconds |
 
 API 29 is the floor because everything above it gets scoped storage, so the
 save path is MediaStore only, with no legacy external-storage fallback.
@@ -77,29 +77,22 @@ remain visible alongside successful files. Save on this device exports all
 successful files through the system Files picker. Cancelling the picker returns
 to the destination choices.
 
-Browser delivery takes two launches because a Share Extension cannot reliably
-open its containing app:
+During a reservation, share files to YARD - Device Farm and select Send to YARD
+browser. They appear in Receive shared files automatically, just like Android.
+The provider writes a short lease into the App Group when the reservation starts,
+renews it while connected, and reads completed batches directly through Apple's
+CoreDevice file service over the existing USB tunnel. Runner does not open during
+this flow. Browser refreshes preserve the inbox.
 
-1. Open Receive shared files in YARD and select Prepare iPhone.
-2. Wait for Ready to receive on the iPhone. Return to the app under test.
-3. Share files to YARD - Device Farm and select Send to YARD browser.
-4. Select Finish transfer in YARD, then download the files as they appear.
-
-Preparing creates a new random capture ID and removes the previous capture's
-queued and published files. The extension captures that ID before receiving
-attachments and rechecks it when sending. Publishing requires the same ID and
-an unexpired arm record. An ordinary launcher start never publishes or lists
-private shares. After refreshing the browser, prepare a new transfer.
-
-Published files live under
-`app:com.dinispimpao.yard.drop:/Documents/YARD Drop/Inbox/<capture-id>`.
-The provider reads them through its existing authenticated House Arrest file
-plane. The coordinator carries app-launch commands and audit metadata only.
+The extension rechecks the reservation ID before committing each batch. The
+provider exposes only the current reservation's files at the opaque `drop:/`
+root. File tokens must still pass the provider's current-reservation check.
+Revocation invalidates the lease and removes queued batches. If the provider
+loses the phone, sending disables after the two-minute lease expires.
 
 The iOS target comes from Flutter 3.44.9 and uses Swift Package Manager and
-`FlutterSceneDelegate`. Platform-channel registration happens in
-`didInitializeImplicitFlutterEngine`, rather than reading an AppDelegate window
-before the scene exists. See Flutter's
+`FlutterSceneDelegate`. Plugin registration happens in
+`didInitializeImplicitFlutterEngine`, after the implicit engine exists. See Flutter's
 [UIScene migration](https://docs.flutter.dev/release/breaking-changes/uiscenedelegate).
 
 Native tests run on macOS with a full Xcode installation:
@@ -107,14 +100,12 @@ Native tests run on macOS with a full Xcode installation:
 ```bash
 xcodebuild test -workspace ios/Runner.xcworkspace -scheme Runner \
   -destination 'platform=iOS Simulator,name=<available iPhone>' CODE_SIGNING_ALLOWED=NO
-python3 ios/test_handoff.py <simulator-udid>  # uses a disposable simulator
 ```
 
-These cover capture expiry and replacement, launch-command validation,
-publication byte comparisons, incomplete copies, filename collisions, byte
-limits, cancellation, and mixed successful and failed `NSItemProvider` results.
-Flutter tests cover the containing app's launch states. A simulator build does
-not replace the physical-device checks below.
+These cover reservation replacement and lease refresh during a share, expiry,
+byte comparisons, filename collisions, limits, cancellation, and mixed successful
+and failed `NSItemProvider` results. Provider tests cover path isolation and the
+USB file service. Physical-device tests are opt-in with `YARD_TEST_IOS_UDID`.
 
 ### Signing and release
 
@@ -127,8 +118,8 @@ See [iOS signing instructions](ios/SIGNING.md) for signing a downloaded IPA with
 your own profiles, or using Xcode's free seven-day Personal Team provisioning.
 Both targets must share an App Group authorized by their profiles. The native
 App Group identifier is read from `YardAppGroup` in each target's Info.plist, so
-users can change it when signing. The browser discovers a renamed bundle ID by
-the unchanged `YARD - Device Farm` display name or `yard_drop` bundle name.
+users can change it when signing. Set the provider device option
+`drop_app_group` to that same value when using a custom group.
 
 CI stamps the root version, `run_number * 100 + run_attempt`, and source commit
 into both targets. `ios/Flutter/BuildInfo.xcconfig` defaults the native source
@@ -136,31 +127,27 @@ commit to `local`; CI replaces it before building. Android and iOS CI run only
 for changes under `apps/yard_drop/`. The mobile release workflow compares that
 folder with the previous release before starting either Flutter build.
 
-Install the signed IPA before the reservation baseline. Configure its published
-Documents subtree on each iPhone:
+Install the signed IPA before the reservation baseline. For a custom App Group:
 
 ```yaml
 devices:
   - udid: <ios-udid>
     backend: ios
-    cleanup_app_paths:
-      - bundle_id: com.dinispimpao.yard.drop  # use the actual signed bundle ID
-        path: /Documents/YARD Drop
+    options:
+      drop_app_group: group.com.example.yarddrop
 ```
 
-Enable `cleanup.enabled` and `cleanup.wipeFolders` in the farm settings. The
-provider cannot see the private App Group. A new capture purges stale queued
-batches, and mismatched or expired captures cannot publish them.
+Browser batches are purged by the reservation hook, independently of optional
+farm folder cleanup. Files saved through the system picker belong to the chosen
+location. If saving inside Runner Documents, use `cleanup_app_paths` with the
+actual signed bundle ID and `/Documents/YARD Drop`, and enable `cleanup.enabled`
+and `cleanup.wipeFolders` to remove those saved copies on release.
 
-Before rolling out to the farm, use a release build on a provisioned iPhone to
-check Files, Photos, Safari and the company app. Compare the company ZIP's
-bytes after App Group staging and browser download; test picker cancellation,
-extension termination, low storage, expired captures and release before
-publishing. Confirm House Arrest can pull nested Documents files, release
-cleanup removes them, and the app and extension survive an upgrade. These
-broader hardware checks remain rollout gates. Single-file sharing, Files export,
-capture publication and seven-day Personal Team signing passed on an iPhone 13
-with iOS 27.0. See the recorded results in [docs/DROP.md](../../docs/DROP.md#implementation-notes).
+Before rollout, test Files, Photos, Safari and the company app, multiple files,
+picker cancellation, extension termination, low storage, expired leases, provider
+reconnects, release, and upgrades. Compare downloaded bytes and inspect the audit
+log. Physical-device evidence is recorded in
+[docs/DROP.md](../../docs/DROP.md#implementation-notes).
 
 ## Farm provisioning
 

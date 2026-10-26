@@ -11,47 +11,11 @@
  * still arriving or was abandoned, and either way is not ours to show.
  */
 
-import type { AppInfo, FileEntry, FileListing } from "@yard/protocol";
+import type { FileEntry, FileListing } from "@yard/protocol";
 
 /** Where the companion publishes, matching `ShareSaver.kt`. */
 export const INBOX_PATH = "/sdcard/Download/YARD Drop/Inbox";
-export const IOS_DROP_BUNDLE = "com.dinispimpao.yard.drop";
-export const IOS_INBOX_PATH = `app:${IOS_DROP_BUNDLE}:/Documents/YARD Drop/Inbox`;
-
-export function iosDropBundle(apps: AppInfo[]): string {
-  if (apps.some((app) => app.id === IOS_DROP_BUNDLE)) return IOS_DROP_BUNDLE;
-  const candidates = apps.filter(
-    (app) => app.name === "YARD - Device Farm" || app.name === "yard_drop",
-  );
-  const candidate = candidates[0];
-  if (!candidate || candidates.length !== 1) {
-    throw new Error(
-      candidates.length
-        ? "Several YARD Drop apps are installed. Keep one signed build."
-        : "Install YARD Drop on the iPhone before preparing a transfer.",
-    );
-  }
-  return candidate.id;
-}
-
-export interface IosDropCapture {
-  id: string;
-  expiresAt: number;
-}
-
-type LaunchDrop = (args: string[]) => Promise<unknown>;
-
-export async function armIosDrop(launch: LaunchDrop): Promise<IosDropCapture> {
-  const capture = { id: crypto.randomUUID(), expiresAt: Date.now() + 10 * 60 * 1000 };
-  await launch(["--yard-drop", "arm", capture.id, String(capture.expiresAt)]);
-  return capture;
-}
-
-export async function publishIosDrop(launch: LaunchDrop, capture: IosDropCapture): Promise<void> {
-  if (capture.expiresAt <= Date.now())
-    throw new Error("This transfer expired. Prepare the iPhone again.");
-  await launch(["--yard-drop", "publish", capture.id]);
-}
+export const IOS_INBOX_PATH = "drop:/";
 
 export const MANIFEST_NAME = "batch.json";
 export const READY_MARKER = "_YARD_READY";

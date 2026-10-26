@@ -30,6 +30,7 @@ async fn main() -> anyhow::Result<()> {
     let backend = IosBackend::new(
         IosOptions {
             udid: udid.clone(),
+            drop_app_group: "group.com.dinispimpao.yard.drop".into(),
             display_id: 0,
             motion_idr: false,
             // `ensure_mounted` looks the image up before it does anything, so

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 
-import 'share/ios_capture_page.dart';
+import 'share/ios_share_page.dart';
 import 'share/share_gateway.dart';
 import 'share/share_page.dart';
 import 'theme.dart';
@@ -18,7 +18,7 @@ class YardDropApp extends StatelessWidget {
       theme: yardTheme(Brightness.light),
       darkTheme: yardTheme(Brightness.dark),
       home: defaultTargetPlatform == TargetPlatform.iOS
-          ? const IosCapturePage()
+          ? const IosSharePage()
           : SharePage(gateway: gateway),
     );
   }

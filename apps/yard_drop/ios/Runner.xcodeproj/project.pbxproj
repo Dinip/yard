@@ -22,7 +22,6 @@
 		9A1769E8CB65F0770E3B6605 /* DropStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1AB1D26D2F4A17FE271FBAD5 /* DropStore.swift */; };
 		ABDF1D40A36F654F93F54CB7 /* ShareExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 835B8F26543C4CEA529CD04D /* ShareExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		B1FE021149E864F9B2350225 /* DropStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1AB1D26D2F4A17FE271FBAD5 /* DropStore.swift */; };
-		DA509482960F84FBA5B8B979 /* DropCaptureBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D7423A48BF53C8300E14C90 /* DropCaptureBridge.swift */; };
 		EEFEFE29E2ACD175A2987D8C /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5FCA0A4E6C9EB9BEDBA18E74 /* ShareViewController.swift */; };
 /* End PBXBuildFile section */
 
@@ -74,7 +73,6 @@
 		331C807B294A618700263BE5 /* RunnerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunnerTests.swift; sourceTree = "<group>"; };
 		331C8081294A63A400263BE5 /* RunnerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = RunnerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		3B3967151E833CAA004F5970 /* AppFrameworkInfo.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = AppFrameworkInfo.plist; path = Flutter/AppFrameworkInfo.plist; sourceTree = "<group>"; };
-		5D7423A48BF53C8300E14C90 /* DropCaptureBridge.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DropCaptureBridge.swift; sourceTree = "<group>"; };
 		5FCA0A4E6C9EB9BEDBA18E74 /* ShareViewController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
 		74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Runner-Bridging-Header.h"; sourceTree = "<group>"; };
 		74858FAE1ED2DC5600515810 /* AppDelegate.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
@@ -199,7 +197,6 @@
 				74858FAE1ED2DC5600515810 /* AppDelegate.swift */,
 				7884E8672EC3CC0400C636F2 /* SceneDelegate.swift */,
 				74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */,
-				5D7423A48BF53C8300E14C90 /* DropCaptureBridge.swift */,
 			);
 			path = Runner;
 			sourceTree = "<group>";
@@ -402,7 +399,6 @@
 				1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */,
 				7884E8682EC3CC0700C636F2 /* SceneDelegate.swift in Sources */,
 				4918958FDA73CFEF343709B7 /* DropStore.swift in Sources */,
-				DA509482960F84FBA5B8B979 /* DropCaptureBridge.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

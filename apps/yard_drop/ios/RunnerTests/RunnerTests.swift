@@ -9,9 +9,7 @@ final class RunnerTests: XCTestCase {
 
   override func setUpWithError() throws {
     base = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-    store = DropStore(
-      root: base.appendingPathComponent("Group"),
-      documents: base.appendingPathComponent("Documents"))
+    store = DropStore(root: base.appendingPathComponent("Group"))
   }
 
   override func tearDownWithError() throws {
@@ -20,9 +18,15 @@ final class RunnerTests: XCTestCase {
     }
   }
 
+  private func writeCapture(_ capture: DropCapture) throws {
+    try FileManager.default.createDirectory(at: store.root, withIntermediateDirectories: true)
+    try JSONEncoder().encode(capture).write(
+      to: store.root.appendingPathComponent("active-capture.json"), options: .atomic)
+  }
+
   private func arm() throws -> DropCapture {
     let capture = DropCapture(id: captureID, expiresAt: now + 60_000)
-    try store.arm(capture, now: now)
+    try writeCapture(capture)
     return capture
   }
 
@@ -30,7 +34,7 @@ final class RunnerTests: XCTestCase {
     let directory = try store.makeStagingDirectory()
     let id = UUID().uuidString
     let bytes = Data("company archive bytes".utf8)
-    try bytes.write(to: directory.appendingPathComponent("\(id).bin"))
+    try bytes.write(to: directory.appendingPathComponent("report.zip"))
     return (
       DropBatch(
         schemaVersion: 1, batchId: UUID().uuidString, captureId: nil, createdAt: now,
@@ -38,82 +42,59 @@ final class RunnerTests: XCTestCase {
         files: [
           .init(
             id: id, name: "report.zip", typeIdentifier: "public.zip-archive",
-            mimeType: "application/zip", size: Int64(bytes.count), stagedName: "\(id).bin")
+            mimeType: "application/zip", size: Int64(bytes.count), stagedName: "report.zip")
         ]), directory
     )
   }
 
-  func testOrdinaryLaunchDoesNothingAndCommandsValidate() throws {
-    XCTAssertNil(try DropCommand(arguments: ["Runner"]))
-    XCTAssertNotNil(
-      try DropCommand(arguments: ["Runner", "--yard-drop", "arm", captureID, String(now + 60_000)]))
-    for args in [
-      ["arm", "../bad", "1"], ["arm", captureID], ["publish", captureID, "extra"],
-      ["unknown", captureID],
-    ] {
-      XCTAssertThrowsError(try DropCommand(arguments: ["Runner", "--yard-drop"] + args))
-    }
-  }
-
   func testCaptureMustBeFreshAndShortLived() throws {
     for expiry in [now, now - 1, now + DropStore.captureLifetime + 1] {
-      XCTAssertThrowsError(try store.arm(.init(id: captureID, expiresAt: expiry), now: now))
+      try writeCapture(.init(id: captureID, expiresAt: expiry))
+      XCTAssertNil(store.activeCapture(now: now))
     }
-    _ = try arm()
-    XCTAssertNil(store.activeCapture(now: now + 60_000))
-  }
-
-  func testNewCapturePurgesOldBatchesAndPublishedFiles() throws {
-    let capture = try arm()
-    let (batch, directory) = try staged()
-    try store.queue(batch, staged: directory, capture: capture, now: now)
-    let old = store.documents.appendingPathComponent("YARD Drop/Inbox/old")
-    try FileManager.default.createDirectory(at: old, withIntermediateDirectories: true)
-    try store.arm(.init(id: UUID().uuidString, expiresAt: now + 60_000), now: now)
-    XCTAssertFalse(FileManager.default.fileExists(atPath: old.path))
-    XCTAssertThrowsError(try store.publish(captureID, now: now))
-    XCTAssertThrowsError(
-      try store.queue(batch, staged: try store.makeStagingDirectory(), capture: capture, now: now))
-  }
-
-  func testPublishRequiresMatchingUnexpiredCaptureAndPreservesBytes() throws {
-    let capture = try arm()
-    let (batch, directory) = try staged()
-    let expected = try Data(contentsOf: directory.appendingPathComponent(batch.files[0].stagedName))
-    try store.queue(batch, staged: directory, capture: capture, now: now)
-    XCTAssertThrowsError(try store.publish(UUID().uuidString, now: now))
-    XCTAssertThrowsError(try store.publish(captureID, now: now + 60_000))
-    XCTAssertEqual(try store.publish(captureID, now: now), 1)
-    let published = store.documents.appendingPathComponent(
-      "YARD Drop/Inbox/\(captureID)/\(batch.batchId)")
-    XCTAssertEqual(try Data(contentsOf: published.appendingPathComponent("report.zip")), expected)
-    XCTAssertTrue(
-      FileManager.default.fileExists(
-        atPath: published.appendingPathComponent(DropStore.marker).path))
+    try writeCapture(.init(id: "../invalid", expiresAt: now + 60_000))
     XCTAssertNil(store.activeCapture(now: now))
-  }
-
-  func testEmptyPublishCanBeRetriedAndIncompleteBatchIsIgnored() throws {
     _ = try arm()
-    let partial = store.root.appendingPathComponent("Incoming/\(captureID)/\(UUID().uuidString)")
-    try FileManager.default.createDirectory(at: partial, withIntermediateDirectories: true)
-    XCTAssertEqual(try store.publish(captureID, now: now), 0)
     XCTAssertNotNil(store.activeCapture(now: now))
   }
 
-  func testFailedPublishNeverLooksReady() throws {
+  func testNewReservationRejectsAnInFlightShare() throws {
+    let capture = try arm()
+    let (batch, directory) = try staged()
+    try writeCapture(.init(id: UUID().uuidString, expiresAt: now + 60_000))
+    XCTAssertThrowsError(try store.queue(batch, staged: directory, capture: capture, now: now))
+    XCTAssertTrue(FileManager.default.fileExists(atPath: directory.path))
+  }
+
+  func testLeaseRefreshKeepsAnInFlightShareAndPreservesBytes() throws {
+    let capture = try arm()
+    let (batch, directory) = try staged()
+    let expected = try Data(contentsOf: directory.appendingPathComponent("report.zip"))
+    try writeCapture(.init(id: capture.id, expiresAt: now + 120_000))
+    try store.queue(batch, staged: directory, capture: capture, now: now)
+    let queued = store.root.appendingPathComponent("Incoming/\(captureID)/\(batch.batchId)")
+    XCTAssertEqual(try Data(contentsOf: queued.appendingPathComponent("report.zip")), expected)
+    XCTAssertTrue(
+      FileManager.default.fileExists(atPath: queued.appendingPathComponent(DropStore.marker).path))
+    let manifest = try JSONDecoder().decode(
+      DropBatch.self, from: Data(contentsOf: queued.appendingPathComponent("batch.json")))
+    XCTAssertEqual(manifest.captureId, capture.id)
+    XCTAssertEqual(manifest.files.first?.name, "report.zip")
+    XCTAssertFalse(FileManager.default.fileExists(atPath: directory.path))
+    XCTAssertNotNil(store.activeCapture(now: now))
+  }
+
+  func testExpiredLeaseRejectsNewSharesWithoutDeletingCompletedBatches() throws {
     let capture = try arm()
     let (batch, directory) = try staged()
     try store.queue(batch, staged: directory, capture: capture, now: now)
-    let source = store.root.appendingPathComponent(
-      "Incoming/\(captureID)/\(batch.batchId)/\(batch.files[0].stagedName)")
-    try FileManager.default.removeItem(at: source)
-    XCTAssertThrowsError(try store.publish(captureID, now: now))
-    XCTAssertFalse(
-      FileManager.default.fileExists(
-        atPath: store.documents.appendingPathComponent(
-          "YARD Drop/Inbox/\(captureID)/\(batch.batchId)/\(DropStore.marker)"
-        ).path))
+    XCTAssertNil(store.activeCapture(now: now + 60_000))
+    let queued = store.root.appendingPathComponent(
+      "Incoming/\(captureID)/\(batch.batchId)/report.zip")
+    XCTAssertTrue(FileManager.default.fileExists(atPath: queued.path))
+    let (next, staging) = try staged()
+    XCTAssertThrowsError(
+      try store.queue(next, staged: staging, capture: capture, now: now + 60_000))
   }
 
   func testNamesCannotEscapeAndDuplicatesKeepExtensions() {

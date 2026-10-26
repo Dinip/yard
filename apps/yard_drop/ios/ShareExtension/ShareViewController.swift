@@ -122,10 +122,13 @@ final class ShareModel: ObservableObject {
             {
               suggested += ".\(ext)"
             }
+            let name = DropStore.uniqueName(suggested, used: &used)
+            try FileManager.default.moveItem(
+              at: destination, to: directory.appendingPathComponent(name))
             let file = DropFile(
-              id: id, name: DropStore.uniqueName(suggested, used: &used), typeIdentifier: type,
+              id: id, name: name, typeIdentifier: type,
               mimeType: UTType(type)?.preferredMIMEType ?? "application/octet-stream", size: size,
-              stagedName: "\(id).bin"
+              stagedName: name
             )
             total += size
             files.append(file)
@@ -159,36 +162,7 @@ final class ShareModel: ObservableObject {
   func export(completion: @escaping ([URL]) -> Void) {
     guard !busy, let directory, !files.isEmpty else { return }
     busy = true
-    let files = self.files
-    task = Task { @MainActor in
-      do {
-        let cancellation = self.cancellation
-        let urls = try await Task.detached {
-          let export = directory.appendingPathComponent("Save")
-          try? FileManager.default.removeItem(at: export)
-          try FileManager.default.createDirectory(at: export, withIntermediateDirectories: true)
-          return try files.map { file in
-            let url = export.appendingPathComponent(file.name)
-            _ = try DropStore.copy(
-              directory.appendingPathComponent(file.stagedName), to: url,
-              remaining: DropStore.maxBatch, cancelled: { cancellation.isCancelled })
-            return url
-          }
-        }.value
-        if Task.isCancelled {
-          cleanup()
-          return
-        }
-        completion(urls)
-      } catch {
-        if Task.isCancelled {
-          cleanup()
-          return
-        }
-        failures.append(error.localizedDescription)
-        busy = false
-      }
-    }
+    completion(files.map { directory.appendingPathComponent($0.stagedName) })
   }
 
   func discard() {
@@ -231,8 +205,8 @@ private struct ShareView: View {
             .disabled(model.busy || model.files.isEmpty || model.capture == nil)
           Text(
             model.capture == nil
-              ? "Open Receive shared files in YARD and prepare the iPhone first."
-              : "After sending, select Finish transfer in your YARD browser."
+              ? "Reserve this iPhone in YARD to send files to the browser."
+              : "Files appear automatically in Receive shared files in your YARD browser."
           )
           .font(.caption)
         }

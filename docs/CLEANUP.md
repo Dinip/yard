@@ -235,9 +235,12 @@ The provider refuses non-iOS entries, empty or malformed bundle IDs, the
 Documents root, traversal and empty path components at startup. House Arrest
 deletes only the configured subtree, leaves the app installed, and reports
 `app:com.dinispimpao.yard.drop:/Documents/YARD Drop` in the cleanup audit row.
-The private App Group is inaccessible to the provider. YARD Drop only publishes
-batches with the browser's matching, unexpired capture ID, and a new Prepare
-iPhone operation purges the previous capture before sharing begins.
+YARD Drop's browser inbox lives in the App Group and is separate from saved
+Documents. The provider invalidates its lease and purges its queued batches on
+reservation revocation, independently of optional folder wiping. It binds the
+next reservation to a new namespace before enabling access. A disconnected
+phone stops accepting browser shares when its two-minute lease expires; cleanup
+retries on reconnection.
 
 The provider intersects the coordinator's step set with what its backend
 supports and what its own config allows. A step nobody configured is a no-op,

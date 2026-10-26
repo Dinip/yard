@@ -193,12 +193,11 @@ src/lib/popout.ts                      open the popout, sized to the device
 src/lib/side-panels.ts                 which flanks are open, per user
 ```
 
-On iOS, Receive shared files prepares a ten-minute capture through the existing
-app-launch command. Finish transfer launches the companion again to publish
-only that capture, and the dialog polls its House Arrest Documents path. The
-app's installed product name lets a user-signed build use a different bundle
-ID. A browser refresh starts a new capture; revocation disables polling. File
-listing and downloads still go directly to the provider.
+Receive shared files polls completed batches on both platforms. Android uses
+its Downloads inbox; iOS uses the provider's opaque `drop:/` root, bound to the
+current reservation. Sharing requires no browser preparation, finish action or
+app launch. Browser refreshes preserve the inbox; revocation disables polling.
+File listing and downloads go directly to the provider.
 
 `DeviceConsole` is shared verbatim by `/devices/:id` and the popout, so there is
 one control surface, not two that drift.

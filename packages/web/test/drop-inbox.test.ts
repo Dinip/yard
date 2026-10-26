@@ -6,15 +6,7 @@
 
 import { describe, expect, test } from "bun:test";
 import type { FileListing } from "@yard/protocol";
-import {
-  armIosDrop,
-  INBOX_PATH,
-  type InboxSource,
-  IOS_INBOX_PATH,
-  iosDropBundle,
-  publishIosDrop,
-  readInbox,
-} from "../src/lib/drop-inbox.ts";
+import { INBOX_PATH, type InboxSource, IOS_INBOX_PATH, readInbox } from "../src/lib/drop-inbox.ts";
 
 /** A device whose inbox is described as `{ "<batch>": [names…] }`. */
 function device(
@@ -62,61 +54,14 @@ function manifest(files: { name: string; size?: number }[], overrides: object = 
 
 const ready = "_YARD_READY";
 
-test("iOS finds a companion signed under the user's bundle ID", () => {
-  expect(iosDropBundle([{ id: "com.example.signed.drop", name: "YARD - Device Farm" }])).toBe(
-    "com.example.signed.drop",
-  );
-  expect(() => iosDropBundle([])).toThrow("Install YARD Drop");
-  expect(() =>
-    iosDropBundle([
-      { id: "com.example.one", name: "yard_drop" },
-      { id: "com.example.two", name: "YARD - Device Farm" },
-    ]),
-  ).toThrow("Several YARD Drop");
-});
-
-test("iOS reads only the armed capture's House Arrest subtree", async () => {
-  const root = `${IOS_INBOX_PATH}/capture-id`;
+test("iOS reads the provider's reservation-bound inbox without launching the app", async () => {
   const source = device(
     { batch: ["report.zip", "batch.json", ready] },
     { batch: manifest([{ name: "report.zip" }]) },
-    root,
+    IOS_INBOX_PATH,
   );
-  const [batch] = await readInbox(source, new Map(), root);
-  expect(batch.files[0].path).toBe(`${root}/batch/report.zip`);
-});
-
-test("iOS prepares a fresh capture and publishes with the same secret", async () => {
-  const commands: string[][] = [];
-  const launch = async (args: string[]) => {
-    commands.push(args);
-  };
-  const capture = await armIosDrop(launch);
-  expect(capture.id).toMatch(/^[0-9a-f-]{36}$/);
-  expect(capture.expiresAt).toBeGreaterThan(Date.now());
-  await publishIosDrop(launch, capture);
-  expect(commands).toEqual([
-    ["--yard-drop", "arm", capture.id, String(capture.expiresAt)],
-    ["--yard-drop", "publish", capture.id],
-  ]);
-});
-
-test("failed preparation and expired captures cannot proceed to publishing", async () => {
-  await expect(
-    armIosDrop(async () => {
-      throw new Error("Device unavailable");
-    }),
-  ).rejects.toThrow("Device unavailable");
-  let launches = 0;
-  await expect(
-    publishIosDrop(
-      async () => {
-        launches++;
-      },
-      { id: crypto.randomUUID(), expiresAt: Date.now() - 1 },
-    ),
-  ).rejects.toThrow("expired");
-  expect(launches).toBe(0);
+  const [batch] = await readInbox(source, new Map(), IOS_INBOX_PATH);
+  expect(batch.files[0].path).toBe(`${IOS_INBOX_PATH}/batch/report.zip`);
 });
 
 test("an inbox that does not exist yet is empty", async () => {
