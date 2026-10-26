@@ -10,10 +10,12 @@ on:
   pull_request:
     paths:
       - "apps/yard_drop/**"
+      - ".github/workflows/flutter.yml"
   push:
     branches: [main]
     paths:
       - "apps/yard_drop/**"
+      - ".github/workflows/flutter.yml"
 
 permissions:
   contents: read

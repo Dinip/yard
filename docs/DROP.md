@@ -934,9 +934,10 @@ Android is complete when all of these statements hold:
 The Flutter 3.44.9 Runner and native SwiftUI ShareExtension require iOS 27.0.
 Runner uses UIScene and registers plugins after its implicit Flutter engine
 initializes. The extension never starts Flutter. CI builds simulator and
-unsigned release targets and runs the native tests. Flutter workflows run only
-when `apps/yard_drop/` changes, including release builds compared with the prior
-tag. Users sign Runner and the extension with their own profiles and shared
+unsigned release targets and runs the native tests. Flutter CI runs when
+`apps/yard_drop/` or `.github/workflows/flutter.yml` changes. Mobile release builds
+require app-folder changes compared with the prior tag. Users sign Runner and
+the extension with their own profiles and shared
 App Group. See [the signing guide](../apps/yard_drop/ios/SIGNING.md).
 
 The flow matches Android: share files, choose YARD - Device Farm, then Send to
