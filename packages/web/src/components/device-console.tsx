@@ -455,16 +455,12 @@ export function DeviceConsole({
           run: () => installInput.current?.click(),
         },
         { key: "browse", label: "Files", icon: FolderOpen, run: () => setFilesOpen(true) },
-        ...(platform === "android" || platform === "ios"
-          ? [
-              {
-                key: "drop",
-                label: "Receive shared files",
-                icon: Inbox,
-                run: () => setDropOpen(true),
-              },
-            ]
-          : []),
+        {
+          key: "drop",
+          label: "Receive shared files",
+          icon: Inbox,
+          run: () => setDropOpen(true),
+        },
         { key: "copy", label: "Copy from device", icon: ClipboardCopy, run: readDeviceClipboard },
         { key: "paste", label: "Paste to device", icon: ClipboardPaste, run: writeDeviceClipboard },
       ],

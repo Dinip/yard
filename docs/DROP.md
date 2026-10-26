@@ -149,9 +149,9 @@ yard-drop-0.4.0+142-ios.ipa
 yard-drop-0.4.0+142-ios.ipa.sha256
 ```
 
-The mobile workflow checks for changes under `apps/yard_drop/` since the
-previous release before building either platform. The IPA is unsigned; farm
-operators sign the app and extension using their own Apple account. Call the reusable
+The mobile workflow builds both platforms on every release, so each release
+includes an APK and an unsigned IPA even when the app source has not changed.
+Farm operators sign the app and extension using their own Apple account. Call the reusable
 mobile workflow from the existing release workflow because a tag created with
 `GITHUB_TOKEN` does not start another tag-triggered workflow.
 
@@ -936,7 +936,7 @@ Runner uses UIScene and registers plugins after its implicit Flutter engine
 initializes. The extension never starts Flutter. CI builds simulator and
 unsigned release targets and runs the native tests. Flutter CI runs when
 `apps/yard_drop/` or `.github/workflows/flutter.yml` changes. Mobile release builds
-require app-folder changes compared with the prior tag. Users sign Runner and
+run for every release. Users sign Runner and
 the extension with their own profiles and shared
 App Group. See [the signing guide](../apps/yard_drop/ios/SIGNING.md).
 

@@ -125,8 +125,8 @@ CI stamps the root version, `run_number * 100 + run_attempt`, and source commit
 into both targets. `ios/Flutter/BuildInfo.xcconfig` defaults the native source
 commit to `local`; CI replaces it before building. Android and iOS CI run for
 changes under `apps/yard_drop/` or to `.github/workflows/flutter.yml`. The mobile
-release workflow compares the app folder with the previous release before
-starting either Flutter build.
+release workflow builds both platforms on every release, so each release has
+an APK and an unsigned IPA even when the app source has not changed.
 
 Install the signed IPA before the reservation baseline. For a custom App Group:
 

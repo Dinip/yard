@@ -19,29 +19,7 @@ defaults:
     working-directory: apps/yard_drop
 
 jobs:
-  changes:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: .
-    outputs:
-      drop: ${{ steps.diff.outputs.drop }}
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-      - id: diff
-        run: |
-          PREVIOUS=$(git describe --tags --match 'v[0-9]*' --abbrev=0 HEAD^ 2>/dev/null || true)
-          if [ -z "$PREVIOUS" ] || ! git diff --quiet "$PREVIOUS" HEAD -- apps/yard_drop/; then
-            echo 'drop=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'drop=false' >> "$GITHUB_OUTPUT"
-          fi
-
   android:
-    needs: changes
-    if: needs.changes.outputs.drop == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -75,8 +53,6 @@ jobs:
         run: gh release upload "v${{ inputs.version }}" "$RUNNER_TEMP/yard-drop-${{ inputs.version }}.apk" --clobber
 
   ios:
-    needs: changes
-    if: needs.changes.outputs.drop == 'true'
     runs-on: xcode-27
     steps:
       - uses: actions/checkout@v7
