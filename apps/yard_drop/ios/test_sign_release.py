@@ -57,11 +57,14 @@ class SigningTests(unittest.TestCase):
         self.make_ipa(ipa)
         original = ipa.read_bytes()
         output = self.directory / "signed.ipa"
+        options = self.directory / "working-export.plist"
+        options.write_bytes(plistlib.dumps({"method": "debugging", "signingStyle": "manual"}))
         arguments = ["sign-release.py", str(ipa), "--team", TEAM, "--bundle-id", IDS[0],
                      "--extension-bundle-id", IDS[1], "--app-group", GROUP,
-                     "--output", str(output)]
+                     "--output", str(output), "--export-options", str(options)]
 
-        def export(archive, directory, bundle_ids, group, team):
+        def export(archive, directory, bundle_ids, group, team, export_options):
+            self.assertEqual(export_options, options)
             signed = directory / "signed.ipa"
             signed.write_bytes(b"signed fixture")
             return signed
@@ -166,6 +169,41 @@ class SigningTests(unittest.TestCase):
         displayed = [call.args[-1].name for call in command.call_args_list if "--display" in call.args]
         self.assertEqual(displayed, ["Runner.app", "ShareExtension.appex"])
         self.assertTrue(any("--verify" in call.args for call in command.call_args_list))
+
+    def test_reuses_successful_xcode_settings_without_modifying_source_or_uploading(self):
+        source = self.directory / "working-export.plist"
+        values = {
+            "method": "debugging", "signingStyle": "manual", "teamID": TEAM,
+            "signingCertificate": "Apple Development",
+            "provisioningProfiles": {IDS[0]: "Runner profile", IDS[1]: "Extension profile"},
+            "destination": "upload", "manageAppVersionAndBuildNumber": True,
+        }
+        source.write_bytes(plistlib.dumps(values))
+
+        def export(command, check):
+            options = Path(command[command.index("-exportOptionsPlist") + 1])
+            actual = plistlib.loads(options.read_bytes())
+            self.assertEqual(actual, {
+                **values, "destination": "export", "manageAppVersionAndBuildNumber": False,
+            })
+            raise RuntimeError("Stop before account-backed export")
+
+        with patch.object(signing.subprocess, "run", side_effect=export):
+            with self.assertRaisesRegex(RuntimeError, "Stop before account-backed export"):
+                signing.export_archive(Path("Runner.xcarchive"), self.directory, IDS, GROUP, TEAM, source)
+        self.assertEqual(plistlib.loads(source.read_bytes()), values)
+
+    def test_refuses_invalid_or_mismatched_export_options_before_contacting_apple(self):
+        source = self.directory / "invalid-export.plist"
+        for values in [[], {"teamID": "OTHER12345"}]:
+            with self.subTest(values=values):
+                source.write_bytes(plistlib.dumps(values))
+                with patch.object(signing.subprocess, "run") as export:
+                    with self.assertRaises(ValueError) as error:
+                        signing.export_archive(Path("Runner.xcarchive"), self.directory, IDS, GROUP, TEAM, source)
+                    self.assertNotIn(TEAM, str(error.exception))
+                    self.assertNotIn("OTHER12345", str(error.exception))
+                    export.assert_not_called()
 
     def test_refuses_export_if_extension_loses_group_or_uses_wrong_team(self):
         for changed in [{"com.apple.security.application-groups": []},

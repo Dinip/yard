@@ -72,15 +72,22 @@ def prepare_archive(ipa, directory, bundle_ids, group, team):
     return archive
 
 
-def export_archive(archive, directory, bundle_ids, group, team):
-    options = directory / "ExportOptions.plist"
-    options.write_bytes(plistlib.dumps({
+def export_archive(archive, directory, bundle_ids, group, team, export_options=None):
+    values = plistlib.loads(export_options.read_bytes()) if export_options else {
         "method": "release-testing",
-        "destination": "export",
         "signingStyle": "automatic",
+    }
+    if not isinstance(values, dict):
+        raise ValueError("Export options must be a plist dictionary.")
+    if values.get("teamID", team) != team:
+        raise ValueError("Export options use a different team than --team.")
+    values.update({
         "teamID": team,
+        "destination": "export",
         "manageAppVersionAndBuildNumber": False,
-    }))
+    })
+    options = directory / "ExportOptions.plist"
+    options.write_bytes(plistlib.dumps(values))
     exported = directory / "exported"
     subprocess.run([
         "xcodebuild", "-exportArchive", "-archivePath", str(archive),
@@ -115,11 +122,14 @@ def main():
     parser.add_argument("--bundle-id", required=True, help="Runner bundle ID")
     parser.add_argument("--extension-bundle-id", required=True, help="Share Extension bundle ID")
     parser.add_argument("--app-group", required=True, help="App Group shared by both targets")
+    parser.add_argument("--export-options", type=Path, help="ExportOptions.plist from a successful Xcode export")
     parser.add_argument("--output", type=Path, default=Path("yard-drop-signed.ipa"))
     args = parser.parse_args()
     ipa = args.ipa.absolute()
     if not ipa.is_file():
         parser.error(f"Unsigned IPA is not a file: {ipa}")
+    if args.export_options and not args.export_options.is_file():
+        parser.error("Export options is not a file")
     if not re.fullmatch(r"[A-Z0-9]{10}", args.team):
         parser.error("--team must be a 10-character Apple Team ID")
     for value in [args.bundle_id, args.extension_bundle_id, args.app_group]:
@@ -141,7 +151,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix=".yard-drop-", dir=output.parent) as temporary:
         directory = Path(temporary)
         archive = prepare_archive(ipa, directory, bundle_ids, args.app_group, args.team)
-        signed = export_archive(archive, directory, bundle_ids, args.app_group, args.team)
+        signed = export_archive(archive, directory, bundle_ids, args.app_group, args.team, args.export_options)
         os.link(signed, output)
     print(f"Signed IPA: {output}\nProvider device option: drop_app_group: {args.app_group}")
 

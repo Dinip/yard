@@ -116,7 +116,9 @@ installed on an ordinary iPhone until its user signs both the app and extension.
 
 Use `python3 ios/sign-release.py --help` to sign a local unsigned IPA
 with your team, custom bundle IDs and App Group using Xcode's signed-in account
-and Release Testing export flow. No manual certificate import is required.
+and Release Testing export flow. Pass `--export-options` with the local
+`ExportOptions.plist` from a successful Xcode export to reuse its signing settings.
+No manual certificate import is required when cloud signing is available.
 See [iOS signing instructions](ios/SIGNING.md) for company account setup and
 the separate source-build route for Xcode's free seven-day Personal Team provisioning.
 Both targets must share an App Group authorized by their profiles. Source builds

@@ -56,7 +56,7 @@ test. It does not produce a universally installable IPA.
 
 ## Signing a downloaded unsigned IPA
 
-This script follows Xcode's **Archive > Distribute App > Release Testing**
+By default, this script follows Xcode's **Archive > Distribute App > Release Testing**
 workflow, also called Ad Hoc distribution. Use it when you already sign in to
 Xcode with your company Apple account and your admin has registered the two
 bundle IDs and their shared App Group.
@@ -92,8 +92,22 @@ python3 ios/sign-release.py /path/to/yard-drop-ios-unsigned.ipa \
 Use the Team ID, not your account email. The extension ID must start with the
 Runner ID followed by a dot. The script does not ask for an Apple password or
 an API key. If Xcode's account session has expired, sign in again in Xcode.
-If export fails on permissions or profiles, resolve that with your admin just
-as you would for an export in Xcode.
+If Xcode exports successfully but the script fails, reuse the settings from that
+successful export before assuming your account needs additional permissions.
+Xcode saves `ExportOptions.plist` beside the exported IPA. Add this option to
+the command above:
+
+```bash
+--export-options /path/to/successful-export/ExportOptions.plist
+```
+
+This preserves Xcode's chosen method, signing style, certificate selector and
+profile mapping. The file must use the same team, and manual profile mappings
+must cover both requested bundle IDs. The script checks the team matches
+`--team`, always exports locally and preserves release build numbers. It does
+not modify the supplied plist. Keep that file outside the checkout; it can
+contain team and profile details and should not be committed or shared.
+See Apple's [archive export files guide](https://help.apple.com/xcode/mac/current/en.lproj/deva1f2ab5a2.html).
 
 The script reads the local IPA without modifying it. It updates both bundle IDs
 and `YardAppGroup` values in a temporary directory, then prepares an Xcode archive.
@@ -101,14 +115,15 @@ Temporary ad hoc signatures carry the App Group entitlement into Xcode's
 export step on both Runner and the extension. These temporary signatures use
 no Apple certificate and are replaced during export.
 
-The script runs `xcodebuild -exportArchive` with automatic signing, your team,
-`method: release-testing` and `destination: export`. It uses Xcode's existing
-account login. `-allowProvisioningUpdates` permits Xcode to fetch or refresh
+The script runs `xcodebuild -exportArchive` with your team and
+`destination: export`. Without `--export-options`, it selects automatic signing
+and `method: release-testing`. It uses Xcode's existing account login.
+`-allowProvisioningUpdates` permits Xcode to fetch or refresh
 signing assets, including creating managed profiles or certificates if required
 and allowed by your account. It does not register new bundle IDs, change their
 App Group settings or register devices. Your admin's existing setup remains a
-prerequisite. This follows Xcode's automatic export flow rather than pinning
-particular manually supplied profile files.
+prerequisite. With manual signing in a supplied export plist, Xcode uses its
+profile mapping and downloads missing or updated profiles.
 
 After export, the script verifies signatures and checks that both bundles have
 the requested IDs, team and shared group. It preserves release version and
