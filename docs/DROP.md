@@ -957,7 +957,10 @@ callback; metadata operations are serialized, and file downloads stream in
 256 KB chunks through the file data service. Connections end their file-service
 session before closing. The configured group defaults to
 `group.com.dinispimpao.yard.drop`; custom signing uses `options.drop_app_group`.
-Both native Info.plists must carry that same value in `YardAppGroup`.
+Each native build generates `YardAppGroup` in its Info.plist from the target's
+App Group entitlements. Select the same single group on Runner and ShareExtension
+in Signing & Capabilities; no separate plist edit is needed. The IPA signing
+script updates that runtime value when re-signing with a custom group.
 
 ### Storage and reservation isolation
 

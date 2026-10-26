@@ -58,8 +58,8 @@ jobs:
     runs-on: xcode-27
     steps:
       - uses: actions/checkout@v7
-      - name: Test the release signing script
-        run: python3 -m unittest discover -s ios -p 'test_sign_release.py'
+      - name: Test iOS build and signing scripts
+        run: python3 -m unittest discover -s ios -p 'test_*.py'
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: 3.44.9

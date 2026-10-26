@@ -56,9 +56,8 @@ struct DropBatch: Codable {
 }
 
 final class DropStore {
-  static var groupID: String {
+  static var groupID: String? {
     Bundle.main.object(forInfoDictionaryKey: "YardAppGroup") as? String
-      ?? "group.com.dinispimpao.yard.drop"
   }
   static let marker = "_YARD_READY"
   static let maxFile: Int64 = 512 * 1024 * 1024
@@ -71,6 +70,7 @@ final class DropStore {
 
   static func shared() throws -> DropStore {
     guard
+      let groupID,
       let group = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: groupID)
     else { throw DropError.invalidCapture }
     return DropStore(

@@ -119,9 +119,10 @@ with your team, custom bundle IDs and App Group using Xcode's signed-in account
 and Release Testing export flow. No manual certificate import is required.
 See [iOS signing instructions](ios/SIGNING.md) for company account setup and
 the separate source-build route for Xcode's free seven-day Personal Team provisioning.
-Both targets must share an App Group authorized by their profiles. The native
-App Group identifier is read from `YardAppGroup` in each target's Info.plist, so
-users can change it when signing. Set the provider device option
+Both targets must share an App Group authorized by their profiles. Source builds
+generate `YardAppGroup` in each target's Info.plist from the single group selected
+in Signing & Capabilities. The IPA signing script updates it when re-signing.
+Set the provider device option
 `drop_app_group` to that same value when using a custom group.
 
 CI stamps the root version, `run_number * 100 + run_attempt`, and source commit

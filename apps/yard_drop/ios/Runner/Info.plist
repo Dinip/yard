@@ -72,7 +72,5 @@
 	<true/>
 	<key>YardCommit</key>
 	<string>$(YARD_COMMIT)</string>
-	<key>YardAppGroup</key>
-	<string>group.com.dinispimpao.yard.drop</string>
 </dict>
 </plist>

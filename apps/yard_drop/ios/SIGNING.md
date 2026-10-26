@@ -33,8 +33,9 @@ ten short-lived App IDs. Runner and ShareExtension use separate App IDs. See
    ID below it, for example `com.example.yarddrop` and
    `com.example.yarddrop.ShareExtension`.
 6. Both targets need the same registered App Group. Add it in Signing &
-   Capabilities and select it on both targets. If changing the default group,
-   update `YardAppGroup` in **both** targets' Info.plist to that same identifier.
+   Capabilities and select only that group on both targets. Each target's build
+   generates `YardAppGroup` in its Info.plist from its entitlements; there is no
+   separate plist value to edit. Missing or multiple groups fail the build.
    Set the provider device option `drop_app_group` to the same identifier.
 7. Choose the connected iPhone and use the Runner scheme. Set its Run build
    configuration to Release, then run it. Flutter's containing app must work
@@ -119,7 +120,7 @@ Test local input handling, archive preparation, export options and verification 
 an Apple account or signing key. Account-backed export is mocked in these tests:
 
 ```bash
-python3 -m unittest discover -s ios -p 'test_sign_release.py'
+python3 -m unittest discover -s ios -p 'test_*.py'
 ```
 
 ## Install and configure the farm
