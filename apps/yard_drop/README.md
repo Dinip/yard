@@ -128,6 +128,12 @@ changes under `apps/yard_drop/` or to `.github/workflows/flutter.yml`. The mobil
 release workflow builds both platforms on every release, so each release has
 an APK and an unsigned IPA even when the app source has not changed.
 
+For PR test builds, open the Flutter workflow run from the PR's Checks tab.
+Under Artifacts, download `app-debug.apk` or `yard-drop-ios-unsigned.ipa`
+directly. The Android build is a debug APK; the iOS build is a release IPA that
+needs signing using
+[the signing guide](ios/SIGNING.md) before installation.
+
 Install the signed IPA before the reservation baseline. For a custom App Group:
 
 ```yaml
