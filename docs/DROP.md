@@ -1014,18 +1014,20 @@ removed. The unsigned IPA re-sign procedure also passed signature verification.
 On 2026-10-26, the same phone passed direct Rust CoreDevice App Group directory
 listing, file creation, attributes, rename, streaming download with byte equality,
 delete and session closure. The same probe passed reservation replacement, stale
-path rejection, symlink rejection and release cleanup on that phone. The opt-in `app_group_files_work_over_the_usb_tunnel`
-probe exercises these operations without launching the companion. Native tests
+path rejection, symlink rejection and release cleanup on that phone. The opt-in
+`app_group_files_work_over_the_usb_tunnel` probe exercises these operations without launching the companion. Native tests
 cover an in-flight lease refresh, reservation replacement, expiry, committed
 bytes, names, copy limits, cancellation and mixed NSItemProvider results. Web
 tests read iOS batches through the same inbox reader as Android. Rust tests check
 reservation-bound paths, transfer size limits and delayed revocation. The revised
 build passed 42 Flutter tests, 7 native iOS tests, 63 web tests, root type checking,
-the Rust workspace tests and Clippy with warnings denied. Its signed release
-build is installed for the remaining live browser share check.
+the Rust workspace tests and Clippy with warnings denied. The tester then
+confirmed that sharing `yard-drop-probe.zip` through the installed release
+extension made it appear automatically in the live browser and download
+successfully, with no Prepare or Finish action.
 
-Still to verify before wider rollout: the revised live browser flow, Photos,
-Safari, the company ZIP, multiple attachments on a physical device, low storage,
+Still to verify before wider rollout: Photos, Safari, the company ZIP, multiple
+attachments on a physical device, low storage,
 extension termination, signing upgrades, provider reconnects and reservation
 release. Check downloaded bytes and audit entries. Hardware tests are opt-in
 with `YARD_TEST_IOS_UDID`; normal Cargo checks require no phone.
