@@ -56,6 +56,17 @@ buttons; `/providers` is now a redirect, kept only so an old bookmark still
 works. A non-admin following it hits the admin guard and lands on `/devices` —
 a provider's name reaches them on the device page anyway.
 
+Admins can start, edit, or end maintenance from **Maintenance** on a device's
+detail page. The reason appears on the device card and detail page, and the
+reserve button is disabled while maintenance is active.
+
+On `/admin/providers`, **Drain** stops new reservations on all of that provider's
+devices. The table shows the active session count and changes **draining** to
+**drained** at zero. Existing sessions can continue to renew until released or
+ended by the ordinary reservation policies. **Resume reservations** clears
+draining. Provider restarts do not clear maintenance or draining, and clearing
+either policy leaves the other in force.
+
 `/admin/preload` is the only page that displays preload inventory. Admins can
 remove an existing preload from an idle device there, which uninstalls the app
 and drops its retained package and repair policy. The same page accepts one

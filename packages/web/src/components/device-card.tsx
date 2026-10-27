@@ -83,6 +83,10 @@ export function DeviceCard({ device, mine }: { device: DeviceListItem; mine?: bo
             </Row>
           ) : null}
           <Row label="Provider">{device.provider.name}</Row>
+          {device.maintenanceReason && (
+            <p className="break-words text-warning">Maintenance: {device.maintenanceReason}</p>
+          )}
+          {device.provider.draining && <p className="text-warning">Provider draining</p>}
         </CardContent>
 
         <CardFooter className="px-4">
@@ -93,7 +97,11 @@ export function DeviceCard({ device, mine }: { device: DeviceListItem; mine?: bo
               In use by <span className="text-foreground">{device.reservation.ownerName}</span>
             </p>
           ) : (
-            <p className="text-muted-foreground text-xs">Available</p>
+            <p className="text-muted-foreground text-xs">
+              {device.maintenanceReason || device.provider.draining || unavailable
+                ? "Unavailable"
+                : "Available"}
+            </p>
           )}
         </CardFooter>
       </Card>

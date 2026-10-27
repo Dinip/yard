@@ -41,6 +41,7 @@ async function listDevices(db: import("@yard/db").Database) {
       device,
       providerName: provider.name,
       providerStatus: provider.status,
+      providerDraining: provider.draining,
       providerBaseUrl: provider.publicBaseUrl,
       reservation: reservation,
       ownerName: user.name,
@@ -105,6 +106,7 @@ async function listDevices(db: import("@yard/db").Database) {
       id: r.device.providerId,
       name: r.providerName,
       status: r.providerStatus,
+      draining: r.providerDraining,
       publicBaseUrl: r.providerBaseUrl,
     },
     reservation: r.reservation
@@ -163,6 +165,24 @@ export const deviceRouter = router({
     return found;
   }),
 
+  setMaintenance: adminProcedure
+    .input(
+      z.object({ deviceId: z.string(), reason: z.string().trim().min(1).max(1000).nullable() }),
+    )
+    .mutation(async ({ ctx, input }) => {
+      const [updated] = await ctx.db
+        .update(device)
+        .set({ maintenanceReason: input.reason, updatedAt: new Date() })
+        .where(eq(device.id, input.deviceId))
+        .returning();
+      if (!updated) throw new TRPCError({ code: "NOT_FOUND" });
+      await audit(ctx.db, ctx.user.id, "device.maintenance", "device", input.deviceId, {
+        reason: input.reason,
+      });
+      deviceEvents.publish();
+      return updated;
+    }),
+
   /**
    * Claim a device. Exclusivity is enforced by the partial unique index on
    * `reservation(device_id) where state = 'active'` — a losing concurrent caller
@@ -172,8 +192,9 @@ export const deviceRouter = router({
     .input(z.object({ deviceId: z.string() }))
     .mutation(async ({ ctx, input }) => {
       const [target] = await ctx.db
-        .select()
+        .select({ device, draining: provider.draining })
         .from(device)
+        .innerJoin(provider, eq(device.providerId, provider.id))
         .where(eq(device.id, input.deviceId))
         .limit(1);
       if (!target) throw new TRPCError({ code: "NOT_FOUND" });
@@ -198,31 +219,66 @@ export const deviceRouter = router({
         return renewed!;
       }
 
-      if (!RESERVABLE.includes(target.status as "ready")) {
+      if (target.device.maintenanceReason !== null || target.draining) {
         throw new TRPCError({
           code: "PRECONDITION_FAILED",
-          message: `Device is ${target.status}`,
+          message: target.device.maintenanceReason
+            ? `Device is in maintenance: ${target.device.maintenanceReason}`
+            : "Provider is draining",
+        });
+      }
+
+      if (!RESERVABLE.includes(target.device.status as "ready")) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: `Device is ${target.device.status}`,
         });
       }
 
       // Fail before taking the reservation rather than handing out a device
       // nobody can reach: `require` throws PRECONDITION_FAILED when the owning
       // provider has no live control-plane socket.
-      const conn = providers.require(target.providerId);
+      const conn = providers.require(target.device.providerId);
 
       let created: typeof reservation.$inferSelect;
       try {
+        const expiresAt = await expiryFromNow(ctx.db);
         const [row] = await ctx.db
           .insert(reservation)
-          .values({
-            id: crypto.randomUUID(),
-            deviceId: input.deviceId,
-            userId: ctx.user.id,
-            state: "active",
-            expiresAt: await expiryFromNow(ctx.db),
-          })
+          // Recheck policy in the insert: an admin may have changed it since
+          // the initial read while this request was waiting on other queries.
+          .select(
+            ctx.db
+              .select({
+                id: sql<string>`${crypto.randomUUID()}`.as("id"),
+                deviceId: device.id,
+                userId: sql<string>`${ctx.user.id}`.as("user_id"),
+                state: sql<"active">`'active'`.as("state"),
+                startedAt: sql<Date>`now()`.as("started_at"),
+                expiresAt: sql<Date>`${expiresAt.toISOString()}::timestamp`.as("expires_at"),
+                lastActivityAt: sql<Date>`now()`.as("last_activity_at"),
+                releasedAt: sql<null>`null`.as("released_at"),
+                releasedBy: sql<null>`null`.as("released_by"),
+                reason: sql<null>`null`.as("reason"),
+              })
+              .from(device)
+              .innerJoin(provider, eq(device.providerId, provider.id))
+              .where(
+                and(
+                  eq(device.id, input.deviceId),
+                  isNull(device.maintenanceReason),
+                  eq(provider.draining, false),
+                ),
+              ),
+          )
           .returning();
-        created = row!;
+        if (!row) {
+          throw new TRPCError({
+            code: "PRECONDITION_FAILED",
+            message: "Device is in maintenance or its provider is draining",
+          });
+        }
+        created = row;
       } catch (err) {
         if (isUniqueViolation(err)) {
           throw new TRPCError({ code: "CONFLICT", message: "Device is in use" });

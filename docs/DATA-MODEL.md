@@ -43,6 +43,7 @@ lookup indexes on `session.user_id`, `account.user_id` and
 | `id` | Provider-chosen stable id |
 | `publicBaseUrl` | **The URL the browser uses**, not the one the coordinator uses. The coordinator never dials a provider. |
 | `status` | `online` \| `offline`, driven by the control-plane socket |
+| `draining` | Coordinator-owned policy, default `false`. Blocks new reservations while existing sessions finish; survives provider reconnects. |
 | `lastSeenAt` | Heartbeat |
 
 ### `providerToken`
@@ -80,6 +81,12 @@ only it knows, and wins.
 `streamCodec` holds the string handed straight to the browser's `VideoDecoder`
 (`hev1.1.6.L93.B0` for iOS, `avc1.640028` for Android). `adbPort` is populated
 only while an adb transport is exposed.
+
+`maintenanceReason` is coordinator-owned policy, separate from `status`. `null`
+allows new reservations if the device and provider are available. A non-empty
+reason blocks new reservations and is visible to every signed-in user. Provider
+inventory, status updates, disconnects, and cleanup never clear it. Existing
+reservations can still renew and obtain session tokens.
 
 ### `reservation`
 
