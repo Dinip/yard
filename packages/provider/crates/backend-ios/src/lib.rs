@@ -966,13 +966,8 @@ impl DeviceBackend for IosBackend {
         let Some(input) = self.host.input().await else {
             return Ok(());
         };
-        tokio::time::timeout(
-            Duration::from_secs(5),
-            input.request(|reply| Input::AudioActive { active, reply }),
-        )
-        .await
-        .map_err(|_| BackendError::Unavailable("timed out silencing iOS speaker".into()))?
-        .ok_or_else(|| BackendError::Unavailable("iOS input session ended while silencing".into()))
+        input.set_audio_active(active)?;
+        Ok(())
     }
 
     async fn input(&self, event: InputEvent) -> BackendResult<()> {
@@ -1601,13 +1596,17 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "requires YARD_TEST_IOS_UDID, ffmpeg, a mounted DDI and the provider stopped"]
-    async fn speaker_muting_preserves_capture_and_skips_unchanged_reservations() {
+    async fn speaker_muting_preserves_capture_without_delaying_reservations() {
         let udid = std::env::var("YARD_TEST_IOS_UDID").unwrap();
         let backend = IosBackend::new(IosOptions::parse(&udid, &Default::default()).unwrap(), None);
         backend.session().await.unwrap();
         let audio = backend.audio().unwrap();
         for active in [true, false] {
-            backend.set_audio_active(active).await.unwrap();
+            tokio::time::timeout(Duration::from_millis(100), backend.set_audio_active(active))
+                .await
+                .unwrap()
+                .unwrap();
+            tokio::time::sleep(Duration::from_secs(4)).await;
             let mut packets = audio.subscribe();
             assert!(
                 !tokio::time::timeout(Duration::from_secs(5), packets.recv())
@@ -1617,12 +1616,6 @@ mod tests {
                     .data
                     .is_empty()
             );
-            // The regular health poll must not keep flashing the volume HUD
-            // or block input with another sequence of volume key presses.
-            tokio::time::timeout(Duration::from_millis(200), backend.set_audio_active(active))
-                .await
-                .unwrap()
-                .unwrap();
         }
         backend.host.drop_session().await;
     }

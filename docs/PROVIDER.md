@@ -429,10 +429,20 @@ CoreDevice captures a copy of system audio and also leaves the phone's speaker
 playing. The provider therefore sends 32 volume-down press/release pairs before
 publishing a fresh HID session, and again when reservation activity changes.
 Volume-down clamps at zero; the Mute key is a toggle and could unmute an already
-quiet phone. The existing HID actor serializes these presses with other input
-and acknowledges completion. Repeated health polls with unchanged activity do
-not repeat them. Each sequence takes about 3.2 seconds. An absent phone does not
-hold up provider startup; its next HID connection applies the mute.
+quiet phone. Reservation activation queues the policy without waiting for
+muting. The existing HID actor applies one press per 100 ms between ordinary
+input events, so the roughly 3.2-second pass does not hold up reservation
+startup or queue touch/keyboard input behind the whole pass. Repeated health
+polls with unchanged activity do not restart it. A full or closed input queue
+reports an error rather than silently dropping the policy. The initial HID
+connection still finishes muting before marking the device ready. An absent
+phone does not hold up provider startup; its next HID connection applies the mute.
+
+Physical output may remain audible briefly during a background pass if someone
+raised the phone's volume after the preceding mute. The release gaps are
+intentional: hardware testing from full volume found that back-to-back presses
+and shorter gaps skip steps, so shortening the sequence does not reliably reach
+zero.
 
 The iPhone 17 Pro Max was tested with device volume at zero and browser audio
 still audible. iOS does not expose absolute volume/readback through the
@@ -454,8 +464,10 @@ With the provider stopped and a mounted DDI, check muting and continued capture:
 YARD_TEST_IOS_UDID=<udid> cargo test -p backend-ios speaker_muting_preserves_capture -- --ignored
 ```
 
-This also verifies that unchanged reservation activity does not send another
-volume-key sequence. Audible speaker silence still needs a physical check.
+This verifies that activation returns within 100 ms while audio capture
+continues through each background pass. Scheduler tests cover input between
+volume presses and full/closed queue errors. Audible speaker silence still
+needs a physical check.
 
 **Silence is not a stall.** iOS 27 encodes only when the screen changes, so a
 static device goes quiet for up to a minute at a time and ignores keyframe

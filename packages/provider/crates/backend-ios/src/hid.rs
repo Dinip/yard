@@ -181,10 +181,7 @@ pub enum Input {
     /// Press and release a named hardware button.
     Button(&'static str, u64, u64, Duration),
     /// Keep physical output silent when a reservation starts or ends.
-    AudioActive {
-        active: bool,
-        reply: oneshot::Sender<()>,
-    },
+    AudioActive(bool),
     /// Step the orientation 90° and report where the device landed, in degrees.
     ///
     /// Degrees rather than the service's own enum because this is the only
@@ -226,6 +223,13 @@ impl InputHandle {
         }
     }
 
+    /// Audio policy must be queued without waiting for volume key presses.
+    pub fn set_audio_active(&self, active: bool) -> Result<()> {
+        self.sender
+            .try_send(Input::AudioActive(active))
+            .map_err(|err| anyhow!("queueing iOS audio policy: {err}"))
+    }
+
     /// Queue an action and await its reply.
     pub async fn request<T>(&self, make: impl FnOnce(oneshot::Sender<T>) -> Input) -> Option<T> {
         let (tx, rx) = oneshot::channel();
@@ -246,6 +250,7 @@ pub struct HidClients {
     indigo: IndigoHidClient<Box<dyn ReadWrite>>,
     orientation: OrientationServiceClient<Box<dyn ReadWrite>>,
     audio_active: bool,
+    silence_remaining: usize,
 }
 
 impl HidClients {
@@ -283,6 +288,7 @@ impl HidClients {
             indigo,
             orientation,
             audio_active: false,
+            silence_remaining: 0,
         };
         if let Err(err) = clients.silence_speaker().await {
             let _ = tokio::time::timeout(
@@ -297,8 +303,12 @@ impl HidClients {
 
     /// Drain the input queue until the session ends.
     pub async fn run(mut self, mut inputs: mpsc::Receiver<Input>) -> Result<()> {
+        let mut silence_tick = tokio::time::interval(Duration::from_millis(100));
+        silence_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let result = async {
-            while let Some(input) = inputs.recv().await {
+            while let Some(input) =
+                next_input(&mut inputs, &mut silence_tick, &mut self.silence_remaining).await
+            {
                 // A failing HID surface means the session is gone; propagate so
                 // the supervisor rebuilds rather than dropping input silently.
                 self.apply(input).await?;
@@ -350,12 +360,11 @@ impl HidClients {
                 self.button(page, usage, ButtonState::Up).await?;
                 debug!(name, "pressed hardware button");
             }
-            Input::AudioActive { active, reply } => {
+            Input::AudioActive(active) => {
                 if active != self.audio_active {
-                    self.silence_speaker().await?;
+                    self.silence_remaining = 32;
                     self.audio_active = active;
                 }
-                let _ = reply.send(());
             }
             Input::Rotate { direction, reply } => {
                 let state = self
@@ -415,9 +424,72 @@ impl HidClients {
     }
 }
 
+/// Space out volume presses while letting touch and keyboard reports through.
+async fn next_input(
+    inputs: &mut mpsc::Receiver<Input>,
+    silence_tick: &mut tokio::time::Interval,
+    silence_remaining: &mut usize,
+) -> Option<Input> {
+    tokio::select! {
+        input = inputs.recv() => input,
+        _ = silence_tick.tick(), if *silence_remaining > 0 => {
+            *silence_remaining -= 1;
+            let (page, usage, hold) = named_button("VolumeDown").unwrap();
+            Some(Input::Button("VolumeDown", page, usage, hold))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn audio_policy_is_nonblocking_and_rejects_a_full_or_closed_queue() {
+        let (handle, mut inputs) = channel();
+        handle.set_audio_active(true).unwrap();
+        assert!(matches!(
+            inputs.recv().await,
+            Some(Input::AudioActive(true))
+        ));
+        for _ in 0..INPUT_QUEUE {
+            handle.send(Input::Character('a'));
+        }
+        assert!(handle.set_audio_active(false).is_err());
+        drop(inputs);
+        assert!(handle.set_audio_active(false).is_err());
+    }
+
+    #[tokio::test]
+    async fn muting_spaces_volume_presses_and_allows_input_between_them() {
+        let (handle, mut inputs) = channel();
+        let mut tick = tokio::time::interval(Duration::from_millis(100));
+        let mut remaining = 2;
+        let started = std::time::Instant::now();
+        assert!(matches!(
+            next_input(&mut inputs, &mut tick, &mut remaining).await,
+            Some(Input::Button("VolumeDown", 0x0c, 0xea, _))
+        ));
+        assert_eq!(remaining, 1);
+
+        handle.send(Input::Character('a'));
+        assert!(matches!(
+            next_input(&mut inputs, &mut tick, &mut remaining).await,
+            Some(Input::Character('a'))
+        ));
+        assert_eq!(remaining, 1);
+
+        assert!(matches!(
+            next_input(&mut inputs, &mut tick, &mut remaining).await,
+            Some(Input::Button("VolumeDown", 0x0c, 0xea, _))
+        ));
+        assert_eq!(remaining, 0);
+        assert!(started.elapsed() >= Duration::from_millis(90));
+        drop(handle);
+        assert!(next_input(&mut inputs, &mut tick, &mut remaining)
+            .await
+            .is_none());
+    }
 
     #[test]
     fn normalised_coordinates_scale_and_clamp() {
