@@ -284,7 +284,16 @@ function DevicePage() {
           {platformLabel(device.platform)} {device.osVersion} · {device.model} ·{" "}
           {device.provider.name}
         </p>
-        <Badge variant="outline">{device.status}</Badge>
+        <Badge
+          variant="outline"
+          className={
+            device.maintenanceReason !== null
+              ? "border-warning/30 bg-warning/15 text-warning"
+              : undefined
+          }
+        >
+          {device.maintenanceReason !== null ? "maintenance" : device.status}
+        </Badge>
         {mine && device.reservation && device.reservation.observers.length > 0 && (
           <Badge variant="outline" className="border-warning/30 bg-warning/15 text-warning">
             {describeObservers(device.reservation.observers)} in this session

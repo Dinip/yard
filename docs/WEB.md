@@ -57,8 +57,9 @@ works. A non-admin following it hits the admin guard and lands on `/devices` —
 a provider's name reaches them on the device page anyway.
 
 Admins can start, edit, or end maintenance from **Maintenance** on a device's
-detail page. The reason appears on the device card and detail page, and the
-reserve button is disabled while maintenance is active.
+detail page. Both pages show a **maintenance** badge in place of the device's
+lifecycle status, alongside the reason. The reserve button is disabled while
+maintenance is active.
 
 On `/admin/providers`, **Drain** stops new reservations on all of that provider's
 devices. The table shows the active session count and changes **draining** to

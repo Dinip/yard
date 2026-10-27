@@ -8,6 +8,7 @@ import { cn, platformLabel } from "@/lib/utils";
 const STATUS_STYLES: Record<string, string> = {
   ready: "bg-success/15 text-success border-success/30",
   busy: "bg-warning/15 text-warning border-warning/30",
+  maintenance: "bg-warning/15 text-warning border-warning/30",
   // Transient and about to be ready, not broken — so it reads as work in
   // progress rather than borrowing the destructive palette.
   cleaning: "bg-info/15 text-info border-info/30",
@@ -19,6 +20,7 @@ const STATUS_STYLES: Record<string, string> = {
 
 export function DeviceCard({ device, mine }: { device: DeviceListItem; mine?: boolean }) {
   const unavailable = device.status === "absent" || device.status === "unhealthy";
+  const status = device.maintenanceReason !== null ? "maintenance" : device.status;
 
   return (
     <Link
@@ -54,8 +56,8 @@ export function DeviceCard({ device, mine }: { device: DeviceListItem; mine?: bo
                   Yours
                 </Badge>
               )}
-              <Badge variant="outline" className={cn(STATUS_STYLES[device.status])}>
-                {device.status}
+              <Badge variant="outline" className={cn(STATUS_STYLES[status])}>
+                {status}
               </Badge>
             </div>
           </div>
