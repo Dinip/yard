@@ -423,15 +423,39 @@ The Matroska codec configuration sets the ELD 480-sample frame flag explicitly.
 Using the 512-sample configuration makes audio drift and crackle. This format
 was verified on an iPhone 17 Pro Max. Other negotiated modes fail closed rather
 than guessing their codec parameters. Capture stays active while the provider
-is connected, as it already did to keep video healthy. This does not implement
-Android's media-volume and Do Not Disturb policy on iOS, and does not guarantee
-that alarms, calls or notifications are silenced.
+is connected, as it already did to keep video healthy.
+
+CoreDevice captures a copy of system audio and also leaves the phone's speaker
+playing. The provider therefore sends 32 volume-down press/release pairs before
+publishing a fresh HID session, and again when reservation activity changes.
+Volume-down clamps at zero; the Mute key is a toggle and could unmute an already
+quiet phone. The existing HID actor serializes these presses with other input
+and acknowledges completion. Repeated health polls with unchanged activity do
+not repeat them. Each sequence takes about 3.2 seconds. An absent phone does not
+hold up provider startup; its next HID connection applies the mute.
+
+The iPhone 17 Pro Max was tested with device volume at zero and browser audio
+still audible. iOS does not expose absolute volume/readback through the
+CoreDevice audio-output capability on this phone, so this uses bounded key
+presses rather than an absolute setter. Physical buttons and admin hardware
+controls can raise the volume again until the next connection or reservation
+transition. This does not enable Do Not Disturb, restore the previous volume,
+or guarantee that alarms, calls or notifications are silenced.
 
 Run the hardware-free converter check with:
 
 ```bash
 cargo test -p backend-ios audio::tests::ffmpeg_converts -- --ignored
 ```
+
+With the provider stopped and a mounted DDI, check muting and continued capture:
+
+```bash
+YARD_TEST_IOS_UDID=<udid> cargo test -p backend-ios speaker_muting_preserves_capture -- --ignored
+```
+
+This also verifies that unchanged reservation activity does not send another
+volume-key sequence. Audible speaker silence still needs a physical check.
 
 **Silence is not a stall.** iOS 27 encodes only when the screen changes, so a
 static device goes quiet for up to a minute at a time and ignores keyframe

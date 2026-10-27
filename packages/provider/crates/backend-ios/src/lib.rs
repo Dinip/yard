@@ -961,6 +961,20 @@ impl DeviceBackend for IosBackend {
         Some(self.audio.clone())
     }
 
+    async fn set_audio_active(&self, active: bool) -> BackendResult<()> {
+        // A reconnect silences the speaker before publishing its HID handle.
+        let Some(input) = self.host.input().await else {
+            return Ok(());
+        };
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            input.request(|reply| Input::AudioActive { active, reply }),
+        )
+        .await
+        .map_err(|_| BackendError::Unavailable("timed out silencing iOS speaker".into()))?
+        .ok_or_else(|| BackendError::Unavailable("iOS input session ended while silencing".into()))
+    }
+
     async fn input(&self, event: InputEvent) -> BackendResult<()> {
         match event {
             InputEvent::PointerDown { pointer_id, x, y } => {
@@ -1570,6 +1584,48 @@ mod tests {
     }
 
     use super::*;
+
+    #[tokio::test]
+    async fn audio_reconciliation_does_not_wait_for_a_disconnected_phone() {
+        let backend = IosBackend::new(
+            IosOptions::parse("not-attached", &Default::default()).unwrap(),
+            None,
+        );
+        for active in [false, true] {
+            tokio::time::timeout(Duration::from_millis(100), backend.set_audio_active(active))
+                .await
+                .unwrap()
+                .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires YARD_TEST_IOS_UDID, ffmpeg, a mounted DDI and the provider stopped"]
+    async fn speaker_muting_preserves_capture_and_skips_unchanged_reservations() {
+        let udid = std::env::var("YARD_TEST_IOS_UDID").unwrap();
+        let backend = IosBackend::new(IosOptions::parse(&udid, &Default::default()).unwrap(), None);
+        backend.session().await.unwrap();
+        let audio = backend.audio().unwrap();
+        for active in [true, false] {
+            backend.set_audio_active(active).await.unwrap();
+            let mut packets = audio.subscribe();
+            assert!(
+                !tokio::time::timeout(Duration::from_secs(5), packets.recv())
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .data
+                    .is_empty()
+            );
+            // The regular health poll must not keep flashing the volume HUD
+            // or block input with another sequence of volume key presses.
+            tokio::time::timeout(Duration::from_millis(200), backend.set_audio_active(active))
+                .await
+                .unwrap()
+                .unwrap();
+        }
+        backend.host.drop_session().await;
+    }
 
     #[tokio::test]
     async fn ipa_bundle_id_reads_the_root_plist_and_rejects_invalid_metadata() {

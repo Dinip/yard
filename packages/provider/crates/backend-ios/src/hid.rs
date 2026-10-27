@@ -180,6 +180,11 @@ pub enum Input {
     KeyUsage(u64),
     /// Press and release a named hardware button.
     Button(&'static str, u64, u64, Duration),
+    /// Keep physical output silent when a reservation starts or ends.
+    AudioActive {
+        active: bool,
+        reply: oneshot::Sender<()>,
+    },
     /// Step the orientation 90° and report where the device landed, in degrees.
     ///
     /// Degrees rather than the service's own enum because this is the only
@@ -240,6 +245,7 @@ pub struct HidClients {
     keyboard: MainKeyboardService,
     indigo: IndigoHidClient<Box<dyn ReadWrite>>,
     orientation: OrientationServiceClient<Box<dyn ReadWrite>>,
+    audio_active: bool,
 }
 
 impl HidClients {
@@ -271,12 +277,22 @@ impl HidClients {
         let keyboard = touch.create_main_keyboard().await?;
 
         info!("HID surfaces connected");
-        Ok(Self {
+        let mut clients = Self {
             touch,
             keyboard,
             indigo,
             orientation,
-        })
+            audio_active: false,
+        };
+        if let Err(err) = clients.silence_speaker().await {
+            let _ = tokio::time::timeout(
+                Duration::from_secs(2),
+                clients.touch.remove_main_keyboard(&mut clients.keyboard),
+            )
+            .await;
+            return Err(err);
+        }
+        Ok(clients)
     }
 
     /// Drain the input queue until the session ends.
@@ -334,6 +350,13 @@ impl HidClients {
                 self.button(page, usage, ButtonState::Up).await?;
                 debug!(name, "pressed hardware button");
             }
+            Input::AudioActive { active, reply } => {
+                if active != self.audio_active {
+                    self.silence_speaker().await?;
+                    self.audio_active = active;
+                }
+                let _ = reply.send(());
+            }
             Input::Rotate { direction, reply } => {
                 let state = self
                     .orientation
@@ -350,6 +373,20 @@ impl HidClients {
                 let _ = reply.send(degrees);
             }
         }
+        Ok(())
+    }
+
+    async fn silence_speaker(&mut self) -> Result<()> {
+        // Volume-down clamps at zero; Mute toggles and can instead unmute a
+        // quiet phone. CoreDevice capture stays audible at device volume zero.
+        let (page, usage, hold) = named_button("VolumeDown").unwrap();
+        for _ in 0..32 {
+            self.button(page, usage, ButtonState::Down).await?;
+            tokio::time::sleep(hold).await;
+            self.button(page, usage, ButtonState::Up).await?;
+            tokio::time::sleep(hold).await;
+        }
+        info!(presses = 32, "sent iOS speaker volume-down sequence");
         Ok(())
     }
 

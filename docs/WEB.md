@@ -385,7 +385,9 @@ that tab's `GainNode`, and persists locally. The popout uses the saved volume
 without displaying a slider. It never sends `VolumeUp` or `VolumeDown`; those
 remain admin-only hardware controls because they affect the physical device. Playback begins
 after the user interacts with the console so browser autoplay policy is
-satisfied. Canvas recordings remain video-only.
+satisfied. Canvas recordings remain video-only. The iOS provider lowers the
+phone's own volume to zero on connection and reservation transitions; captured
+audio remains audible and the browser slider controls its playback volume.
 
 Video and controls start while audio connects in the background. Until audio is
 ready, the slider is disabled with a small "Connecting audio…" status beneath it.
