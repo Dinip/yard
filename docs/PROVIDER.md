@@ -280,7 +280,8 @@ task is spawned, aborted on shutdown, and fatal if it returns.
 ```
 crates/backend-ios/src/
 ├── device.rs    tunnel + session supervision (one rebuild loop)
-├── media.rs     RTP in, RTCP out, access units — carried over verbatim
+├── media.rs     RTP in, RTCP out, access units — video recovery preserved
+├── audio.rs     AAC-ELD to Opus through FFmpeg, bounded independently of video
 ├── hevc.rs      RFC 7798 depacketisation, hvcC, codec string, frame size
 ├── hid.rs       touch, keyboard, hardware buttons, rotation
 └── lib.rs       the pointer state machine and the DeviceBackend impl
@@ -392,11 +393,45 @@ The collapsed layout still needs verification on hardware after this change;
 the browser does not crop the video or guess keyboard bounds.
 
 `media.rs` is the file to leave alone. Receiver reports are not optional (the
-encoder stalls in ~20 s without them), audio is started and then drained but
-never decoded (iOS throttles a lone video client, and an unread flow is
+encoder stalls in ~20 s without them), audio is started and drained even when
+conversion fails (iOS throttles a lone video client, and an unread flow is
 backpressure on the adapter video shares), corrupt access units are dropped
 whole, and keyframe requests are rate-limited because the iOS 26/27 encoder
 wedges under a PLI barrage. Every constant marks a field failure.
+
+### iOS browser audio
+
+CoreDevice audio mode 8, RTP payload type 101, carries raw AAC-ELD access units
+at 48 kHz stereo, 480 samples per frame. AAC-ELD is absent from the
+[WebCodecs AAC profiles](https://www.w3.org/TR/webcodecs-aac-codec-registration/)
+and Chrome rejects its codec identifier, so `audio.rs` wraps the AUs in an
+in-memory streaming Matroska track
+and runs FFmpeg to decode them and encode 96 kbps Opus. The browser uses the same
+`audio.codec` handshake, binary packets and volume slider as Android. Video
+remains HEVC passthrough; audio never goes through the coordinator.
+
+Native provider hosts need **FFmpeg with libopus on PATH**. The provider image
+includes it. One converter runs per connected iOS device. Its input queue is
+bounded to 16 AUs; a slow converter drops audio rather than delaying the shared
+USB tunnel. Audio receiver reports track the received RTP sequence numbers.
+The converter is killed when the media session ends. Missing FFmpeg, an unknown
+audio format, converter failure or five seconds without output announces
+`audio.unavailable`; the audio socket keeps draining and video/input continue.
+A rebuilt device session retries conversion.
+
+The Matroska codec configuration sets the ELD 480-sample frame flag explicitly.
+Using the 512-sample configuration makes audio drift and crackle. This format
+was verified on an iPhone 17 Pro Max. Other negotiated modes fail closed rather
+than guessing their codec parameters. Capture stays active while the provider
+is connected, as it already did to keep video healthy. This does not implement
+Android's media-volume and Do Not Disturb policy on iOS, and does not guarantee
+that alarms, calls or notifications are silenced.
+
+Run the hardware-free converter check with:
+
+```bash
+cargo test -p backend-ios audio::tests::ffmpeg_converts -- --ignored
+```
 
 **Silence is not a stall.** iOS 27 encodes only when the screen changes, so a
 static device goes quiet for up to a minute at a time and ignores keyframe

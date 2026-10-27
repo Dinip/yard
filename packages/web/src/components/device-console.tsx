@@ -125,7 +125,7 @@ export function DeviceConsole({
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [browserVolume, setBrowserVolume] = useState(loadBrowserVolume);
-  const browserAudio = platform === "android";
+  const browserAudio = platform === "android" || platform === "ios";
   const session = useDeviceSession(deviceId, canvasRef, active, browserAudio, browserVolume / 100);
 
   const changeBrowserVolume = (volume: number) => {

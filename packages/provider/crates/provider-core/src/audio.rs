@@ -1,6 +1,6 @@
 //! Codec-agnostic encoded-audio fan-out.
 //!
-//! Android publishes the Opus packets scrcpy already encoded. The provider
+//! Android publishes scrcpy Opus; iOS converts AAC-ELD to Opus. The provider
 //! keeps them encoded all the way to each browser, just as it does for video.
 
 use std::sync::Arc;

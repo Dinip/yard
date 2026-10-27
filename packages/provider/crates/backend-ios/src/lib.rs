@@ -19,6 +19,7 @@
 //! tunnel unreliable below that, and the backend fails loudly at session
 //! bring-up rather than half-working.
 
+mod audio;
 pub mod ddi;
 pub mod device;
 mod drop;
@@ -45,6 +46,7 @@ use idevice::provider::IdeviceProvider;
 use idevice::services::afc::{opcode::AfcFopenMode, AfcClient};
 use idevice::services::house_arrest::HouseArrestClient;
 use idevice::{IdeviceService as _, ReadWrite};
+use provider_core::audio::AudioHandle;
 use provider_core::backend::{
     join_path, parent_of, AppFilter, BackendError, DeviceBackend, DeviceInfo, DeviceMetrics,
     InputEvent, ProgressSink, Result as BackendResult,
@@ -487,6 +489,7 @@ pub struct IosBackend {
     name: Option<String>,
     host: Arc<DeviceHost>,
     video: VideoHandle,
+    audio: AudioHandle,
     /// Kept so a rotation can reach live viewers: it produces no new parameter
     /// sets and no new frame size, so nothing else would ever announce it.
     publisher: VideoPublisher,
@@ -515,10 +518,12 @@ pub struct BatteryReading {
 impl IosBackend {
     pub fn new(options: IosOptions, name: Option<String>) -> Arc<Self> {
         let (video, publisher) = channel();
+        let (audio, audio_publisher) = provider_core::audio::channel();
         let geometry = Geometry::default();
         let host = Arc::new(DeviceHost::spawn(
             options.clone(),
             publisher.clone(),
+            audio_publisher,
             geometry.clone(),
         ));
 
@@ -527,6 +532,7 @@ impl IosBackend {
             name,
             host,
             video,
+            audio,
             publisher,
             geometry,
             pointer: Mutex::new(Pointer::default()),
@@ -949,6 +955,10 @@ impl DeviceBackend for IosBackend {
 
     fn video(&self) -> VideoHandle {
         self.video.clone()
+    }
+
+    fn audio(&self) -> Option<AudioHandle> {
+        Some(self.audio.clone())
     }
 
     async fn input(&self, event: InputEvent) -> BackendResult<()> {

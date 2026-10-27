@@ -370,10 +370,12 @@ Android.
 `VideoDecoder`. The mock backend's video is undecodable filler by design, so
 this is the only hardware-free check on the recovery paths.
 
-### Android audio
+### Device audio
 
-Android sessions announce Opus with `audio.codec`, then carry timestamped
-packets beside video on the same direct provider WebSocket. `BrowserAudio`
+Android and iOS sessions announce Opus with `audio.codec`, then carry timestamped
+packets beside video on the same direct provider WebSocket. Android passes
+scrcpy Opus through; the iOS provider converts CoreDevice AAC-ELD to Opus using
+FFmpeg. `BrowserAudio`
 decodes them with `AudioDecoder` and schedules them through a 48 kHz Web Audio
 context with an 80 ms starting buffer. Matching the source rate avoids
 resampling discontinuities between short Opus buffers. It sheds late packets instead of letting a slow tab play an ever-growing backlog.

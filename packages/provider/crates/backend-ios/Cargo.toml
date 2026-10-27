@@ -15,7 +15,7 @@ plist.workspace = true
 # Fetching the developer disk image from a mirror, once per process.
 reqwest.workspace = true
 
-tokio.workspace = true
+tokio = { workspace = true, features = ["process"] }
 tokio-util = { workspace = true, features = ["compat"] }
 futures.workspace = true
 async-trait.workspace = true

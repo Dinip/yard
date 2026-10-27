@@ -52,8 +52,9 @@ FROM debian:bookworm-slim AS runtime
 
 # ca-certificates is required, not optional: the control plane and the JWKS
 # fetch both use the OS trust store (see reqwest's rustls-native-certs).
+# FFmpeg converts iOS AAC-ELD to the browser's Opus format.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates adb \
+ && apt-get install -y --no-install-recommends ca-certificates adb ffmpeg \
  && rm -rf /var/lib/apt/lists/* \
  && mkdir -p /var/lib/yard/scratch
 

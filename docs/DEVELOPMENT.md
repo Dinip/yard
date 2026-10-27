@@ -5,6 +5,7 @@
 - [Bun](https://bun.sh) ≥ 1.3
 - Docker (for Postgres; also for the full stack)
 - Rust toolchain — phases 3+ only
+- FFmpeg with libopus on PATH — native iOS provider browser audio
 - [Flutter](https://docs.flutter.dev/get-started/install) 3.44.9 — the YARD Drop
   Android and iOS companion only; nothing else in the repository needs it
 
