@@ -117,9 +117,11 @@ Both require an admin, write an audit row, and publish an inventory revision.
 The database holds both policies independently of provider-reported status.
 
 `device.reserve` checks these policies after the same-user renewal path, then
-checks them again in the reservation insert. A maintained device or a draining
-provider refuses new reservations with `PRECONDITION_FAILED`, including requests
-by admins. Existing holders can renew, open a popout, and request session tokens.
+checks them again in the reservation insert. A maintained device refuses new
+reservations by non-admins with `PRECONDITION_FAILED`. Admins can reserve and use
+it without clearing maintenance, subject to ordinary availability and reservation
+exclusivity. A draining provider refuses new reservations by everyone, including
+admins. Existing holders can renew, open a popout, and request session tokens.
 Release and cleanup leave policy unchanged.
 
 `provider.list` includes `draining` and `activeReservationCount`. Draining remains

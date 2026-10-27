@@ -219,12 +219,13 @@ export const deviceRouter = router({
         return renewed!;
       }
 
-      if (target.device.maintenanceReason !== null || target.draining) {
+      const isAdmin = ctx.user.role === "admin";
+      if ((target.device.maintenanceReason !== null && !isAdmin) || target.draining) {
         throw new TRPCError({
           code: "PRECONDITION_FAILED",
-          message: target.device.maintenanceReason
-            ? `Device is in maintenance: ${target.device.maintenanceReason}`
-            : "Provider is draining",
+          message: target.draining
+            ? "Provider is draining"
+            : `Device is in maintenance: ${target.device.maintenanceReason}`,
         });
       }
 
@@ -266,7 +267,7 @@ export const deviceRouter = router({
               .where(
                 and(
                   eq(device.id, input.deviceId),
-                  isNull(device.maintenanceReason),
+                  isAdmin ? undefined : isNull(device.maintenanceReason),
                   eq(provider.draining, false),
                 ),
               ),

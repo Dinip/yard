@@ -110,6 +110,7 @@ function DevicesPage() {
               key={d.id}
               device={d}
               mine={Boolean(me) && d.reservation?.userId === me?.id}
+              admin={me?.isAdmin}
             />
           ))}
         </div>

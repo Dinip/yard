@@ -18,7 +18,15 @@ const STATUS_STYLES: Record<string, string> = {
   absent: "bg-muted text-muted-foreground opacity-70",
 };
 
-export function DeviceCard({ device, mine }: { device: DeviceListItem; mine?: boolean }) {
+export function DeviceCard({
+  device,
+  mine,
+  admin,
+}: {
+  device: DeviceListItem;
+  mine?: boolean;
+  admin?: boolean;
+}) {
   const unavailable = device.status === "absent" || device.status === "unhealthy";
   const status = device.maintenanceReason !== null ? "maintenance" : device.status;
 
@@ -100,9 +108,11 @@ export function DeviceCard({ device, mine }: { device: DeviceListItem; mine?: bo
             </p>
           ) : (
             <p className="text-muted-foreground text-xs">
-              {device.maintenanceReason || device.provider.draining || unavailable
-                ? "Unavailable"
-                : "Available"}
+              {device.maintenanceReason && admin && !device.provider.draining && !unavailable
+                ? "Available for admin maintenance"
+                : device.maintenanceReason || device.provider.draining || unavailable
+                  ? "Unavailable"
+                  : "Available"}
             </p>
           )}
         </CardFooter>

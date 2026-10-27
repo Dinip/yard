@@ -84,9 +84,10 @@ only while an adb transport is exposed.
 
 `maintenanceReason` is coordinator-owned policy, separate from `status`. `null`
 allows new reservations if the device and provider are available. A non-empty
-reason blocks new reservations and is visible to every signed-in user. Provider
-inventory, status updates, disconnects, and cleanup never clear it. Existing
-reservations can still renew and obtain session tokens.
+reason blocks new reservations by non-admins and is visible to every signed-in
+user. Admins can reserve the device for maintenance without clearing the reason.
+Provider inventory, status updates, disconnects, and cleanup never clear it.
+Existing reservations can still renew and obtain session tokens.
 
 ### `reservation`
 

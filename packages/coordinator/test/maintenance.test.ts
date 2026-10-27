@@ -96,12 +96,10 @@ describe("maintenance policy", () => {
     expect((await holder.device.list()).find((d) => d.id === deviceId)?.maintenanceReason).toBe(
       "Replace USB cable",
     );
-    for (const client of [holder, admin]) {
-      await expect(client.device.reserve({ deviceId })).rejects.toMatchObject({
-        code: "PRECONDITION_FAILED",
-        message: "Device is in maintenance: Replace USB cable",
-      });
-    }
+    await expect(holder.device.reserve({ deviceId })).rejects.toMatchObject({
+      code: "PRECONDITION_FAILED",
+      message: "Device is in maintenance: Replace USB cable",
+    });
     const records = await db.select().from(auditLog).where(eq(auditLog.targetId, deviceId));
     expect(records).toContainEqual(
       expect.objectContaining({
@@ -113,6 +111,44 @@ describe("maintenance policy", () => {
     await expect(holder.device.reserve({ deviceId: DEVICES[1]! })).resolves.toBeDefined();
     await admin.device.setMaintenance({ deviceId, reason: null });
     await expect(holder.device.reserve({ deviceId })).resolves.toBeDefined();
+  });
+
+  test("admins can use a maintained device without ending maintenance", async () => {
+    const deviceId = DEVICES[0]!;
+    await admin.device.setMaintenance({ deviceId, reason: "Repair" });
+    const held = await admin.device.reserve({ deviceId });
+    await expect(admin.device.sessionToken({ deviceId })).resolves.toBeDefined();
+    expect((await admin.device.reserve({ deviceId })).id).toBe(held.id);
+    await expect(holder.device.reserve({ deviceId })).rejects.toMatchObject({ code: "CONFLICT" });
+    expect(await admin.device.get({ id: deviceId })).toMatchObject({
+      maintenanceReason: "Repair",
+      reservation: { userId: ADMIN },
+    });
+    await admin.device.release({ deviceId });
+    await db.update(device).set({ status: "ready" }).where(eq(device.id, deviceId));
+    expect((await holder.device.get({ id: deviceId })).maintenanceReason).toBe("Repair");
+    await expect(holder.device.reserve({ deviceId })).rejects.toMatchObject({
+      code: "PRECONDITION_FAILED",
+    });
+    await expect(admin.device.reserve({ deviceId })).resolves.toBeDefined();
+  });
+
+  test("admin maintenance access still requires a usable device and a provider accepting reservations", async () => {
+    const deviceId = DEVICES[0]!;
+    await admin.device.setMaintenance({ deviceId, reason: "Repair" });
+    await admin.provider.setDraining({ id: PROVIDER, draining: true });
+    await expect(admin.device.reserve({ deviceId })).rejects.toMatchObject({
+      code: "PRECONDITION_FAILED",
+      message: "Provider is draining",
+    });
+    await admin.provider.setDraining({ id: PROVIDER, draining: false });
+    for (const status of ["cleaning", "unhealthy", "absent"] as const) {
+      await db.update(device).set({ status }).where(eq(device.id, deviceId));
+      await expect(admin.device.reserve({ deviceId })).rejects.toMatchObject({
+        code: "PRECONDITION_FAILED",
+        message: `Device is ${status}`,
+      });
+    }
   });
 
   test("maintenance preserves existing sessions and remains after release and cleanup", async () => {
@@ -140,6 +176,10 @@ describe("maintenance policy", () => {
     });
     expect((await holder.device.get({ id: deviceId })).provider.draining).toBe(true);
     await expect(holder.device.reserve({ deviceId: DEVICES[1]! })).rejects.toMatchObject({
+      code: "PRECONDITION_FAILED",
+      message: "Provider is draining",
+    });
+    await expect(admin.device.reserve({ deviceId: DEVICES[1]! })).rejects.toMatchObject({
       code: "PRECONDITION_FAILED",
       message: "Provider is draining",
     });

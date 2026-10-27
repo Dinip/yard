@@ -58,8 +58,10 @@ a provider's name reaches them on the device page anyway.
 
 Admins can start, edit, or end maintenance from **Maintenance** on a device's
 detail page. Both pages show a **maintenance** badge in place of the device's
-lifecycle status, alongside the reason. The reserve button is disabled while
-maintenance is active.
+lifecycle status, alongside the reason. Non-admins cannot reserve a maintained
+device. Admins can select **Use for maintenance** to open a session without
+ending maintenance. Provider draining and ordinary device availability still
+apply.
 
 On `/admin/providers`, **Drain** stops new reservations on all of that provider's
 devices. The table shows the active session count and changes **draining** to

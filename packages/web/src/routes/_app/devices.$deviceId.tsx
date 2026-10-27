@@ -230,6 +230,8 @@ function DevicePage() {
     });
 
   if (!device) return null;
+  const reservationsPaused =
+    device.provider.draining || (device.maintenanceReason !== null && !me?.isAdmin);
 
   return (
     // Locked to the viewport, so the screen gets every pixel the header and the
@@ -438,31 +440,34 @@ function DevicePage() {
                 <Smartphone className="size-8 text-muted-foreground/50" />
                 <div className="grid gap-1">
                   <p className="font-medium text-base text-foreground">
-                    {device.maintenanceReason || device.provider.draining
+                    {reservationsPaused
                       ? "Unavailable for new reservations"
                       : device.status === "cleaning"
                         ? "Being cleaned"
-                        : "This device is free"}
+                        : device.maintenanceReason !== null
+                          ? "Available for admin maintenance"
+                          : "This device is free"}
                   </p>
                   <p>
-                    {device.maintenanceReason || device.provider.draining
+                    {reservationsPaused
                       ? "An administrator has paused new reservations."
                       : device.status === "cleaning"
                         ? "It is being reset after its last session, and will be available in a moment."
-                        : "Reserve it to open a session and start streaming."}
+                        : device.maintenanceReason !== null
+                          ? "As an administrator, you can use this device without ending maintenance."
+                          : "Reserve it to open a session and start streaming."}
                   </p>
                 </div>
                 <Button
                   size="lg"
-                  disabled={
-                    reserve.isPending ||
-                    device.maintenanceReason !== null ||
-                    device.provider.draining ||
-                    device.status === "cleaning"
-                  }
+                  disabled={reserve.isPending || reservationsPaused || device.status === "cleaning"}
                   onClick={() => reserve.mutate({ deviceId })}
                 >
-                  {device.status === "cleaning" ? "Being cleaned" : "Reserve this device"}
+                  {device.status === "cleaning"
+                    ? "Being cleaned"
+                    : device.maintenanceReason !== null && me?.isAdmin
+                      ? "Use for maintenance"
+                      : "Reserve this device"}
                 </Button>
               </div>
             )}
