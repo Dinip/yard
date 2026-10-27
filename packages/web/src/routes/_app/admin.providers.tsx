@@ -54,6 +54,18 @@ function AdminProvidersPage() {
     }),
   );
 
+  const setDraining = useMutation(
+    trpc.provider.setDraining.mutationOptions({
+      onSuccess: (provider) => {
+        toast.success(provider.draining ? "New reservations stopped" : "Reservations enabled");
+        refresh();
+        qc.invalidateQueries({ queryKey: trpc.device.list.queryKey() });
+        qc.invalidateQueries({ queryKey: trpc.device.get.pathKey() });
+      },
+      onError: (e) => toast.error(e.message),
+    }),
+  );
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex items-center gap-3">
@@ -81,6 +93,7 @@ function AdminProvidersPage() {
               <TableHead>ID</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Devices</TableHead>
+              <TableHead>Active sessions</TableHead>
               <TableHead>Public base URL</TableHead>
               <TableHead>Version</TableHead>
               <TableHead>Last seen</TableHead>
@@ -103,8 +116,14 @@ function AdminProvidersPage() {
                   >
                     {p.connected ? "connected" : "offline"}
                   </Badge>
+                  {p.draining && (
+                    <Badge variant="outline" className="ml-2 text-warning">
+                      {p.activeReservationCount > 0 ? "draining" : "drained"}
+                    </Badge>
+                  )}
                 </TableCell>
                 <TableCell>{p.deviceCount}</TableCell>
+                <TableCell>{p.activeReservationCount}</TableCell>
                 <TableCell className="font-mono text-xs">{p.publicBaseUrl}</TableCell>
                 <TableCell className="text-muted-foreground">{p.version ?? "—"}</TableCell>
                 <TableCell className="text-muted-foreground">
@@ -112,6 +131,15 @@ function AdminProvidersPage() {
                 </TableCell>
                 <TableCell>
                   <div className="flex gap-1">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={setDraining.isPending}
+                      title="Stop new reservations while existing sessions finish"
+                      onClick={() => setDraining.mutate({ id: p.id, draining: !p.draining })}
+                    >
+                      {p.draining ? "Resume reservations" : "Drain"}
+                    </Button>
                     <Button variant="ghost" size="icon" onClick={() => setTokensFor(p.id)}>
                       <KeyRound className="size-4" />
                     </Button>

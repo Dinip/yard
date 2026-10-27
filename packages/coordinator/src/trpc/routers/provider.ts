@@ -1,9 +1,10 @@
 import { TRPCError } from "@trpc/server";
-import { device, provider, providerToken, user } from "@yard/db";
-import { count, desc, eq } from "drizzle-orm";
+import { device, provider, providerToken, reservation, user } from "@yard/db";
+import { and, count, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { providers } from "../../gateway/registry.ts";
 import { audit } from "../../lib/audit.ts";
+import { deviceEvents } from "../../lib/events.ts";
 import { generateProviderToken } from "../../lib/provider-token.ts";
 import { adminProcedure, protectedProcedure, router } from "../init.ts";
 
@@ -17,12 +18,18 @@ export const providerRouter = router({
         hostname: provider.hostname,
         version: provider.version,
         status: provider.status,
+        draining: provider.draining,
         lastSeenAt: provider.lastSeenAt,
         createdAt: provider.createdAt,
         deviceCount: count(device.id),
+        activeReservationCount: count(reservation.id),
       })
       .from(provider)
       .leftJoin(device, eq(device.providerId, provider.id))
+      .leftJoin(
+        reservation,
+        and(eq(reservation.deviceId, device.id), eq(reservation.state, "active")),
+      )
       .groupBy(provider.id)
       .orderBy(desc(provider.lastSeenAt));
 
@@ -98,6 +105,22 @@ export const providerRouter = router({
         .returning();
       if (!updated) throw new TRPCError({ code: "NOT_FOUND" });
       await audit(ctx.db, ctx.user.id, "provider.update", "provider", input.id);
+      return updated;
+    }),
+
+  setDraining: adminProcedure
+    .input(z.object({ id: z.string(), draining: z.boolean() }))
+    .mutation(async ({ ctx, input }) => {
+      const [updated] = await ctx.db
+        .update(provider)
+        .set({ draining: input.draining, updatedAt: new Date() })
+        .where(eq(provider.id, input.id))
+        .returning();
+      if (!updated) throw new TRPCError({ code: "NOT_FOUND" });
+      await audit(ctx.db, ctx.user.id, "provider.draining", "provider", input.id, {
+        draining: input.draining,
+      });
+      deviceEvents.publish();
       return updated;
     }),
 

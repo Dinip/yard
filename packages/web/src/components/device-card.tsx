@@ -8,6 +8,7 @@ import { cn, platformLabel } from "@/lib/utils";
 const STATUS_STYLES: Record<string, string> = {
   ready: "bg-success/15 text-success border-success/30",
   busy: "bg-warning/15 text-warning border-warning/30",
+  maintenance: "bg-warning/15 text-warning border-warning/30",
   // Transient and about to be ready, not broken — so it reads as work in
   // progress rather than borrowing the destructive palette.
   cleaning: "bg-info/15 text-info border-info/30",
@@ -17,8 +18,17 @@ const STATUS_STYLES: Record<string, string> = {
   absent: "bg-muted text-muted-foreground opacity-70",
 };
 
-export function DeviceCard({ device, mine }: { device: DeviceListItem; mine?: boolean }) {
+export function DeviceCard({
+  device,
+  mine,
+  admin,
+}: {
+  device: DeviceListItem;
+  mine?: boolean;
+  admin?: boolean;
+}) {
   const unavailable = device.status === "absent" || device.status === "unhealthy";
+  const status = device.maintenanceReason !== null ? "maintenance" : device.status;
 
   return (
     <Link
@@ -54,8 +64,8 @@ export function DeviceCard({ device, mine }: { device: DeviceListItem; mine?: bo
                   Yours
                 </Badge>
               )}
-              <Badge variant="outline" className={cn(STATUS_STYLES[device.status])}>
-                {device.status}
+              <Badge variant="outline" className={cn(STATUS_STYLES[status])}>
+                {status}
               </Badge>
             </div>
           </div>
@@ -83,6 +93,10 @@ export function DeviceCard({ device, mine }: { device: DeviceListItem; mine?: bo
             </Row>
           ) : null}
           <Row label="Provider">{device.provider.name}</Row>
+          {device.maintenanceReason && (
+            <p className="break-words text-warning">Maintenance: {device.maintenanceReason}</p>
+          )}
+          {device.provider.draining && <p className="text-warning">Provider draining</p>}
         </CardContent>
 
         <CardFooter className="px-4">
@@ -93,7 +107,13 @@ export function DeviceCard({ device, mine }: { device: DeviceListItem; mine?: bo
               In use by <span className="text-foreground">{device.reservation.ownerName}</span>
             </p>
           ) : (
-            <p className="text-muted-foreground text-xs">Available</p>
+            <p className="text-muted-foreground text-xs">
+              {device.maintenanceReason && admin && !device.provider.draining && !unavailable
+                ? "Available for admin maintenance"
+                : device.maintenanceReason || device.provider.draining || unavailable
+                  ? "Unavailable"
+                  : "Available"}
+            </p>
           )}
         </CardFooter>
       </Card>
