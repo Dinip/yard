@@ -1,0 +1,177 @@
+# Signing YARD Drop for an iPhone
+
+YARD releases contain an unsigned, device-architecture IPA. Anyone can build
+and publish that archive without an Apple certificate. The farm operator signs
+it with their own Apple account before installation. Nothing is uploaded to
+Apple by the YARD release workflow, and no signing credentials belong in GitHub.
+
+An IPA is a ZIP containing `Payload/Runner.app`. Renaming that ZIP to `.ipa`
+does not sign it. Both `Runner.app` and its embedded
+`PlugIns/ShareExtension.appex` need valid signatures and provisioning profiles.
+The Flutter frameworks need signatures too.
+
+## Using Xcode and a free Personal Team
+
+Use this route for a personal test device. Apple provisions Personal Team apps
+for seven days, after which they must be signed and installed again. Apple also
+limits Personal Teams to three devices, three installed apps per device, and
+ten short-lived App IDs. Runner and ShareExtension use separate App IDs. See
+[Apple's account overview](https://developer.apple.com/help/account/basics/about-your-developer-account/).
+
+1. Install Xcode 27 or newer and Flutter 3.44.9 on a Mac. The iPhone must run
+   iOS 27 or newer. In Xcode Settings, add your
+   Apple account. Enter its password in Xcode, never in a terminal script or
+   GitHub secret for this project.
+2. Connect the iPhone over USB, trust the Mac and enable Developer Mode on the
+   iPhone. Keep it unlocked during the first installation.
+3. Check out the YARD release tag, run `flutter pub get` in `apps/yard_drop`,
+   then open `ios/Runner.xcworkspace`.
+4. Select Runner, then Signing & Capabilities. Enable automatic signing and
+   choose your Personal Team. Do the same for ShareExtension.
+5. Keep the default bundle IDs if Xcode can register them for your team. If an
+   identifier belongs to another team, choose your own Runner ID and an extension
+   ID below it, for example `com.example.yarddrop` and
+   `com.example.yarddrop.ShareExtension`.
+6. Both targets need the same registered App Group. Add it in Signing &
+   Capabilities and select only that group on both targets. Each target's build
+   generates `YardAppGroup` in its Info.plist from its entitlements; there is no
+   separate plist value to edit. Missing or multiple groups fail the build.
+   Set the provider device option `drop_app_group` to the same identifier.
+7. Choose the connected iPhone and use the Runner scheme. Set its Run build
+   configuration to Release, then run it. Flutter's containing app must work
+   without a debugger when opened from the share workflow.
+
+Check that both provisioning profiles actually contain the group under
+`com.apple.security.application-groups`. An empty group list cannot authorize
+the shared container. Do not remove that entitlement to get past a signing
+error; the extension and containing app would lose their transfer channel.
+Apple's [capability matrix](https://developer.apple.com/help/account/reference/supported-capabilities-ios)
+and [App Group setup](https://developer.apple.com/documentation/xcode/configuring-app-groups)
+describe account support and registration. A team that cannot provision the
+required group cannot run this implementation merely by signing an IPA.
+
+This source-build route lets Xcode create the development certificate and
+profiles. No paid distribution certificate is needed for a seven-day device
+test. It does not produce a universally installable IPA.
+
+## Signing a downloaded unsigned IPA
+
+By default, this script uses development signing, matching
+`flutter build ipa --export-method development`. Use it when you already sign
+in to Xcode with your Apple account and the two bundle IDs and their shared
+App Group are registered for your team.
+
+Xcode manages development signing through your account and its Apple Development
+identity. The default does not require an iOS Distribution certificate or cloud
+distribution signing permission. Existing development profiles must include the
+signing identity and destination devices. Personal Team profiles retain their
+seven-day limits. Both profiles must authorize the shared App Group.
+
+1. Use a Mac with Xcode 27 or newer and Python 3.9 or newer.
+   No Flutter installation or source build is needed.
+2. In **Xcode > Settings > Apple Accounts**, sign in with the account you
+   normally use to export IPAs and check that the intended team appears.
+3. Ask your admin for the Runner bundle ID, extension bundle ID, shared App
+   Group and ten-character Team ID. Both app IDs must have that group enabled,
+   and the destination iPhones must be registered for development.
+   Use the same account and team as your working development build.
+4. Download the unsigned IPA from a GitHub release or a Flutter workflow run.
+   For a release asset, verify its published SHA-256 checksum before signing.
+5. From `apps/yard_drop`, pass the path to your unsigned file:
+
+```bash
+python3 ios/sign-release.py /path/to/yard-drop-ios-unsigned.ipa \
+  --team ABCDE12345 \
+  --bundle-id com.example.yarddrop \
+  --extension-bundle-id com.example.yarddrop.ShareExtension \
+  --app-group group.com.example.yarddrop \
+  --export-method development \
+  --output yard-drop-signed.ipa
+```
+
+Use the Team ID, not your account email. The extension ID must start with the
+Runner ID followed by a dot. The script does not ask for an Apple password or
+an API key. If Xcode's account session has expired, sign in again in Xcode.
+`--export-method` accepts the same names as Flutter:
+
+| Method | Signing purpose |
+|---|---|
+| `development` | Default. Development certificate and registered test devices. |
+| `ad-hoc` | Distribution certificate and registered test devices. |
+| `enterprise` | In-house distribution for an Enterprise Program team. |
+| `app-store` | Export for App Store submission; cannot install directly on an iPhone. |
+
+The script uses Xcode's current method names internally: `debugging` for
+`development`, `release-testing` for `ad-hoc`, and `app-store-connect` for
+`app-store`. Every method exports locally; none uploads to App Store Connect.
+
+If Xcode exports successfully but the script fails, reuse the settings from that
+successful export before assuming your account needs additional permissions.
+Xcode saves `ExportOptions.plist` beside the exported IPA. Add this option to
+the command above:
+
+```bash
+--export-options /path/to/successful-export/ExportOptions.plist
+```
+
+Use `--export-options` instead of `--export-method`; they cannot be combined.
+This preserves Xcode's chosen method, signing style, certificate selector and
+profile mapping. The file must use the same team, and manual profile mappings
+must cover both requested bundle IDs. The script checks the team matches
+`--team`, always exports locally and preserves release build numbers. It does
+not modify the supplied plist. Keep that file outside the checkout; it can
+contain team and profile details and should not be committed or shared.
+See Apple's [archive export files guide](https://help.apple.com/xcode/mac/current/en.lproj/deva1f2ab5a2.html).
+
+The script reads the local IPA without modifying it. It updates both bundle IDs
+and `YardAppGroup` values in a temporary directory, then prepares an Xcode archive.
+Temporary ad hoc signatures carry the App Group entitlement into Xcode's
+export step on both Runner and the extension. These temporary signatures use
+no Apple certificate and are replaced during export.
+
+The script runs `xcodebuild -exportArchive` with your team and
+`destination: export`. Without `--export-options`, it selects automatic signing
+with the requested method, defaulting to development. It uses Xcode's existing account login.
+`-allowProvisioningUpdates` permits Xcode to fetch or refresh
+signing assets, including creating managed profiles or certificates if required
+and allowed by your account. It does not register new bundle IDs, change their
+App Group settings or register devices. Your admin's existing setup remains a
+prerequisite. With manual signing in a supplied export plist, Xcode uses its
+profile mapping and downloads missing or updated profiles.
+
+After export, the script verifies signatures and checks that both bundles have
+the requested IDs, team and shared group. It preserves release version and
+build numbers, refuses to overwrite an existing output, and does not install
+the IPA or upload it to App Store Connect. Signing may communicate with Apple
+to refresh signing assets. Distribution methods may use cloud signing when
+the account has permission.
+
+Test local input handling, archive preparation, export options and verification without
+an Apple account or signing key. Account-backed export is mocked in these tests:
+
+```bash
+python3 -m unittest discover -s ios -p 'test_*.py'
+```
+
+## Install and configure the farm
+
+Install the signed IPA with Xcode's Devices and Simulators window or Apple
+Configurator. For a source build, Xcode installs it directly. Apple's
+[registered-device guide](https://developer.apple.com/documentation/xcode/distributing-your-app-to-registered-devices)
+describes signing and installation.
+
+Install before the reservation baseline. Keep the same bundle IDs, signing
+team and App Group for upgrades. The provider defaults to
+`group.com.dinispimpao.yard.drop`. If you changed the group, set it on that device:
+
+```yaml
+options:
+  drop_app_group: group.com.example.yarddrop
+```
+
+Reserve the iPhone, share a file to YARD - Device Farm, and choose Send to YARD
+browser. It appears automatically in Receive shared files. Release and reserve
+again to verify the old batch is gone. Files saved through the Files picker use
+the selected destination; configure `cleanup_app_paths` for Runner Documents if
+those copies should also be wiped on release. Renew Personal Team provisioning
+before its seven-day expiry.

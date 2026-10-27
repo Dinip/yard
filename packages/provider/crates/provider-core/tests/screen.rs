@@ -75,6 +75,51 @@ async fn screen_calls(backend: &Arc<backend_mock::MockBackend>) -> Vec<bool> {
 }
 
 #[tokio::test]
+async fn companion_binding_follows_renewal_and_immediate_revocation() {
+    let (supervisor, backend, _rx) = harness(false).await;
+    let revocations = tokio::spawn(supervisor.clone().run_revocation_loop());
+    authorize(&supervisor, "res-1").await;
+    authorize(&supervisor, "res-1").await;
+    poll(&supervisor).await;
+    assert_eq!(
+        backend.state.reservations.lock().await.last(),
+        Some(&Some("res-1".into()))
+    );
+    revoke(&supervisor).await;
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while backend.state.reservations.lock().await.last() != Some(&None) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("revocation invalidates the companion without waiting for a poll");
+    revocations.abort();
+}
+
+#[tokio::test]
+async fn delayed_revocation_cannot_disarm_a_replacement_reservation() {
+    let (supervisor, backend, _rx) = harness(false).await;
+    let revocations = supervisor.clone().run_revocation_loop();
+    authorize(&supervisor, "res-1").await;
+    revoke(&supervisor).await;
+    authorize(&supervisor, "res-2").await;
+    let before = backend.state.reservations.lock().await.len();
+    let task = tokio::spawn(revocations);
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while backend.state.reservations.lock().await.len() == before {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the queued revocation was handled");
+    assert_eq!(
+        backend.state.reservations.lock().await.last(),
+        Some(&Some("res-2".into()))
+    );
+    task.abort();
+}
+
+#[tokio::test]
 async fn audio_follows_reservations_even_when_idle_screen_parking_is_disabled() {
     let (supervisor, backend, _rx) = harness(false).await;
     assert_eq!(*backend.state.audio_active.lock().await, vec![false]);

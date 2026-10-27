@@ -354,6 +354,11 @@ pub trait DeviceBackend: Send + Sync + 'static {
         Ok(())
     }
 
+    /// Binds companion file sharing to the current reservation, and renews its device-side lease.
+    async fn set_reservation(&self, _reservation_id: Option<&str>) -> Result<()> {
+        Ok(())
+    }
+
     /// Turns the display off or on without disturbing the session.
     ///
     /// Absolute, not a toggle: callers ask for the state they want and a

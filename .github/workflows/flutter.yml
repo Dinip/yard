@@ -39,7 +39,7 @@ jobs:
           java-version: "17"
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: 3.35.6
+          flutter-version: 3.44.9
           channel: stable
           cache: true
       - run: flutter pub get
@@ -47,3 +47,42 @@ jobs:
       - run: flutter analyze
       - run: flutter test
       - run: flutter build apk --debug
+      - name: Upload the test APK
+        uses: actions/upload-artifact@v7
+        with:
+          path: apps/yard_drop/build/app/outputs/flutter-apk/app-debug.apk
+          archive: false
+          if-no-files-found: error
+
+  ios:
+    runs-on: xcode-27
+    steps:
+      - uses: actions/checkout@v7
+      - name: Test iOS build and signing scripts
+        run: python3 -m unittest discover -s ios -p 'test_*.py'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.44.9
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter build ios --simulator --debug --build-number=1
+      - name: Test the native share code
+        run: |
+          DEVICE_ID=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; print(next(d["udid"] for devices in json.load(sys.stdin)["devices"].values() for d in devices if d["name"].startswith("iPhone")))')
+          xcodebuild test -workspace ios/Runner.xcworkspace -scheme Runner \
+            -destination "platform=iOS Simulator,id=$DEVICE_ID" \
+            CODE_SIGNING_ALLOWED=NO
+      - run: flutter build ios --release --no-codesign --build-number=1
+      - name: Package the unsigned IPA
+        run: |
+          mkdir -p "$RUNNER_TEMP/unsigned/Payload"
+          ditto build/ios/iphoneos/Runner.app "$RUNNER_TEMP/unsigned/Payload/Runner.app"
+          cd "$RUNNER_TEMP/unsigned"
+          zip -qry "$RUNNER_TEMP/yard-drop-ios-unsigned.ipa" Payload
+      - name: Upload the test IPA
+        uses: actions/upload-artifact@v7
+        with:
+          path: ${{ runner.temp }}/yard-drop-ios-unsigned.ipa
+          archive: false
+          if-no-files-found: error

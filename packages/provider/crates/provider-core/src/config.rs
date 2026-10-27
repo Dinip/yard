@@ -276,6 +276,21 @@ pub struct DeviceConfig {
     /// per backend. See docs/CLEANUP.md.
     #[serde(default)]
     pub cleanup_paths: Vec<String>,
+    #[serde(default)]
+    pub cleanup_app_paths: Vec<AppCleanupPath>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AppCleanupPath {
+    pub bundle_id: String,
+    pub path: String,
+}
+
+impl AppCleanupPath {
+    pub fn synthetic_path(&self) -> String {
+        format!("app:{}:{}", self.bundle_id, self.path)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -383,6 +398,22 @@ impl Config {
     /// backend added later inherits the guard instead of reimplementing it.
     fn validate_cleanup_paths(&self) -> Result<()> {
         for device in &self.devices {
+            for entry in &device.cleanup_app_paths {
+                if device.backend != BackendKind::Ios
+                    || entry.bundle_id.is_empty()
+                    || !entry
+                        .bundle_id
+                        .bytes()
+                        .all(|c| c.is_ascii_alphanumeric() || c == b'.' || c == b'-')
+                    || !entry.path.starts_with("/Documents/")
+                    || entry.path[1..]
+                        .split('/')
+                        .any(|part| part.is_empty() || part == "." || part == "..")
+                    || entry.path.chars().any(char::is_control)
+                {
+                    bail!("device {}: cleanup_app_paths requires an iOS bundle_id and a subtree beneath /Documents", device.udid);
+                }
+            }
             for path in &device.cleanup_paths {
                 let path = path.trim_end_matches('/');
                 if path.is_empty() {
@@ -535,6 +566,46 @@ devices:
             .map(|path| format!("\n      - {path}"))
             .collect();
         format!("{MINIMAL}    cleanup_paths:{entries}\n")
+    }
+
+    #[test]
+    fn app_cleanup_is_limited_to_ios_documents_subtrees() {
+        for (backend, bundle, path, valid) in [
+            (
+                "ios",
+                "com.dinispimpao.yard.drop",
+                "/Documents/YARD Drop",
+                true,
+            ),
+            ("android", "com.example.app", "/Documents/Inbox", false),
+            ("ios", "", "/Documents/Inbox", false),
+            ("ios", "bad:bundle", "/Documents/Inbox", false),
+            ("ios", "com.example.app", "/Documents", false),
+            ("ios", "com.example.app", "/Documents/", false),
+            ("ios", "com.example.app", "/Documents/../Library", false),
+            ("ios", "com.example.app", "/Documents/./Inbox", false),
+            ("ios", "com.example.app", "/Documents//Inbox", false),
+            ("ios", "com.example.app", "/Documents/Inbox/", false),
+            ("ios", "com.example.app", "/Library/Inbox", false),
+            ("ios", "com.example.app", "Documents/Inbox", false),
+        ] {
+            let yaml = format!(
+                "id: lab\nname: Lab\ncoordinator_url: https://yard.test\npublic_base_url: https://provider.test\ntoken: test\ndevices:\n  - udid: test\n    backend: {backend}\n    cleanup_app_paths:\n      - bundle_id: {bundle:?}\n        path: {path:?}\n"
+            );
+            let (_dir, config_path) = write(&yaml);
+            let result = Config::load_with_env(&config_path, None);
+            assert_eq!(
+                result.is_ok(),
+                valid,
+                "{backend} {bundle} {path}: {result:?}"
+            );
+            if let Ok(config) = result {
+                assert_eq!(
+                    config.devices[0].cleanup_app_paths[0].synthetic_path(),
+                    "app:com.dinispimpao.yard.drop:/Documents/YARD Drop"
+                );
+            }
+        }
     }
 
     /// `cleanup_paths` end in `rm -rf` on a phone, so a typo has to be a

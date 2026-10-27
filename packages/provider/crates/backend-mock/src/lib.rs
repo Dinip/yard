@@ -136,6 +136,7 @@ pub struct MockState {
     /// though it leaves the screen in the right place.
     pub screen_power: Mutex<Vec<bool>>,
     pub audio_active: Mutex<Vec<bool>>,
+    pub reservations: Mutex<Vec<Option<String>>>,
     /// Answer `set_screen_awake` with `Unsupported`, the way a backend that
     /// cannot reach the display does.
     pub no_screen_power: AtomicBool,
@@ -562,6 +563,15 @@ impl DeviceBackend for MockBackend {
 
     async fn set_audio_active(&self, active: bool) -> Result<()> {
         self.state.audio_active.lock().await.push(active);
+        Ok(())
+    }
+
+    async fn set_reservation(&self, reservation_id: Option<&str>) -> Result<()> {
+        self.state
+            .reservations
+            .lock()
+            .await
+            .push(reservation_id.map(str::to_owned));
         Ok(())
     }
 

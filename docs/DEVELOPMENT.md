@@ -5,8 +5,8 @@
 - [Bun](https://bun.sh) ≥ 1.3
 - Docker (for Postgres; also for the full stack)
 - Rust toolchain — phases 3+ only
-- [Flutter](https://docs.flutter.dev/get-started/install) ≥ 3.35 — the YARD Drop
-  Android companion only; nothing else in the repository needs it
+- [Flutter](https://docs.flutter.dev/get-started/install) 3.44.9 — the YARD Drop
+  Android and iOS companion only; nothing else in the repository needs it
 
 ## First run
 
@@ -223,18 +223,25 @@ cargo fmt --check
 bun run protocol:check    # tests + regen + diff, as CI runs it
 ```
 
-The Android companion, from `apps/yard_drop`:
+The Android and iOS companion, from `apps/yard_drop`:
 
 ```bash
 flutter pub get
 flutter analyze
 flutter test
 flutter build apk --debug
+flutter build ios --simulator --debug --build-number=1  # macOS with Xcode 27+
+xcodebuild test -workspace ios/Runner.xcworkspace -scheme Runner \
+  -destination 'platform=iOS Simulator,name=<available iPhone>' CODE_SIGNING_ALLOWED=NO
 ```
 
 These deliberately stay out of the root Bun scripts: a contributor who never
 touches the app should not need a Flutter toolchain, and `flutter.yml` is the
-only workflow that installs one. See
+workflow that checks both platforms. Flutter 3.44 uses Swift Package Manager
+for iOS and the UIScene lifecycle. The capture channel registers in
+`didInitializeImplicitFlutterEngine`, after the implicit engine exists. Android
+keeps its existing Kotlin Gradle plugin with Flutter's generated compatibility
+flags. See
 [apps/yard_drop/README.md](../apps/yard_drop/README.md).
 
 `protocol:check` is the drift guard: `generated.rs` is committed, so a zod schema
@@ -292,8 +299,8 @@ across ecosystems.
 | `release.yml` | push to `main` | grooms the release PR; on merge, publishes `1.2.3`, `1.2` and `latest` |
 | `usbmuxd-image.yml` | manual | publishes the requested multi-platform sidecar tags |
 | `rust-cache.yml` | push to `main` touching Rust | rebuilds the Rust cache that pull requests restore |
-| `flutter.yml` | pull requests and `main` touching `apps/yard_drop` | analyzes, tests and debug-builds the Android companion |
-| `mobile.yml` | called by `release.yml` | builds the YARD Drop release APK and attaches it to the release |
+| `flutter.yml` | pull requests and `main` touching `apps/yard_drop` or the Flutter workflow | analyzes, tests and builds the Android/iOS companion; uploads test APK and unsigned IPA artifacts to the run |
+| `mobile.yml` | called by `release.yml` for every release | builds the YARD Drop release APK and unsigned IPA and attaches them to the release |
 
 `pr.yml`, `edge.yml` and `release.yml` call `images.yml`, which builds each
 architecture on its own native runner (`ubuntu-24.04` and `ubuntu-24.04-arm`)
@@ -330,8 +337,9 @@ keeps a PR titled `chore(main): release 0.2.0` open against `main`, rewriting it
 on every push. It contains the version bump, an updated `CHANGELOG.md`, and
 nothing else. **Merging that PR is the release** — it creates the tag and the
 GitHub release, and `release.yml` publishes the images for it and attaches the
-YARD Drop APK, stamped with the version, the CI run number and the commit. It
-is debug-signed; see [DROP.md](./DROP.md).
+YARD Drop APK and unsigned IPA, stamped with the version, the CI build number
+and the commit. The APK is debug-signed; the IPA must be signed by its operator.
+See [DROP.md](./DROP.md).
 
 The version comes from the commits since the last release, which is the reason
 the [Conventional Commits](https://www.conventionalcommits.org) rule is

@@ -3,19 +3,23 @@
 > Status: Android is written end to end (increments 0 through 10) and the
 > release workflow builds the APK. Increments 0 through 9 are signed off on
 > hardware; increment 10's streaming download and reservation cleanup are the
-> two things left to watch on a device. Everything iOS is still a plan.
+> two things left to watch on a device. The iOS implementation now includes
+> Runner, a native Share Extension, automatic reservation-bound USB delivery,
+> cleanup, automated tests and unsigned IPA releases. Physical iPhone
+> testing passed on an iPhone 13 with iOS 27 and seven-day Personal Team signing.
+> The remaining source-app and rollout checks are listed below.
 
-YARD Drop is a first-party Flutter companion that appears as an Android share
+YARD Drop is a first-party Flutter companion that appears as an Android and iOS share
 target. It accepts file attachments from any app and gives the tester two
 choices:
 
-- **Save on this device** copies the files to a user-visible Downloads folder.
+- **Save on this device** copies files to Android Downloads or a location chosen
+  through the iOS Files picker.
 - **Send to YARD browser** puts the files in a short-lived device inbox that the
   current YARD session can download.
 
-Android comes first. The iOS application and Share Extension are designed below,
-but their implementation does not begin until the Android flow has passed the
-end-to-end tests in this document.
+Android shipped first. The increment descriptions below preserve the original
+acceptance plan, including the physical-device checks required before rollout.
 
 ## Constraints
 
@@ -145,7 +149,9 @@ yard-drop-0.4.0+142-ios.ipa
 yard-drop-0.4.0+142-ios.ipa.sha256
 ```
 
-Only publish the Android files until iOS is implemented. Call the reusable
+The mobile workflow builds both platforms on every release, so each release
+includes an APK and an unsigned IPA even when the app source has not changed.
+Farm operators sign the app and extension using their own Apple account. Call the reusable
 mobile workflow from the existing release workflow because a tag created with
 `GITHUB_TOKEN` does not start another tag-triggered workflow.
 
@@ -923,514 +929,128 @@ Android is complete when all of these statements hold:
 
 ## iOS design
 
-iOS keeps the Flutter containing app but needs a native Share Extension target.
-The extension runs in a separate sandbox and may run while the containing app is
-stopped. Both targets use an App Group to exchange staged files and small JSON
-manifests.
+### Implementation notes
 
-The iOS design does not embed a Flutter engine in the Share Extension. Its UI is
-only a file summary and two actions, so a small SwiftUI view hosted by the
-extension is cheaper to start, easier to test on physical devices and less
-likely to hit an extension memory limit. The containing application and its
-workflow remain Flutter.
+The Flutter 3.44.9 Runner and native SwiftUI ShareExtension require iOS 27.0.
+Runner uses UIScene and registers plugins after its implicit Flutter engine
+initializes. The extension never starts Flutter. CI builds simulator and
+unsigned release targets and runs the native tests. Flutter CI runs when
+`apps/yard_drop/` or `.github/workflows/flutter.yml` changes. Mobile release builds
+run for every release. Users sign Runner and
+the extension with their own profiles and shared
+App Group. `apps/yard_drop/ios/sign-release.py` accepts a local unsigned IPA
+and signs both bundles with custom IDs and an App Group,
+using Xcode's signed-in account and development signing for the selected team
+by default. `--export-method` selects development, ad hoc, enterprise or App
+Store export without uploading to Apple.
+An optional local `--export-options` plist reuses the settings from a successful
+Xcode export, including manual profile mappings.
+See [the signing guide](../apps/yard_drop/ios/SIGNING.md).
 
-The iOS flow is:
+The flow matches Android: share files, choose YARD - Device Farm, then Send to
+YARD browser. Receive shared files discovers them automatically. Save on this
+device uses the system Files picker. Neither action opens Runner or requires
+Prepare or Finish controls in the browser.
 
-```text
-iOS share sheet
-      │
-      ▼
-native Share Extension
-      │
-      ├── Save on this device
-      │       └── system document picker
-      │
-      └── Send to YARD browser
-              └── App Group staging
-                        │
-                        ▼
-              Flutter containing app
-                        │
-                        └── Documents/YARD Drop/Inbox
-                                      │
-                                      ▼
-                          existing House Arrest pull
-                                      │
-                                      ▼
-                              browser download
-```
+The provider accesses the App Group through Apple's CoreDevice file service
+on the existing USB/RSD tunnel. Production needs no Xcode or Python subprocess,
+phone network connection or coordinator file route. The `idevice` dependency
+provides RemoteXPC framing. Directory handles avoid the legacy recursive listing
+callback; metadata operations are serialized, and file downloads stream in
+256 KB chunks through the file data service. Connections end their file-service
+session before closing. The configured group defaults to
+`group.com.dinispimpao.yard.drop`; custom signing uses `options.drop_app_group`.
+Each native build generates `YardAppGroup` in its Info.plist from the target's
+App Group entitlements. Select the same single group on Runner and ShareExtension
+in Signing & Capabilities; no separate plist edit is needed. The IPA signing
+script updates that runtime value when re-signing with a custom group.
 
-The Share Extension cannot write directly into the containing app's Documents
-directory. It copies attachments into the App Group first. The containing app
-later publishes a completed batch into its own Documents directory, which the
-provider can read through House Arrest.
-
-Do not rely on a Share Extension opening its containing app automatically.
-Apple decides which extension points may open URLs, and Share Extensions are not
-documented as supporting that handoff. The browser flow below launches the
-containing app through YARD's existing device app-launch command instead.
-
-Relevant Apple references for implementation:
-
-- [Sharing data between an app and its extension](https://developer.apple.com/documentation/technologyoverviews/shared-data)
-- [`NSItemProvider.loadFileRepresentation`](https://developer.apple.com/documentation/foundation/nsitemprovider/loadfilerepresentation(fortypeidentifier:completionhandler:))
-- [`NSExtensionActivationSupportsFileWithMaxCount`](https://developer.apple.com/documentation/bundleresources/information-property-list/nsextension/nsextensionattributes/nsextensionactivationrule/nsextensionactivationsupportsfilewithmaxcount)
-- [`NSExtensionContext.open`](https://developer.apple.com/documentation/foundation/nsextensioncontext/open(_:completionhandler:))
-
-### iOS storage layout
-
-The App Group contains private transfer state:
+### Storage and reservation isolation
 
 ```text
 Library/Caches/YARD Drop/
-├── active-capture.json
-└── Incoming/
-    └── <capture-id>/<batch-id>/
-        ├── batch.json
-        ├── first-file.zip
-        └── _YARD_READY
-```
-
-The containing application's file-sharing directory contains batches that the
-provider may pull:
-
-```text
-Documents/YARD Drop/Inbox/
-└── <capture-id>/<batch-id>/
+├── active-capture.json      # provider writes {id: reservation ID, expiresAt}
+├── Exports/<staging-id>/    # extension owns incomplete copies and Files exports
+└── Incoming/<reservation-id>/<batch-id>/
     ├── batch.json
-    ├── first-file.zip
+    ├── diagnostics.zip
     └── _YARD_READY
 ```
 
-The Runner target sets `UIFileSharingEnabled` so it appears in YARD's synthetic
-iOS file root. YARD addresses the inbox as:
-
-```text
-app:<companion-bundle-id>:/Documents/YARD Drop/Inbox
-```
-
-### Shared batch manifest
-
-Swift and Dart exchange a versioned JSON file rather than private plugin types:
-
-```json
-{
-  "schemaVersion": 1,
-  "batchId": "random-id",
-  "captureId": "random-id-or-null",
-  "createdAt": 1788364800000,
-  "producer": {
-    "appVersion": "0.4.0",
-    "buildNumber": 142,
-    "commit": "abc1234"
-  },
-  "files": [
-    {
-      "id": "random-id",
-      "name": "diagnostics.zip",
-      "typeIdentifier": "public.zip-archive",
-      "size": 48291,
-      "stagedName": "random-id.bin"
-    }
-  ]
-}
-```
-
-The extension writes file data first, then `batch.json`, then `_YARD_READY`.
-Readers ignore a directory without the marker. The format version allows a later
-application to reject or migrate a batch written by an older extension.
-
-### Reservation binding on iOS
-
-App Group data is invisible to the provider and therefore cannot rely only on
-provider cleanup. A stale batch from one reservation must never be published by
-the next user.
-
-The browser controls an explicit two-launch handoff:
-
-1. The user opens `Receive shared files` in YARD.
-2. The browser creates a random capture ID.
-3. YARD launches the containing app with an `arm` argument and that capture ID.
-4. The containing app purges an older App Group capture and records the new one.
-5. The user returns to the tested app and shares files to YARD Drop.
-6. The Share Extension enables `Send to YARD browser` only while that capture is
-   present and unexpired.
-7. The extension stages the batch under that capture ID.
-8. The user returns to YARD and selects `Finish transfer`.
-9. YARD launches the containing app with a `publish` argument and the same ID.
-10. The containing app moves only matching ready batches into Documents.
-11. The web dialog detects those batches and offers the downloads.
-
-Opening the containing app twice is less elegant than Android, but it uses
-documented application launching, binds the files to a browser-created secret
-and keeps bytes off the coordinator. A future transport may shorten the flow,
-but it must preserve those properties.
-
-The containing app never displays or publishes an App Group batch during an
-ordinary launcher start. Only a matching, unexpired `publish` argument may move
-files into Documents.
-
-## iOS Increment 0: validate the platform handoff
-
-Before adding permanent iOS source, run a focused experiment on one farm iPhone:
-
-- Confirm the provider's existing launch command delivers arguments to an iOS
-  application.
-- Confirm a Runner application with `UIFileSharingEnabled` appears in YARD's
-  synthetic file root.
-- Confirm House Arrest can list and pull nested files from its Documents
-  directory.
-- Confirm a Share Extension can copy a representative company ZIP into an App
-  Group without loading it into memory.
-- Confirm the system document picker can be presented from the extension.
-
-If launch arguments do not arrive reliably, stop before building the browser
-handoff. Replace that control mechanism on paper first. Do not fall back to an
-undocumented attempt to open the containing app from the extension.
-
-Acceptance criteria:
-
-- Each behavior above has a small reproducible probe or written test result.
-- The company ZIP survives an extension to App Group byte comparison.
-- No production UI or protocol is committed around an unverified assumption.
-
-Suggested commit:
-
-```text
-test(drop): probe the iOS share and launch handoff
-```
-
-## iOS Increment 1: add the Runner and Share Extension targets
-
-After Android is complete, add iOS to the existing Flutter project:
-
-```bash
-cd apps/yard_drop
-flutter create --platforms=ios .
-```
-
-Configure:
-
-- A permanent Runner bundle ID.
-- A Share Extension bundle ID beneath it.
-- One App Group entitlement shared by Runner and the extension.
-- The Apple development team and provisioning profiles.
-- The minimum iOS version supported by the farm inventory.
-- `UIFileSharingEnabled` on Runner.
-- `LSSupportsOpeningDocumentsInPlace` if the document-picker behavior requires
-  it after the Increment 0 probe.
-
-Add the Share Extension with `NSExtensionPointIdentifier` set to
-`com.apple.share-services`. Its activation rule supports files up to the batch
-count chosen for Android. Do not enable plain text or web URLs.
-
-Add a native `ShareViewController` that hosts a small SwiftUI screen. Do not add
-third-party receiving packages or a Flutter engine to the extension.
-
-Acceptance criteria:
-
-- The containing Flutter app builds and runs on an iPhone.
-- The extension is embedded and signed with the containing app.
-- `Send to YARD` appears for a generic file attachment.
-- It does not appear for a plain text-only share.
-- The normal Flutter application still works without invoking the extension.
-
-Suggested commit:
-
-```text
-feat(drop): add the iOS Share Extension target
-```
-
-## iOS Increment 2: receive and stage one file
-
-The Share Extension reads `NSExtensionItem.attachments`. For each
-`NSItemProvider`:
-
-1. Find a registered type that conforms to file data.
-2. Ask for a file representation.
-3. Read its size and suggested name without loading its contents into `Data`.
-4. Enforce the same count and size policy used on Android.
-5. Copy the temporary representation into the App Group before the provider's
-   completion handler returns.
-6. Sanitize the display name.
-7. Write `batch.json`.
-8. Write `_YARD_READY` last.
-9. Call `completeRequest` only after the chosen operation finishes or the batch
-   is safely staged.
-
-The system may delete the URL returned by `loadFileRepresentation` when its
-completion handler returns. Copying within that handler is required.
-
-The SwiftUI screen shows the same concepts as Flutter:
-
-- Attachment names and sizes.
-- `Save on this device`.
-- `Send to YARD browser`.
-- Progress, cancellation and an actionable error.
-
-The browser action is disabled with `Open Receive shared files in YARD first`
-when no valid capture is armed.
-
-Acceptance criteria:
-
-- A single company ZIP reaches the App Group unchanged.
-- Missing names, unknown types and unavailable representations fail clearly.
-- Cancelling removes partial files.
-- Extension memory remains bounded for a large file.
-
-Suggested commit:
-
-```text
-feat(drop): stage incoming iOS file shares
-```
-
-## iOS Increment 3: save through the Files picker
-
-`Save on this device` presents a `UIDocumentPickerViewController` for exporting
-a copy of the staged file. The system lets the user choose On My iPhone, iCloud
-Drive or another configured file provider.
-
-For a batch, export all staged URLs in one picker when the selected iOS version
-supports the expected multi-file experience. If it does not, present one clear
-save step per file and keep the remaining files staged.
-
-After a successful export:
-
-- Complete the extension request.
-- Remove the App Group staging copy.
-- Leave the user-selected copy untouched.
-
-After cancellation:
-
-- Keep the extension open for another destination choice when the system allows
-  it.
-- Otherwise remove the staged batch when the extension closes.
-
-Acceptance criteria:
-
-- The company ZIP can be saved under On My iPhone.
-- The saved bytes match the source.
-- Cancellation leaves no unexpected copy.
-- Multiple files have explicit per-file results.
-
-Suggested commit:
-
-```text
-feat(drop): save iOS shares through the Files picker
-```
-
-## iOS Increment 4: support multiple and mixed attachments
-
-Extend the staging code to every `NSExtensionItem` and `NSItemProvider` in the
-request. Preserve stable ordering and deduplicate representations of the same
-attachment where possible.
-
-Handle:
-
-- Several extension items.
-- Several attachments on one item.
-- Duplicate suggested filenames.
-- Mixed Uniform Type Identifiers.
-- A provider that offers more than one representation.
-- One failed provider among successful providers.
-- Extension cancellation during asynchronous loading.
-
-Keep the manifest format compatible with the Dart model. Store the native type
-identifier as metadata, but treat its bytes as opaque.
-
-Acceptance criteria:
-
-- Single and multiple shares pass on a simulator and real iPhone.
-- Mixed file types remain one batch.
-- One failure does not hide successful items.
-- No temporary provider URL is retained after its callback.
-
-Suggested commit:
-
-```text
-feat(drop): support multiple iOS share attachments
-```
-
-## iOS Increment 5: arm and publish a browser capture
-
-Add an iOS Runner platform bridge beside the Android `ShareGateway`
-implementation. It handles launch arguments and App Group operations without
-passing file bytes through Dart.
-
-Arm behavior:
-
-- Receive a browser-generated capture ID and expiry through the launch command.
-- Purge any older App Group capture before storing the new one.
-- Persist `active-capture.json` atomically.
-- Show a Flutter confirmation that YARD Drop is ready.
-
-Publish behavior:
-
-- Require the same capture ID and a non-expired arm record.
-- Ignore and purge batches for any other ID.
-- Copy matching ready batches into
-  `Documents/YARD Drop/Inbox/<capture-id>/`.
-- Write `_YARD_READY` last in Documents.
-- Delete the App Group source only after the Documents copy completes.
-- Clear the arm record after publishing.
-
-An ordinary app launch does neither operation and does not reveal pending App
-Group batches.
-
-Acceptance criteria:
-
-- An unarmed extension cannot queue a browser delivery.
-- A wrong or expired capture ID cannot publish files.
-- A previous capture is purged when a new one is armed.
-- A matching capture appears in Runner Documents unchanged.
-- Restarting the Runner midway does not produce a ready partial batch.
-
-Suggested commit:
-
-```text
-feat(drop): publish an armed iOS browser capture
-```
-
-## iOS Increment 6: make app Documents cleanup-safe
-
-The current iOS cleanup implementation wipes only the AFC media domain. YARD
-Drop's browser inbox lives in an app Documents container, so provider cleanup
-must gain a narrowly configured app-container operation.
-
-Add structured provider configuration rather than putting a synthetic app path
-into the existing absolute media path list:
-
-```yaml
-devices:
-  - udid: <ios-udid>
-    backend: ios
-    cleanup_app_paths:
-      - bundle_id: <companion-bundle-id>
-        path: /Documents/YARD Drop
-```
-
-Validation must:
-
-- Require a non-empty bundle ID.
-- Require a path beneath `/Documents`.
-- Refuse `/Documents` itself.
-- Refuse `..`, empty components and paths outside the app Documents tree.
-- Keep the configuration provider-local because it ends in recursive deletion
-  on a device.
-
-The iOS backend uses House Arrest `VendDocuments` for the configured bundle and
-removes only the validated relative subtree. The cleanup report writes a
-readable synthetic path such as:
-
-```text
-app:<bundle-id>:/Documents/YARD Drop
-```
-
-Acceptance criteria:
-
-- Release cleanup removes every published inbox batch.
-- Cleanup leaves the containing app installed.
-- A rejected configuration fails provider startup before touching a device.
-- Android cleanup behavior remains unchanged.
-- Cleanup errors appear in the existing `device.cleanup` audit entry.
-
-Suggested commit:
-
-```text
-feat(provider): clean configured iOS app documents
-```
-
-## iOS Increment 7: connect the web inbox flow
-
-Generalize `device-drop-dialog.tsx` so the provider supplies or the web client
-selects the correct inbox root:
-
-```text
-Android: /sdcard/Download/YARD Drop/Inbox
-iOS:     app:<companion-bundle-id>:/Documents/YARD Drop/Inbox
-```
-
-The iOS dialog has explicit stages:
-
-1. `Prepare iPhone` launches Runner with a new `arm` capture ID.
-2. The UI tells the user to return to the tested app and share to YARD Drop.
-3. `Finish transfer` launches Runner with `publish` and the same ID.
-4. The dialog polls the iOS app Documents inbox for that capture ID.
-5. Ready batches appear with the same download UI used by Android.
-
-Do not send file bytes or manifests through tRPC. App launch remains a control
-operation. Browsing and downloads remain direct browser to provider requests.
-
-Acceptance criteria:
-
-- The full arm, share, publish and download sequence works from a YARD session.
-- A browser refresh can resume a capture whose ID remains in session UI state or
-  explicitly restart it without publishing stale data.
-- A revoked reservation cannot keep polling or downloading.
-- The existing file-pull audit event records the final download.
-
-Suggested commit:
-
-```text
-feat(web): receive YARD Drop files from iOS
-```
-
-## iOS Increment 8: tests, signing and farm rollout
-
-Add:
-
-- Swift unit tests for type selection, filename sanitizing and batch manifests.
-- Extension integration tests for one and many `NSItemProvider` attachments.
-- Dart tests for arm and publish launch states.
-- Provider tests for structured app cleanup path validation.
-- Web tests for the iOS dialog stages and inbox path.
-- A release-mode physical-device test because extension behavior and memory
-  differ from the simulator.
-
-Manual source applications include Files, Photos, Safari downloads and the
-company application. Test extension termination, low space, a provider restart,
-an expired capture and reservation release before publish.
-
-Distribution work includes:
-
-- Runner and extension provisioning profiles.
-- App Group entitlement provisioning.
-- Internal IPA signing.
-- Installing the companion before the reservation baseline.
-- Recording the companion bundle ID in provider cleanup configuration.
-- An iOS build in the reusable mobile workflow called by the root release. It
-  must not become part of the container image job.
-
-Suggested commits:
-
-```text
-test(drop): cover the iOS share and browser flow
-docs(drop): document iOS signing and farm rollout
-```
-
-## iOS definition of done
-
-iOS is complete when:
-
-- YARD Drop appears for generic file attachments in the share sheet.
-- The extension handles single, multiple and mixed file types.
-- `Save on this device` exports through the Files picker.
-- Browser delivery requires a matching, unexpired capture ID.
-- The extension and Runner exchange only files and versioned manifests through
-  their App Group.
-- The provider pulls published files from Runner Documents through House Arrest.
-- File bytes never pass through the coordinator or a Flutter platform channel.
-- A reservation release removes published Documents files.
-- A new arm operation removes stale private App Group captures.
-- The extension uses bounded memory and passes release-mode testing on a real
-  farm iPhone.
-- Runner, Share Extension and App Group signing survive an install and upgrade.
-- Android and iOS builds share the root YARD semantic version.
-- Android behavior and tests remain unchanged.
+The supervisor binds sharing before authorizing a reservation, then reconciles
+against the current registry during revocation and its regular poll. This keeps
+a delayed revocation from disarming a replacement reservation. The lease expires
+after two minutes and refreshes every 30 seconds. The provider writes a temporary
+record and renames it atomically. Replacing a reservation invalidates the old
+record before deleting older inbox namespaces. Revocation invalidates it and
+purges queued batches. Failed cleanup retries on subsequent polls.
+
+The extension snapshots the ID before receiving attachments and rechecks the
+current, unexpired ID before committing. Renewing the same ID while a file is
+copying is valid. A changed ID rejects the share. The extension moves a complete
+batch into Incoming atomically after writing its manifest and ready marker.
+An old extension racing revocation can leave an old-ID directory, which is never
+exposed to the next reservation and is removed on later cleanup.
+
+The provider exposes the opaque `drop:/` root. Returned batch and file paths
+include the current reservation ID, and stale IDs, traversal, symbolic links and
+unexpected file types are refused. Existing file routes still require both a
+valid JWT and the currently authorized reservation, and audit every pull. The
+coordinator carries authorization and audit metadata only. Browser refreshes do
+not reset the inbox.
+
+The extension copies with a 64 KB buffer, accepts up to 20 files, 512 MB per file
+and 2 GB per batch, and keeps successful attachments visible when others fail.
+It sanitizes filenames, preserves extensions and disambiguates collisions before
+queuing. The schema 1 manifest includes `captureId`, UTI and MIME type alongside
+the Android-compatible file metadata. Payload names match their manifest display
+names, so the system picker exports the same staged files without a second copy.
+
+Browser batches use the reservation hook independently of optional farm folder
+wiping. Files saved through the picker belong to the chosen location. Operators
+can configure Runner's `/Documents/YARD Drop` under `cleanup_app_paths` to wipe
+saved copies on release. Install the signed companion before the reservation
+baseline so normal cleanup keeps it installed.
+
+### Validation and rollout
+
+On 2026-10-25, an iPhone 13 running iOS 27.0 passed release-mode Files sharing and
+Files export using Xcode 27.2 and seven-day Personal Team profiles. Both profiles
+needed the App Group registered and selected manually in Xcode. A 32 MB ZIP's
+saved and browser copies matched source SHA-256
+`0503896606b2d82c9954b9583cdbcb182393e22b5b9188a58552c10bf1c5f993`.
+That first test used the earlier explicit launch handoff, which has since been
+removed. The unsigned IPA re-sign procedure also passed signature verification.
+
+On 2026-10-26, the same phone passed direct Rust CoreDevice App Group directory
+listing, file creation, attributes, rename, streaming download with byte equality,
+delete and session closure. The same probe passed reservation replacement, stale
+path rejection, symlink rejection and release cleanup on that phone. The opt-in
+`app_group_files_work_over_the_usb_tunnel` probe exercises these operations without launching the companion. Native tests
+cover an in-flight lease refresh, reservation replacement, expiry, committed
+bytes, names, copy limits, cancellation and mixed NSItemProvider results. Web
+tests read iOS batches through the same inbox reader as Android. Rust tests check
+reservation-bound paths, transfer size limits and delayed revocation. The revised
+build passed 42 Flutter tests, 7 native iOS tests, 63 web tests, root type checking,
+the Rust workspace tests and Clippy with warnings denied. The tester then
+confirmed that sharing `yard-drop-probe.zip` through the installed release
+extension made it appear automatically in the live browser and download
+successfully, with no Prepare or Finish action.
+
+Still to verify before wider rollout: Photos, Safari, the company ZIP, multiple
+attachments on a physical device, low storage,
+extension termination, signing upgrades, provider reconnects and reservation
+release. Check downloaded bytes and audit entries. Hardware tests are opt-in
+with `YARD_TEST_IOS_UDID`; normal Cargo checks require no phone.
+
+Relevant references:
+
+- [Sharing app and extension data](https://developer.apple.com/documentation/technologyoverviews/shared-data)
+- [NSItemProvider file representations](https://developer.apple.com/documentation/foundation/nsitemprovider/loadfilerepresentation(fortypeidentifier:completionhandler:))
+- [CoreDevice file-service protocol reference](https://github.com/doronz88/pymobiledevice3/blob/master/pymobiledevice3/remote/core_device/file_service.py)
 
 ## Work postponed beyond both mobile implementations
 
-- A private USB protocol between either companion and the provider.
 - Direct phone-to-provider HTTP uploads.
 - Durable artifact storage or an artifact database table.
 - Provider-managed companion installation and upgrades.

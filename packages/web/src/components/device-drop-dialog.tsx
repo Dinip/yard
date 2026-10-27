@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Download, Inbox, Loader2, TriangleAlert } from "lucide-react";
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -11,7 +11,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { formatBytes } from "@/lib/download";
-import { type DropBatch, type DropFile, readInbox } from "@/lib/drop-inbox";
+import {
+  type DropBatch,
+  type DropFile,
+  INBOX_PATH,
+  IOS_INBOX_PATH,
+  readInbox,
+} from "@/lib/drop-inbox";
 import { fetchDeviceFile, listDeviceFiles, streamDeviceFile } from "@/lib/screen/session";
 
 /** Slow enough to be free, fast enough that a share feels like it arrives. */
@@ -21,25 +27,33 @@ const POLL_MS = 2000;
  * Take files off a device that were shared into YARD Drop.
  *
  * The companion app never learns a provider URL or a YARD credential — it
- * writes a batch to the device's Downloads and this dialog reads it back over
+ * writes a batch to Downloads or its shared iOS container and this dialog reads it over
  * the same authenticated file plane as the file browser, so every download is
  * already in the audit log. Nothing new crosses the coordinator.
  */
 export function DeviceDropDialog({
   deviceId,
+  platform,
+  active,
   open,
   onOpenChange,
 }: {
   deviceId: string;
+  platform?: string;
+  active: boolean;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
   // Survives the polls, not the dialog: reading a manifest is an audited file
   // pull, and a batch never changes once it is complete.
   const seen = useRef(new Map<string, DropBatch>());
+  const root = platform === "ios" ? IOS_INBOX_PATH : INBOX_PATH;
+  useEffect(() => {
+    if (!active) seen.current.clear();
+  }, [active]);
 
   const inbox = useQuery({
-    queryKey: ["device-drop", deviceId],
+    queryKey: ["device-drop", deviceId, root],
     queryFn: () =>
       readInbox(
         {
@@ -47,10 +61,11 @@ export function DeviceDropDialog({
           read: (path) => fetchDeviceFile(deviceId, path),
         },
         seen.current,
+        root,
       ),
     // Only while the dialog is open: `enabled` stops the interval too, so
     // closing is all the cleanup there is.
-    enabled: open,
+    enabled: open && active,
     refetchInterval: POLL_MS,
     staleTime: 0,
     retry: false,
@@ -68,7 +83,7 @@ export function DeviceDropDialog({
     }
   };
 
-  const batches = inbox.data ?? [];
+  const batches = active ? (inbox.data ?? []) : [];
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -76,8 +91,8 @@ export function DeviceDropDialog({
         <DialogHeader>
           <DialogTitle>Receive shared files</DialogTitle>
           <DialogDescription>
-            On the device, share the files and choose YARD Drop, then “Send to YARD browser”. They
-            appear here. Downloads are recorded in the audit log.
+            On the device, share the files and choose YARD - Device Farm, then Send to YARD browser.
+            They appear here. Downloads are recorded in the audit log.
           </DialogDescription>
         </DialogHeader>
 

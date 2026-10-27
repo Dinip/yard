@@ -1,5 +1,5 @@
 /**
- * Reading what YARD Drop left on an Android device.
+ * Reading completed YARD Drop batches from a device.
  *
  * The companion app cannot reach the provider, so the two sides meet on the
  * filesystem: Drop writes a batch directory under [INBOX_PATH] and the browser
@@ -15,6 +15,7 @@ import type { FileEntry, FileListing } from "@yard/protocol";
 
 /** Where the companion publishes, matching `ShareSaver.kt`. */
 export const INBOX_PATH = "/sdcard/Download/YARD Drop/Inbox";
+export const IOS_INBOX_PATH = "drop:/";
 
 export const MANIFEST_NAME = "batch.json";
 export const READY_MARKER = "_YARD_READY";
@@ -60,10 +61,11 @@ export interface InboxSource {
 export async function readInbox(
   source: InboxSource,
   seen: Map<string, DropBatch> = new Map(),
+  root = INBOX_PATH,
 ): Promise<DropBatch[]> {
   let listing: FileListing;
   try {
-    listing = await source.list(INBOX_PATH);
+    listing = await source.list(root);
   } catch {
     return [];
   }

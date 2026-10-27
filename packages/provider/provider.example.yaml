@@ -118,6 +118,10 @@ devices:
   # - udid: 00008120-000C1D2E3F401234   # iOS 27+
   #   backend: ios
   #   name: iPhone 15 Pro
+  #   # With YARD Drop preinstalled and cleanup.wipeFolders enabled:
+  #   cleanup_app_paths:
+  #     - bundle_id: com.dinispimpao.yard.drop
+  #       path: /Documents/YARD Drop
   #   options:
   #     display_id: 0                     # 0 is the built-in screen
   #     motion_idr: true                  # undo iOS motion resolution-collapse

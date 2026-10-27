@@ -455,18 +455,12 @@ export function DeviceConsole({
           run: () => installInput.current?.click(),
         },
         { key: "browse", label: "Files", icon: FolderOpen, run: () => setFilesOpen(true) },
-        // The companion app is Android-only, so on iOS this would open a
-        // dialog that can never fill.
-        ...(platform === "android"
-          ? [
-              {
-                key: "drop",
-                label: "Receive shared files",
-                icon: Inbox,
-                run: () => setDropOpen(true),
-              },
-            ]
-          : []),
+        {
+          key: "drop",
+          label: "Receive shared files",
+          icon: Inbox,
+          run: () => setDropOpen(true),
+        },
         { key: "copy", label: "Copy from device", icon: ClipboardCopy, run: readDeviceClipboard },
         { key: "paste", label: "Paste to device", icon: ClipboardPaste, run: writeDeviceClipboard },
       ],
@@ -735,7 +729,14 @@ export function DeviceConsole({
         onOpenChange={setFilesOpen}
       />
 
-      <DeviceDropDialog deviceId={deviceId} open={dropOpen} onOpenChange={setDropOpen} />
+      <DeviceDropDialog
+        key={deviceId}
+        deviceId={deviceId}
+        platform={platform}
+        active={active && !session.revoked}
+        open={dropOpen}
+        onOpenChange={setDropOpen}
+      />
     </div>
   );
 }

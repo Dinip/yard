@@ -414,7 +414,7 @@ impl Supervisor {
             return;
         };
         let _operation = device.operation.lock().await;
-        self.reconcile_audio(device).await;
+        self.reconcile_session(device).await;
         match device.backend.remote_debug_stop().await {
             Ok(()) | Err(BackendError::Unsupported(_)) => {}
             Err(err) => warn!(device = %device_id, %err, "could not withdraw the adb bridge"),
@@ -474,15 +474,27 @@ impl Supervisor {
 
         {
             let _operation = device.operation.lock().await;
-            self.reconcile_audio(device).await;
+            self.reconcile_session(device).await;
         }
         self.reconcile_screen(device, next_status).await;
     }
 
-    async fn reconcile_audio(&self, device: &Arc<Device>) {
-        let active = self.sessions.current(&device.id).await.is_some();
+    async fn reconcile_session(&self, device: &Arc<Device>) {
+        let authorization = self.sessions.current(&device.id).await;
+        let active = authorization.is_some();
         if let Err(err) = device.backend.set_audio_active(active).await {
             warn!(device = %device.id, %err, "could not reconcile device audio");
+        }
+        if let Err(err) = device
+            .backend
+            .set_reservation(
+                authorization
+                    .as_ref()
+                    .map(|auth| auth.reservation_id.as_str()),
+            )
+            .await
+        {
+            warn!(device = %device.id, %err, "could not reconcile companion file sharing");
         }
     }
 
@@ -785,6 +797,9 @@ impl CommandHandler for Supervisor {
                     device.backend.set_audio_active(false).await?;
                 }
                 device.backend.set_audio_active(true).await?;
+                if let Err(err) = device.backend.set_reservation(Some(&reservation_id)).await {
+                    warn!(device = %device.id, %err, "could not enable companion file sharing");
+                }
                 self.sessions
                     .authorize(
                         &device_id,

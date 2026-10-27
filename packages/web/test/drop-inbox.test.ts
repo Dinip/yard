@@ -6,12 +6,13 @@
 
 import { describe, expect, test } from "bun:test";
 import type { FileListing } from "@yard/protocol";
-import { INBOX_PATH, type InboxSource, readInbox } from "../src/lib/drop-inbox.ts";
+import { INBOX_PATH, type InboxSource, IOS_INBOX_PATH, readInbox } from "../src/lib/drop-inbox.ts";
 
 /** A device whose inbox is described as `{ "<batch>": [names…] }`. */
 function device(
   batches: Record<string, string[]>,
   manifests: Record<string, unknown> = {},
+  root = INBOX_PATH,
 ): InboxSource {
   const listing = (path: string, names: string[], kind: "file" | "directory"): FileListing => ({
     path,
@@ -21,14 +22,14 @@ function device(
 
   return {
     async list(path) {
-      if (path === INBOX_PATH) return listing(path, Object.keys(batches), "directory");
-      const id = path.slice(INBOX_PATH.length + 1);
+      if (path === root) return listing(path, Object.keys(batches), "directory");
+      const id = path.slice(root.length + 1);
       const names = batches[id];
       if (!names) throw new Error("No such directory");
       return listing(path, names, "file");
     },
     async read(path) {
-      const id = path.slice(INBOX_PATH.length + 1).split("/")[0];
+      const id = path.slice(root.length + 1).split("/")[0];
       const manifest = manifests[id];
       if (manifest === undefined) throw new Error("No such file");
       return new Blob([typeof manifest === "string" ? manifest : JSON.stringify(manifest)]);
@@ -52,6 +53,16 @@ function manifest(files: { name: string; size?: number }[], overrides: object = 
 }
 
 const ready = "_YARD_READY";
+
+test("iOS reads the provider's reservation-bound inbox without launching the app", async () => {
+  const source = device(
+    { batch: ["report.zip", "batch.json", ready] },
+    { batch: manifest([{ name: "report.zip" }]) },
+    IOS_INBOX_PATH,
+  );
+  const [batch] = await readInbox(source, new Map(), IOS_INBOX_PATH);
+  expect(batch.files[0].path).toBe(`${IOS_INBOX_PATH}/batch/report.zip`);
+});
 
 test("an inbox that does not exist yet is empty", async () => {
   const source: InboxSource = {
