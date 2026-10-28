@@ -1058,9 +1058,14 @@ async fn pull_file(
             .join(format!("{}-{}", uuid::Uuid::new_v4(), filename));
     let staged = StagedFile(staged_path.clone());
 
+    let started = std::time::Instant::now();
+    info!(device = %device_id, path = %remote_path, "pulling a file from device");
     let size = match device.backend.pull_file(&remote_path, &staged_path).await {
         Ok(size) => size as i64,
-        Err(err) => return (backend_status(&err), err.to_string()).into_response(),
+        Err(err) => {
+            warn!(device = %device_id, path = %remote_path, elapsed_ms = started.elapsed().as_millis(), error = %err, "file pull failed");
+            return (backend_status(&err), err.to_string()).into_response();
+        }
     };
 
     let sha256 = match hash_file(&staged_path).await {
@@ -1074,7 +1079,7 @@ async fn pull_file(
         }
     };
 
-    info!(device = %device_id, path = %remote_path, size, "serving a pulled file");
+    info!(device = %device_id, path = %remote_path, size, elapsed_ms = started.elapsed().as_millis(), "serving a pulled file");
     state.supervisor.note_activity(&device_id).await;
 
     // Written before the body is sent, not after: a download the client aborts

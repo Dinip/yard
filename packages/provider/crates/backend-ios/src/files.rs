@@ -220,22 +220,44 @@ impl Files {
             .get(DATA)
             .context("iOS file data service is unavailable")?
             .port;
-        let mut stream = self.device.adapter.connect_to_service_port(port).await?;
+        let mut stream = self
+            .device
+            .adapter
+            .connect_to_service_port(port)
+            .await
+            .context("connecting to iOS file data service")?;
         let mut header = Vec::from(*b"rwb!FILE");
         for value in [number("Response")?, 0, number("NewFileID")?, 0] {
             header.extend_from_slice(&value.to_be_bytes());
         }
-        stream.write_all(&header).await?;
-        stream.flush().await?;
+        stream
+            .write_all(&header)
+            .await
+            .context("sending iOS file transfer request")?;
+        stream
+            .flush()
+            .await
+            .context("flushing iOS file transfer request")?;
         let mut reply = [0u8; 40];
-        stream.read_exact(&mut reply).await?;
+        stream
+            .read_exact(&mut reply)
+            .await
+            .context("reading iOS file transfer header")?;
         let size = transfer_size(&reply)?;
         let mut file = tokio::fs::File::create(destination).await?;
         let mut remaining = size;
         let mut buffer = vec![0; CHUNK];
         while remaining > 0 {
             let length = usize::try_from(remaining.min(CHUNK as u64))?;
-            stream.read_exact(&mut buffer[..length]).await?;
+            stream
+                .read_exact(&mut buffer[..length])
+                .await
+                .with_context(|| {
+                    format!(
+                        "reading iOS file data ({} of {size} bytes received)",
+                        size - remaining
+                    )
+                })?;
             file.write_all(&buffer[..length]).await?;
             remaining -= length as u64;
         }
@@ -286,7 +308,8 @@ async fn request_reply(
         client.recv().await
     })
     .await
-    .context("iOS file service timed out")??;
+    .with_context(|| format!("iOS file service timed out: {operation}"))?
+    .with_context(|| format!("iOS file service request failed: {operation}"))?;
     parse_reply(response, &operation)
 }
 

@@ -825,6 +825,12 @@ refused. Downloads stream through the CoreDevice data service into the existing
 scratch-file response. Revocation invalidates the lease and purges queued files;
 replacement reservations never browse a predecessor's namespace.
 
+File pulls log their device and path when staging starts, then elapsed time
+when staging succeeds or fails. iOS transfer errors identify the control
+operation, data-service connection, transfer header or body read; body errors
+include the number of complete bytes received. A successful `/files` listing
+only returns metadata; a browser download requires a successful `/file` response.
+
 `set_screen_awake` is absolute rather than a toggle: callers ask for the state
 they want, and a backend that can only toggle is responsible for getting there.
 `true` means more than a lit panel — it must leave the device at a usable home
