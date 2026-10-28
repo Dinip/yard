@@ -84,7 +84,12 @@ pub struct DeviceHost {
 
 impl DeviceHost {
     /// Start the supervisor. It runs until the process exits.
-    pub fn spawn(options: IosOptions, publisher: VideoPublisher, geometry: Geometry) -> Self {
+    pub fn spawn(
+        options: IosOptions,
+        publisher: VideoPublisher,
+        audio: provider_core::audio::AudioPublisher,
+        geometry: Geometry,
+    ) -> Self {
         let (ready_tx, ready_rx) = watch::channel(false);
         let session = Arc::new(Mutex::new(None));
         let input = Arc::new(Mutex::new(None));
@@ -105,6 +110,7 @@ impl DeviceHost {
             session,
             generation,
             publisher,
+            audio,
             input,
             ddi_failed_at: None,
         }));
@@ -418,6 +424,7 @@ struct Supervisor {
     session: Arc<Mutex<Option<Session>>>,
     generation: Arc<AtomicU64>,
     publisher: VideoPublisher,
+    audio: provider_core::audio::AudioPublisher,
     input: Arc<Mutex<Option<hid::InputHandle>>>,
     /// When the last DDI mount failed, so a device that cannot mount at all is
     /// not re-personalised against Apple's servers every `RECONNECT_DELAY`.
@@ -444,6 +451,7 @@ async fn supervise(mut supervisor: Supervisor) {
         *supervisor.session.lock().await = None;
         *supervisor.input.lock().await = None;
         supervisor.publisher.mark_stopped();
+        supervisor.audio.mark_stopped();
 
         tokio::time::sleep(RECONNECT_DELAY).await;
     }
@@ -484,6 +492,7 @@ async fn run_once(supervisor: &mut Supervisor) -> Result<()> {
         handshake.clone(),
         options.clone(),
         supervisor.publisher.clone(),
+        supervisor.audio.clone(),
         supervisor.geometry.clone(),
     ));
 

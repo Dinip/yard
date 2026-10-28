@@ -161,12 +161,8 @@ pub enum ScreenFault {
 impl MockBackend {
     pub fn new(id: impl Into<String>, platform: Platform, name: impl Into<String>) -> Arc<Self> {
         let (video, publisher) = channel();
-        let (audio, audio_publisher) = if platform == Platform::Android {
-            let (handle, publisher) = audio_channel();
-            (Some(handle), Some(publisher))
-        } else {
-            (None, None)
-        };
+        let (handle, audio_publisher) = audio_channel();
+        let (audio, audio_publisher) = (Some(handle), Some(audio_publisher));
         let state = Arc::new(MockState {
             installed: Mutex::new(vec![
                 AppInfo {

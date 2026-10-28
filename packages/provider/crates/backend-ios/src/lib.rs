@@ -19,6 +19,7 @@
 //! tunnel unreliable below that, and the backend fails loudly at session
 //! bring-up rather than half-working.
 
+mod audio;
 pub mod ddi;
 pub mod device;
 mod drop;
@@ -45,6 +46,7 @@ use idevice::provider::IdeviceProvider;
 use idevice::services::afc::{opcode::AfcFopenMode, AfcClient};
 use idevice::services::house_arrest::HouseArrestClient;
 use idevice::{IdeviceService as _, ReadWrite};
+use provider_core::audio::AudioHandle;
 use provider_core::backend::{
     join_path, parent_of, AppFilter, BackendError, DeviceBackend, DeviceInfo, DeviceMetrics,
     InputEvent, ProgressSink, Result as BackendResult,
@@ -487,6 +489,7 @@ pub struct IosBackend {
     name: Option<String>,
     host: Arc<DeviceHost>,
     video: VideoHandle,
+    audio: AudioHandle,
     /// Kept so a rotation can reach live viewers: it produces no new parameter
     /// sets and no new frame size, so nothing else would ever announce it.
     publisher: VideoPublisher,
@@ -515,10 +518,12 @@ pub struct BatteryReading {
 impl IosBackend {
     pub fn new(options: IosOptions, name: Option<String>) -> Arc<Self> {
         let (video, publisher) = channel();
+        let (audio, audio_publisher) = provider_core::audio::channel();
         let geometry = Geometry::default();
         let host = Arc::new(DeviceHost::spawn(
             options.clone(),
             publisher.clone(),
+            audio_publisher,
             geometry.clone(),
         ));
 
@@ -527,6 +532,7 @@ impl IosBackend {
             name,
             host,
             video,
+            audio,
             publisher,
             geometry,
             pointer: Mutex::new(Pointer::default()),
@@ -949,6 +955,19 @@ impl DeviceBackend for IosBackend {
 
     fn video(&self) -> VideoHandle {
         self.video.clone()
+    }
+
+    fn audio(&self) -> Option<AudioHandle> {
+        Some(self.audio.clone())
+    }
+
+    async fn set_audio_active(&self, active: bool) -> BackendResult<()> {
+        // A reconnect silences the speaker before publishing its HID handle.
+        let Some(input) = self.host.input().await else {
+            return Ok(());
+        };
+        input.set_audio_active(active)?;
+        Ok(())
     }
 
     async fn input(&self, event: InputEvent) -> BackendResult<()> {
@@ -1560,6 +1579,46 @@ mod tests {
     }
 
     use super::*;
+
+    #[tokio::test]
+    async fn audio_reconciliation_does_not_wait_for_a_disconnected_phone() {
+        let backend = IosBackend::new(
+            IosOptions::parse("not-attached", &Default::default()).unwrap(),
+            None,
+        );
+        for active in [false, true] {
+            tokio::time::timeout(Duration::from_millis(100), backend.set_audio_active(active))
+                .await
+                .unwrap()
+                .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires YARD_TEST_IOS_UDID, ffmpeg, a mounted DDI and the provider stopped"]
+    async fn speaker_muting_preserves_capture_without_delaying_reservations() {
+        let udid = std::env::var("YARD_TEST_IOS_UDID").unwrap();
+        let backend = IosBackend::new(IosOptions::parse(&udid, &Default::default()).unwrap(), None);
+        backend.session().await.unwrap();
+        let audio = backend.audio().unwrap();
+        for active in [true, false] {
+            tokio::time::timeout(Duration::from_millis(100), backend.set_audio_active(active))
+                .await
+                .unwrap()
+                .unwrap();
+            tokio::time::sleep(Duration::from_secs(4)).await;
+            let mut packets = audio.subscribe();
+            assert!(
+                !tokio::time::timeout(Duration::from_secs(5), packets.recv())
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .data
+                    .is_empty()
+            );
+        }
+        backend.host.drop_session().await;
+    }
 
     #[tokio::test]
     async fn ipa_bundle_id_reads_the_root_plist_and_rejects_invalid_metadata() {

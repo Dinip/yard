@@ -280,7 +280,8 @@ task is spawned, aborted on shutdown, and fatal if it returns.
 ```
 crates/backend-ios/src/
 ├── device.rs    tunnel + session supervision (one rebuild loop)
-├── media.rs     RTP in, RTCP out, access units — carried over verbatim
+├── media.rs     RTP in, RTCP out, access units — video recovery preserved
+├── audio.rs     AAC-ELD to Opus through FFmpeg, bounded independently of video
 ├── hevc.rs      RFC 7798 depacketisation, hvcC, codec string, frame size
 ├── hid.rs       touch, keyboard, hardware buttons, rotation
 └── lib.rs       the pointer state machine and the DeviceBackend impl
@@ -392,11 +393,84 @@ The collapsed layout still needs verification on hardware after this change;
 the browser does not crop the video or guess keyboard bounds.
 
 `media.rs` is the file to leave alone. Receiver reports are not optional (the
-encoder stalls in ~20 s without them), audio is started and then drained but
-never decoded (iOS throttles a lone video client, and an unread flow is
+encoder stalls in ~20 s without them), audio is started and drained even when
+conversion fails (iOS throttles a lone video client, and an unread flow is
 backpressure on the adapter video shares), corrupt access units are dropped
 whole, and keyframe requests are rate-limited because the iOS 26/27 encoder
 wedges under a PLI barrage. Every constant marks a field failure.
+
+### iOS browser audio
+
+CoreDevice audio mode 8, RTP payload type 101, carries raw AAC-ELD access units
+at 48 kHz stereo, 480 samples per frame. AAC-ELD is absent from the
+[WebCodecs AAC profiles](https://www.w3.org/TR/webcodecs-aac-codec-registration/)
+and Chrome rejects its codec identifier, so `audio.rs` wraps the AUs in an
+in-memory streaming Matroska track
+and runs FFmpeg to decode them and encode 96 kbps Opus. The browser uses the same
+`audio.codec` handshake, binary packets and volume slider as Android. Video
+remains HEVC passthrough; audio never goes through the coordinator.
+
+Native provider hosts need **FFmpeg with libopus on PATH**. The provider image
+builds Debian's patched FFmpeg source with only AAC decoding, Matroska input,
+Opus output, pipe I/O and audio conversion filters. Only the FFmpeg binary and
+the libopus runtime are shipped, avoiding the full package's video and graphics
+dependencies. One converter runs per connected iOS device. Its input queue is
+bounded to 16 AUs; a slow converter drops audio rather than delaying the shared
+USB tunnel. Audio receiver reports track the received RTP sequence numbers.
+The converter is killed when the media session ends. Missing FFmpeg, an unknown
+audio format, converter failure or five seconds without output announces
+`audio.unavailable`; the audio socket keeps draining and video/input continue.
+A rebuilt device session retries conversion.
+
+The Matroska codec configuration sets the ELD 480-sample frame flag explicitly.
+Using the 512-sample configuration makes audio drift and crackle. This format
+was verified on an iPhone 17 Pro Max. Other negotiated modes fail closed rather
+than guessing their codec parameters. Capture stays active while the provider
+is connected, as it already did to keep video healthy.
+
+CoreDevice captures a copy of system audio and also leaves the phone's speaker
+playing. The provider therefore sends 32 volume-down press/release pairs before
+publishing a fresh HID session, and again when reservation activity changes.
+Volume-down clamps at zero; the Mute key is a toggle and could unmute an already
+quiet phone. Reservation activation queues the policy without waiting for
+muting. The existing HID actor applies one press per 100 ms between ordinary
+input events, so the roughly 3.2-second pass does not hold up reservation
+startup or queue touch/keyboard input behind the whole pass. Repeated health
+polls with unchanged activity do not restart it. A full or closed input queue
+reports an error rather than silently dropping the policy. The initial HID
+connection still finishes muting before marking the device ready. An absent
+phone does not hold up provider startup; its next HID connection applies the mute.
+
+Physical output may remain audible briefly during a background pass if someone
+raised the phone's volume after the preceding mute. The release gaps are
+intentional: hardware testing from full volume found that back-to-back presses
+and shorter gaps skip steps, so shortening the sequence does not reliably reach
+zero.
+
+The iPhone 17 Pro Max was tested with device volume at zero and browser audio
+still audible. iOS does not expose absolute volume/readback through the
+CoreDevice audio-output capability on this phone, so this uses bounded key
+presses rather than an absolute setter. Physical buttons and admin hardware
+controls can raise the volume again until the next connection or reservation
+transition. This does not enable Do Not Disturb, restore the previous volume,
+or guarantee that alarms, calls or notifications are silenced.
+
+Run the hardware-free converter check with:
+
+```bash
+cargo test -p backend-ios audio::tests::ffmpeg_converts -- --ignored
+```
+
+With the provider stopped and a mounted DDI, check muting and continued capture:
+
+```bash
+YARD_TEST_IOS_UDID=<udid> cargo test -p backend-ios speaker_muting_preserves_capture -- --ignored
+```
+
+This verifies that activation returns within 100 ms while audio capture
+continues through each background pass. Scheduler tests cover input between
+volume presses and full/closed queue errors. Audible speaker silence still
+needs a physical check.
 
 **Silence is not a stall.** iOS 27 encodes only when the screen changes, so a
 static device goes quiet for up to a minute at a time and ignores keyframe

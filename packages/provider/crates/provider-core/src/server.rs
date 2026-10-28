@@ -491,7 +491,7 @@ where
     }
     let reason = match status {
         AudioStatus::Unavailable(reason) => reason.clone(),
-        _ => "Android audio is restarting".into(),
+        _ => "Device audio is restarting".into(),
     };
     let message = ServerMessage::AudioUnavailable { reason };
     sink.send(Message::Text(serde_json::to_string(&message)?.into()))

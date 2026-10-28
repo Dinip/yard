@@ -384,10 +384,12 @@ Android.
 `VideoDecoder`. The mock backend's video is undecodable filler by design, so
 this is the only hardware-free check on the recovery paths.
 
-### Android audio
+### Device audio
 
-Android sessions announce Opus with `audio.codec`, then carry timestamped
-packets beside video on the same direct provider WebSocket. `BrowserAudio`
+Android and iOS sessions announce Opus with `audio.codec`, then carry timestamped
+packets beside video on the same direct provider WebSocket. Android passes
+scrcpy Opus through; the iOS provider converts CoreDevice AAC-ELD to Opus using
+FFmpeg. `BrowserAudio`
 decodes them with `AudioDecoder` and schedules them through a 48 kHz Web Audio
 context with an 80 ms starting buffer. Matching the source rate avoids
 resampling discontinuities between short Opus buffers. It sheds late packets instead of letting a slow tab play an ever-growing backlog.
@@ -397,7 +399,9 @@ that tab's `GainNode`, and persists locally. The popout uses the saved volume
 without displaying a slider. It never sends `VolumeUp` or `VolumeDown`; those
 remain admin-only hardware controls because they affect the physical device. Playback begins
 after the user interacts with the console so browser autoplay policy is
-satisfied. Canvas recordings remain video-only.
+satisfied. Canvas recordings remain video-only. The iOS provider lowers the
+phone's own volume to zero on connection and reservation transitions; captured
+audio remains audible and the browser slider controls its playback volume.
 
 Video and controls start while audio connects in the background. Until audio is
 ready, the slider is disabled with a small "Connecting audio…" status beneath it.

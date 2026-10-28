@@ -15,9 +15,9 @@
 //! * **Receiver reports.** The `streamConfig` the device returns sets
 //!   `RTCPTimeoutEnabled`, so without a periodic RR the encoder stalls after
 //!   roughly 20–25 s. This is not optional.
-//! * **Audio brought up and then ignored.** Xcode's mirror pairs audio and
-//!   video under one `clientSessionID`, and iOS throttles a lone video client.
-//!   We start the audio stream, keep its RR alive, and never read its payload.
+//! * **Audio paired with video.** Xcode's mirror pairs audio and video under
+//!   one `clientSessionID`, and iOS throttles a lone video client. We keep its
+//!   RR alive and drain it even when browser audio conversion fails.
 //! * **Corrupt access units are dropped whole.** A missing reference does not
 //!   make VideoToolbox raise — it silently renders the mispredicted blocks as a
 //!   mosaic tear that persists until the next IDR.
@@ -48,6 +48,7 @@ use tokio::sync::watch;
 use tokio::time::{interval, MissedTickBehavior};
 use tracing::{debug, info, warn};
 
+use provider_core::audio::AudioPublisher;
 use provider_core::video::{AccessUnit, CodecDescription, VideoGeometry, VideoPublisher};
 
 use crate::hevc::{self, Depacketizer, ParameterSets};
@@ -104,8 +105,8 @@ const FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Everything the RTCP loops need to describe the stream back to the device.
 #[derive(Default)]
-struct RtpStats {
-    packets: AtomicU64,
+pub(crate) struct RtpStats {
+    pub(crate) packets: AtomicU64,
     /// Extended (cycle-shifted) highest sequence number received.
     highest_seq: AtomicU64,
     /// The first sequence number seen, plus one so zero means "not yet set".
@@ -164,6 +165,7 @@ pub async fn run(
     mut handshake: RsdHandshake,
     options: IosOptions,
     publisher: VideoPublisher,
+    audio_publisher: AudioPublisher,
     geometry: Geometry,
 ) -> Result<()> {
     let adapter = &mut adapter;
@@ -274,9 +276,13 @@ pub async fn run(
         stats.clone(),
     ));
 
-    // The payload is still ignored, but the socket is drained: an unread flow
-    // is backpressure on the adapter every other stream shares.
-    tasks.spawn(drain_audio(audio_udp.clone()));
+    let audio_stats = Arc::new(RtpStats::default());
+    tasks.spawn(crate::audio::receive(
+        audio_udp.clone(),
+        audio_answer,
+        audio_publisher,
+        audio_stats.clone(),
+    ));
 
     if let Some(audio) = audio {
         // The audio session has the same RTCPTimeoutInterval as video, and the
@@ -286,7 +292,7 @@ pub async fn run(
             audio.rtcp_port,
             audio.local_ssrc,
             audio.remote_ssrc,
-            Arc::new(RtpStats::default()),
+            audio_stats,
         ));
     }
 
@@ -536,7 +542,7 @@ impl Census {
 
 /// Maintain the extended highest-sequence counter and the loss estimate that
 /// receiver reports carry.
-fn track_sequence(stats: &RtpStats, seq: u16) {
+pub(crate) fn track_sequence(stats: &RtpStats, seq: u16) {
     let _ =
         stats
             .base_seq
@@ -710,26 +716,6 @@ async fn rtcp_liveness(
             // The socket going away means the tunnel did; let the supervisor
             // rebuild rather than spinning here.
             return Err(anyhow!("RTCP send failed: {err}"));
-        }
-    }
-}
-
-/// Read and discard the audio stream.
-///
-/// Xcode's mirror pairs audio with video and iOS throttles a lone video client,
-/// so the stream has to exist; nothing consumes its payload. Leaving it unread
-/// is not the same as not needing it — the datagrams still queue inside the
-/// tunnel adapter, against the same budget video is trying to use.
-async fn drain_audio(socket: Arc<UdpSocketHandle>) -> Result<()> {
-    let mut packets = 0u64;
-    let mut since = Instant::now();
-    loop {
-        socket.recv().await.context("audio RTP recv")?;
-        packets += 1;
-        if since.elapsed() >= Duration::from_secs(1) {
-            debug!(packets, "audio census");
-            packets = 0;
-            since = Instant::now();
         }
     }
 }

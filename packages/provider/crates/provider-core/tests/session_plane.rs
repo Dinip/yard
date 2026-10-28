@@ -879,7 +879,7 @@ async fn the_session_socket_hands_over_a_codec_then_streams_frames() {
 
     let mut keys = 0;
     let mut deltas = 0;
-    for _ in 0..12 {
+    for _ in 0..24 {
         match tokio::time::timeout(Duration::from_secs(5), socket.next())
             .await
             .expect("timed out waiting for a frame")
@@ -889,6 +889,7 @@ async fn the_session_socket_hands_over_a_codec_then_streams_frames() {
             Message::Binary(bytes) => match bytes[0] {
                 yard_protocol::AU_KEY | yard_protocol::AU_KEY_RESET => keys += 1,
                 yard_protocol::AU_DELTA => deltas += 1,
+                yard_protocol::AUDIO_PACKET => {}
                 other => panic!("unknown access-unit type byte {other}"),
             },
             Message::Ping(_) | Message::Text(_) => {}
@@ -902,58 +903,60 @@ async fn the_session_socket_hands_over_a_codec_then_streams_frames() {
 }
 
 #[tokio::test]
-async fn an_android_session_announces_and_streams_opus() {
+async fn ios_and_android_sessions_announce_and_stream_opus() {
     use futures::StreamExt as _;
     use tokio_tungstenite::tungstenite::Message;
 
     let h = start().await;
-    h.sessions
-        .authorize(
-            OTHER_DEVICE,
-            Authorization {
-                reservation_id: RESERVATION.into(),
-                user_id: "user-1".into(),
-                adb_keys: Vec::new(),
-            },
-        )
-        .await;
-    let token = h.signer.token(&h.issuer, OTHER_DEVICE, RESERVATION, 60);
-    let url = format!(
-        "{}/s/{OTHER_DEVICE}?token={token}",
-        h.base.replace("http://", "ws://")
-    );
-    let (mut socket, _) = tokio_tungstenite::connect_async(url).await.unwrap();
+    for device_id in [DEVICE_ID, OTHER_DEVICE] {
+        h.sessions
+            .authorize(
+                device_id,
+                Authorization {
+                    reservation_id: RESERVATION.into(),
+                    user_id: "user-1".into(),
+                    adb_keys: Vec::new(),
+                },
+            )
+            .await;
+        let token = h.signer.token(&h.issuer, device_id, RESERVATION, 60);
+        let url = format!(
+            "{}/s/{device_id}?token={token}",
+            h.base.replace("http://", "ws://")
+        );
+        let (mut socket, _) = tokio_tungstenite::connect_async(url).await.unwrap();
 
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    let mut announced = false;
-    let mut packet = None;
-    while tokio::time::Instant::now() < deadline && !(announced && packet.is_some()) {
-        let next = tokio::time::timeout(Duration::from_secs(1), socket.next())
-            .await
-            .expect("timed out waiting for Android audio")
-            .unwrap()
-            .unwrap();
-        match next {
-            Message::Text(text) => {
-                let message: serde_json::Value = serde_json::from_str(&text).unwrap();
-                if message["type"] == "audio.codec" {
-                    assert_eq!(message["codec"], "opus");
-                    assert_eq!(message["sampleRate"], 48_000);
-                    assert_eq!(message["channels"], 2);
-                    announced = true;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        let mut announced = false;
+        let mut packet = None;
+        while tokio::time::Instant::now() < deadline && !(announced && packet.is_some()) {
+            let next = tokio::time::timeout(Duration::from_secs(1), socket.next())
+                .await
+                .expect("timed out waiting for device audio")
+                .unwrap()
+                .unwrap();
+            match next {
+                Message::Text(text) => {
+                    let message: serde_json::Value = serde_json::from_str(&text).unwrap();
+                    if message["type"] == "audio.codec" {
+                        assert_eq!(message["codec"], "opus");
+                        assert_eq!(message["sampleRate"], 48_000);
+                        assert_eq!(message["channels"], 2);
+                        announced = true;
+                    }
                 }
+                Message::Binary(bytes) if bytes[0] == yard_protocol::AUDIO_PACKET => {
+                    packet = Some(bytes);
+                }
+                _ => {}
             }
-            Message::Binary(bytes) if bytes[0] == yard_protocol::AUDIO_PACKET => {
-                packet = Some(bytes);
-            }
-            _ => {}
         }
-    }
 
-    assert!(announced, "the Opus codec was never announced");
-    let packet = packet.expect("no Opus packet arrived");
-    assert_eq!(packet.len(), 12);
-    assert_eq!(&packet[9..], &[0xf8, 0xff, 0xfe]);
+        assert!(announced, "the Opus codec was never announced");
+        let packet = packet.expect("no Opus packet arrived");
+        assert_eq!(packet.len(), 12);
+        assert_eq!(&packet[9..], &[0xf8, 0xff, 0xfe]);
+    }
 }
 
 #[tokio::test]
@@ -1350,11 +1353,13 @@ async fn two_viewers_share_one_reservation() {
     for socket in [&mut first, &mut second] {
         let mut saw_frame = false;
         for _ in 0..10 {
-            if let Ok(Some(Ok(Message::Binary(_)))) =
+            if let Ok(Some(Ok(Message::Binary(bytes)))) =
                 tokio::time::timeout(Duration::from_secs(5), socket.next()).await
             {
-                saw_frame = true;
-                break;
+                if bytes[0] != yard_protocol::AUDIO_PACKET {
+                    saw_frame = true;
+                    break;
+                }
             }
         }
         assert!(saw_frame, "a viewer connected but received no video");

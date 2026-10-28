@@ -71,6 +71,14 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+      - name: Build the provider's minimal FFmpeg for the conversion test
+        run: |
+          docker build --target ffmpeg-builder -f packages/provider/Dockerfile -t yard-ffmpeg-test .
+          mkdir -p "$RUNNER_TEMP/ffmpeg-bin"
+          printf '%s\n' '#!/bin/sh' 'exec docker run --rm -i --entrypoint ffmpeg yard-ffmpeg-test "$@"' > "$RUNNER_TEMP/ffmpeg-bin/ffmpeg"
+          chmod +x "$RUNNER_TEMP/ffmpeg-bin/ffmpeg"
+          echo "$RUNNER_TEMP/ffmpeg-bin" >> "$GITHUB_PATH"
+      - run: cargo test -p backend-ios audio::tests::ffmpeg_converts -- --ignored
 
   # The wire contract is committed in two languages. This is what makes a schema
   # change that was not regenerated fail the build rather than ship a provider
@@ -90,10 +98,9 @@ jobs:
       # `cargo fmt --check` and this cannot demand different bytes.
       - run: bun run protocol:check
 
-  # amd64 only: the arm64 build differs by runner, not by content. If the two
-  # ever diverge, main catches it before a release does.
+  # Both native architectures catch build differences before merging.
   images:
     uses: ./.github/workflows/images.yml
     with:
       push: false
-      arches: '["amd64"]'
+      arches: '["amd64","arm64"]'
