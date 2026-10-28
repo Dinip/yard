@@ -1,4 +1,23 @@
 # Build context is the repo root.
+FROM debian:bookworm-slim AS ffmpeg-builder
+WORKDIR /build
+
+# Keep Debian's patched source, without the distro binary's video/graphics deps.
+RUN sed -i 's/Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/debian.sources \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends build-essential pkg-config nasm libopus-dev \
+ && apt-get source ffmpeg \
+ && cd ffmpeg-* \
+ && ./configure \
+      --disable-autodetect --disable-everything --disable-network \
+      --disable-doc --disable-debug --disable-ffplay --disable-ffprobe \
+      --disable-avdevice --disable-swscale --disable-postproc \
+      --enable-decoder=aac --enable-demuxer=matroska \
+      --enable-libopus --enable-encoder=libopus --enable-muxer=opus \
+      --enable-protocol=pipe --enable-filter=aresample,aformat,anull \
+ && make -j"$(nproc)" ffmpeg \
+ && install -m 755 ffmpeg /usr/local/bin/ffmpeg
+
 FROM rust:1-bookworm AS builder
 WORKDIR /build
 
@@ -52,12 +71,13 @@ FROM debian:bookworm-slim AS runtime
 
 # ca-certificates is required, not optional: the control plane and the JWKS
 # fetch both use the OS trust store (see reqwest's rustls-native-certs).
-# FFmpeg converts iOS AAC-ELD to the browser's Opus format.
+# FFmpeg's only external codec dependency is libopus.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates adb ffmpeg \
+ && apt-get install -y --no-install-recommends ca-certificates adb libopus0 \
  && rm -rf /var/lib/apt/lists/* \
  && mkdir -p /var/lib/yard/scratch
 
+COPY --from=ffmpeg-builder /usr/local/bin/ffmpeg /usr/local/bin/ffmpeg
 COPY --from=builder /build/target/release/yard-provider /usr/local/bin/yard-provider
 COPY packages/provider/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh

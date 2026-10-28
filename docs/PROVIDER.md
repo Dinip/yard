@@ -411,7 +411,10 @@ and runs FFmpeg to decode them and encode 96 kbps Opus. The browser uses the sam
 remains HEVC passthrough; audio never goes through the coordinator.
 
 Native provider hosts need **FFmpeg with libopus on PATH**. The provider image
-includes it. One converter runs per connected iOS device. Its input queue is
+builds Debian's patched FFmpeg source with only AAC decoding, Matroska input,
+Opus output, pipe I/O and audio conversion filters. Only the FFmpeg binary and
+the libopus runtime are shipped, avoiding the full package's video and graphics
+dependencies. One converter runs per connected iOS device. Its input queue is
 bounded to 16 AUs; a slow converter drops audio rather than delaying the shared
 USB tunnel. Audio receiver reports track the received RTP sequence numbers.
 The converter is killed when the media session ends. Missing FFmpeg, an unknown
