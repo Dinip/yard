@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.7.0](https://github.com/Dinip/yard/compare/v0.6.5...v0.7.0) (2026-10-28)
+
+
+### Features
+
+* **drop:** add iOS sharing and unsigned IPA releases ([#97](https://github.com/Dinip/yard/issues/97)) ([b5b1f2a](https://github.com/Dinip/yard/commit/b5b1f2aba47f674eeeb2f6b248186ff723b7447a))
+* **ios:** stream device audio to browsers ([#101](https://github.com/Dinip/yard/issues/101)) ([729757c](https://github.com/Dinip/yard/commit/729757ccad415dc1ff04277035aade11a19d7543))
+* **maintenance:** add device maintenance and provider draining ([#100](https://github.com/Dinip/yard/issues/100)) ([d7d6bbd](https://github.com/Dinip/yard/commit/d7d6bbd015ec908a964d2915daeff916a35ba8a7))
+
 ## [0.6.5](https://github.com/Dinip/yard/compare/v0.6.4...v0.6.5) (2026-10-15)
 
 
