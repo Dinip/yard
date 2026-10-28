@@ -866,6 +866,11 @@ an error sends no disposition, and an anchor would then navigate the whole tab
 to it — throwing away a live session over a file that cleanup had already
 removed. The iframe absorbs that.
 
+Download frames remain until the page unloads. Attachment responses provide no
+reliable completion event, and removing a frame on a timer cancels requests
+while the provider is still staging a slow file. In particular, the former
+60-second cleanup could abort iOS downloads before any bytes reached the browser.
+
 The cost is that the browser owns the transfer from that point: no progress, no
 completion, no error. The per-file spinner went with it. Minting the token is
 the only part still worth reporting, and it is the only part that still can be.

@@ -227,9 +227,8 @@ export async function streamDeviceFile(deviceId: string, path: string): Promise<
   frame.hidden = true;
   frame.src = url.toString();
   document.body.append(frame);
-  // Long enough for the request to be on the wire; removing it earlier can
-  // cancel the download in some browsers.
-  setTimeout(() => frame.remove(), 60_000);
+  // Attachment responses have no reliable completion event. Keep the frame
+  // until page unload: removing it can cancel a pull still staging on iOS.
 }
 
 export interface InstallResult {
