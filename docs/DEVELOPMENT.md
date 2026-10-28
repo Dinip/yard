@@ -295,7 +295,7 @@ across ecosystems.
 
 | Workflow | Runs on | Does |
 |---|---|---|
-| `pr.yml` | pull requests | lint, typecheck, tests, drift guard, amd64 build of all three images |
+| `pr.yml` | pull requests | lint, typecheck, tests, drift guard, amd64 and arm64 builds of all three images |
 | `edge.yml` | push to `main` touching build inputs | publishes `edge` and `sha-<commit>` |
 | `release.yml` | push to `main` | grooms the release PR; on merge, publishes `1.2.3`, `1.2` and `latest` |
 | `usbmuxd-image.yml` | manual | publishes the requested multi-platform sidecar tags |

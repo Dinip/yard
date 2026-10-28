@@ -98,10 +98,9 @@ jobs:
       # `cargo fmt --check` and this cannot demand different bytes.
       - run: bun run protocol:check
 
-  # amd64 only: the arm64 build differs by runner, not by content. If the two
-  # ever diverge, main catches it before a release does.
+  # Both native architectures catch build differences before merging.
   images:
     uses: ./.github/workflows/images.yml
     with:
       push: false
-      arches: '["amd64"]'
+      arches: '["amd64","arm64"]'
