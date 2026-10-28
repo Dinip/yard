@@ -125,8 +125,7 @@ export function DeviceConsole({
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [browserVolume, setBrowserVolume] = useState(loadBrowserVolume);
-  const browserAudio = platform === "android" || platform === "ios";
-  const session = useDeviceSession(deviceId, canvasRef, active, browserAudio, browserVolume / 100);
+  const session = useDeviceSession(deviceId, canvasRef, active, true, browserVolume / 100);
 
   const changeBrowserVolume = (volume: number) => {
     setBrowserVolume(volume);
@@ -478,7 +477,7 @@ export function DeviceConsole({
       // portrait device leaves the horizontal space empty anyway, and every row
       // of controls below the screen is a row of screen nobody gets.
       className={cn("flex min-h-0 gap-3", className)}
-      onPointerDownCapture={browserAudio ? session.activateAudio : undefined}
+      onPointerDownCapture={session.activateAudio}
       onDragOver={(event) => {
         event.preventDefault();
         setDragging(true);
@@ -512,14 +511,12 @@ export function DeviceConsole({
                 ))}
               </div>
             ))}
-            {browserAudio && (
-              <BrowserVolume
-                volume={browserVolume}
-                available={active && session.audioAvailable}
-                warning={session.audioWarning}
-                onChange={changeBrowserVolume}
-              />
-            )}
+            <BrowserVolume
+              volume={browserVolume}
+              available={active && session.audioAvailable}
+              warning={session.audioWarning}
+              onChange={changeBrowserVolume}
+            />
           </div>
         </SidePanel>
       )}
