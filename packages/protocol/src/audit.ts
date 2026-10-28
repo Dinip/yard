@@ -37,6 +37,7 @@ export const AUDIT_ACTIONS = [
   { value: "device.session_request_denied", label: "Join denied", group: "Sessions" },
 
   // Things done to a device.
+  { value: "device.maintenance", label: "Device maintenance changed", group: "Devices" },
   { value: "device.install", label: "Installs", group: "Devices" },
   { value: "device.preload", label: "Preloaded apps", group: "Devices" },
   { value: "device.preload.remove", label: "Preload removals", group: "Devices" },
@@ -56,6 +57,7 @@ export const AUDIT_ACTIONS = [
   { value: "user.adb_key.remove", label: "adb key removed", group: "Administration" },
 
   // Administration.
+  { value: "provider.draining", label: "Provider draining changed", group: "Administration" },
   { value: "provider.create", label: "Provider created", group: "Administration" },
   { value: "provider.update", label: "Provider updated", group: "Administration" },
   { value: "provider.delete", label: "Provider deleted", group: "Administration" },

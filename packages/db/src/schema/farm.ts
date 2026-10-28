@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  boolean,
   index,
   integer,
   jsonb,
@@ -63,6 +64,7 @@ export const provider = pgTable("provider", {
   hostname: text("hostname"),
   version: text("version"),
   status: providerStatusEnum("status").notNull().default("offline"),
+  draining: boolean("draining").notNull().default(false),
   lastSeenAt: timestamp("last_seen_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -123,6 +125,7 @@ export const device = pgTable(
     batteryLevel: real("battery_level"),
     batteryState: text("battery_state"),
     status: deviceStatusEnum("status").notNull().default("absent"),
+    maintenanceReason: text("maintenance_reason"),
     /** e.g. "hev1.1.6.L93.B0" or "avc1.640028" — handed to the browser's VideoDecoder. */
     streamCodec: text("stream_codec"),
     /** Port on the provider host exposing an adb transport, when requested. */

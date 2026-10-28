@@ -115,6 +115,16 @@ function DevicePage() {
     }),
   );
 
+  const setMaintenance = useMutation(
+    trpc.device.setMaintenance.mutationOptions({
+      onSuccess: () => {
+        toast.success("Maintenance updated");
+        invalidate();
+      },
+      onError: (e) => toast.error(e.message),
+    }),
+  );
+
   const release = useMutation(
     trpc.device.release.mutationOptions({
       onMutate: () => {
@@ -220,6 +230,8 @@ function DevicePage() {
     });
 
   if (!device) return null;
+  const reservationsPaused =
+    device.provider.draining || (device.maintenanceReason !== null && !me?.isAdmin);
 
   return (
     // Locked to the viewport, so the screen gets every pixel the header and the
@@ -274,7 +286,16 @@ function DevicePage() {
           {platformLabel(device.platform)} {device.osVersion} · {device.model} ·{" "}
           {device.provider.name}
         </p>
-        <Badge variant="outline">{device.status}</Badge>
+        <Badge
+          variant="outline"
+          className={
+            device.maintenanceReason !== null
+              ? "border-warning/30 bg-warning/15 text-warning"
+              : undefined
+          }
+        >
+          {device.maintenanceReason !== null ? "maintenance" : device.status}
+        </Badge>
         {mine && device.reservation && device.reservation.observers.length > 0 && (
           <Badge variant="outline" className="border-warning/30 bg-warning/15 text-warning">
             {describeObservers(device.reservation.observers)} in this session
@@ -285,6 +306,14 @@ function DevicePage() {
           <Badge variant="outline">{device.reservation.joinRequests.length} waiting to join</Badge>
         )}
         <div className="flex-1" />
+        {me?.isAdmin && (
+          <MaintenanceDialog
+            key={device.maintenanceReason}
+            reason={device.maintenanceReason}
+            pending={setMaintenance.isPending}
+            onConfirm={(reason) => setMaintenance.mutate({ deviceId, reason })}
+          />
+        )}
         {/* A page action rather than a device one, so it sits with Release
             instead of in the rail: it is about this window, not the phone. */}
         {inSession && !poppedOut && (
@@ -381,6 +410,16 @@ function DevicePage() {
         ) : null}
       </div>
 
+      {(device.maintenanceReason || device.provider.draining) && (
+        <div className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-sm">
+          {device.maintenanceReason && (
+            <p className="break-words">Maintenance: {device.maintenanceReason}</p>
+          )}
+          {device.provider.draining && <p>Provider draining. New reservations are paused.</p>}
+          <p className="text-muted-foreground">Existing sessions can continue until released.</p>
+        </div>
+      )}
+
       <div className="flex min-h-0 flex-1 gap-3">
         {/* No card around the screen: its border and padding were a frame
             around the one thing on the page that wants the room. */}
@@ -401,20 +440,34 @@ function DevicePage() {
                 <Smartphone className="size-8 text-muted-foreground/50" />
                 <div className="grid gap-1">
                   <p className="font-medium text-base text-foreground">
-                    {device.status === "cleaning" ? "Being cleaned" : "This device is free"}
+                    {reservationsPaused
+                      ? "Unavailable for new reservations"
+                      : device.status === "cleaning"
+                        ? "Being cleaned"
+                        : device.maintenanceReason !== null
+                          ? "Available for admin maintenance"
+                          : "This device is free"}
                   </p>
                   <p>
-                    {device.status === "cleaning"
-                      ? "It is being reset after its last session, and will be available in a moment."
-                      : "Reserve it to open a session and start streaming."}
+                    {reservationsPaused
+                      ? "An administrator has paused new reservations."
+                      : device.status === "cleaning"
+                        ? "It is being reset after its last session, and will be available in a moment."
+                        : device.maintenanceReason !== null
+                          ? "As an administrator, you can use this device without ending maintenance."
+                          : "Reserve it to open a session and start streaming."}
                   </p>
                 </div>
                 <Button
                   size="lg"
-                  disabled={reserve.isPending || device.status === "cleaning"}
+                  disabled={reserve.isPending || reservationsPaused || device.status === "cleaning"}
                   onClick={() => reserve.mutate({ deviceId })}
                 >
-                  {device.status === "cleaning" ? "Being cleaned" : "Reserve this device"}
+                  {device.status === "cleaning"
+                    ? "Being cleaned"
+                    : device.maintenanceReason !== null && me?.isAdmin
+                      ? "Use for maintenance"
+                      : "Reserve this device"}
                 </Button>
               </div>
             )}
@@ -827,6 +880,77 @@ function RemoteDebugging({
         </Button>
       )}
     </div>
+  );
+}
+
+function MaintenanceDialog({
+  reason,
+  pending,
+  onConfirm,
+}: {
+  reason: string | null;
+  pending: boolean;
+  onConfirm: (reason: string | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState(reason ?? "");
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="outline" size="sm">
+          Maintenance
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Device maintenance</DialogTitle>
+          <DialogDescription>
+            Pause new reservations with a reason everyone can see. Existing sessions continue until
+            released. Ending maintenance allows reservations when the device is ready and its
+            provider is accepting them.
+          </DialogDescription>
+        </DialogHeader>
+        <form
+          className="grid gap-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            onConfirm(draft.trim());
+            setOpen(false);
+          }}
+        >
+          <div className="grid gap-2">
+            <Label htmlFor="maintenance-reason">Reason</Label>
+            <Input
+              id="maintenance-reason"
+              required
+              maxLength={1000}
+              value={draft}
+              placeholder="USB connection needs repair"
+              onChange={(event) => setDraft(event.target.value)}
+            />
+          </div>
+          <DialogFooter>
+            {reason !== null && (
+              <Button
+                type="button"
+                variant="outline"
+                disabled={pending}
+                onClick={() => {
+                  onConfirm(null);
+                  setOpen(false);
+                }}
+              >
+                End maintenance
+              </Button>
+            )}
+            <Button type="submit" disabled={pending || !draft.trim()}>
+              {reason === null ? "Start maintenance" : "Save reason"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 

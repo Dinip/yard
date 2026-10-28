@@ -94,10 +94,11 @@ v11, fetch adapter, mounted at `/api/trpc`. Three procedure levels in
 | `user` | `adbKeys.list`/`add`/`remove` | ✅ |
 | `user` | `changelog.viewed`/`markViewed` | ✅ |
 | `device` | `list`, `get`, `reserve`, `renew`, `release`, `myReservations` | ✅ |
+| `device` | `setMaintenance` (admin) | ✅ |
 | `device` | `sessionToken`, `apps`, `launch`, `uninstall`, `reboot`, `rotate`, `adbExpose`, `adbUnexpose` | ✅ |
 | `device` | `requestJoin`, `cancelJoinRequest`, `answerJoinRequest`, `myJoinRequest`, `leaveSession` | ✅ |
 | `device` | `answerAdbAuthRequest` | ✅ |
-| `provider` | `list`, `create`, `update`, `remove`, `restartDevice` | ✅ |
+| `provider` | `list`, `create`, `update`, `setDraining`, `remove`, `restartDevice` | ✅ |
 | `provider` | `tokens.list`/`create`/`revoke` | ✅ |
 | `admin` | `users`, `forceRelease`, `joinSession`, `audit` | ✅ |
 | `stream` | `devices` — live inventory updates over SSE | ✅ |
@@ -107,6 +108,25 @@ by invalidating `device.list`, so what they render always came from one
 consistent read. That costs an extra round trip per change and removes an entire
 class of "the UI drifted from the database" bugs. The SPA falls back to 5s
 polling when the stream is not connected, and labels which mode it is in.
+
+### Maintenance and draining
+
+`device.setMaintenance` takes a non-empty, trimmed `reason` of up to 1000
+characters, or `null` to end maintenance. `provider.setDraining` takes a boolean.
+Both require an admin, write an audit row, and publish an inventory revision.
+The database holds both policies independently of provider-reported status.
+
+`device.reserve` checks these policies after the same-user renewal path, then
+checks them again in the reservation insert. A maintained device refuses new
+reservations by non-admins with `PRECONDITION_FAILED`. Admins can reserve and use
+it without clearing maintenance, subject to ordinary availability and reservation
+exclusivity. A draining provider refuses new reservations by everyone, including
+admins. Existing holders can renew, open a popout, and request session tokens.
+Release and cleanup leave policy unchanged.
+
+`provider.list` includes `draining` and `activeReservationCount`. Draining remains
+enabled when the count reaches zero and across reconnects and coordinator
+restarts. It does not stop the provider or impose a deadline on existing sessions.
 
 ### Being in someone else's session
 

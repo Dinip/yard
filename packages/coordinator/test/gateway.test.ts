@@ -131,6 +131,56 @@ describe("provider gateway", () => {
     await fake.close();
   });
 
+  test("maintenance and draining survive status updates, missing inventory, and reconnects", async () => {
+    const target = devices[0]!.id;
+    const admin = caller(USER_A, "admin");
+    const fake = connectFake();
+    await fake.connect();
+    try {
+      await admin.device.setMaintenance({ deviceId: target, reason: "Replace USB cable" });
+      await admin.provider.setDraining({ id: PROVIDER_ID, draining: true });
+      fake.upsertDevice({ ...devices[0]!, status: "ready", note: "Provider note" });
+      fake.setDeviceStatus(target, "ready", "Healthy again");
+      await Bun.sleep(150);
+      expect(await admin.device.get({ id: target })).toMatchObject({
+        maintenanceReason: "Replace USB cable",
+        status: "ready",
+        provider: { draining: true },
+      });
+    } finally {
+      await fake.close();
+    }
+
+    const empty = connectFake({ devices: [] });
+    await empty.connect();
+    try {
+      expect(await admin.device.get({ id: target })).toMatchObject({
+        maintenanceReason: "Replace USB cable",
+        status: "absent",
+        provider: { draining: true },
+      });
+    } finally {
+      await empty.close();
+    }
+
+    const reconnected = connectFake();
+    await reconnected.connect();
+    try {
+      expect(await admin.device.get({ id: target })).toMatchObject({
+        maintenanceReason: "Replace USB cable",
+        status: "ready",
+        provider: { draining: true },
+      });
+      await expect(caller(USER_B).device.reserve({ deviceId: target })).rejects.toMatchObject({
+        code: "PRECONDITION_FAILED",
+      });
+    } finally {
+      await admin.device.setMaintenance({ deviceId: target, reason: null });
+      await admin.provider.setDraining({ id: PROVIDER_ID, draining: false });
+      await reconnected.close();
+    }
+  });
+
   test("hello preload metadata is only visible on the admin preload page", async () => {
     const target = devices[1]!.id;
     const fake = connectFake({
