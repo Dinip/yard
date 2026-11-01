@@ -277,6 +277,12 @@ task is spawned, aborted on shutdown, and fatal if it returns.
 
 ## `backend-ios`
 
+The standalone [remote Xcode PoC](../packages/provider/scripts/ios-remote/README.md)
+tests native developer-Mac pairing and debugging over a separate Wi-Fi relay
+while this backend keeps browser media/input on USB. It runs outside the
+provider and does not enforce reservations. Native iOS remote debugging is not
+implemented by the backend's Android-specific `remote_debug` interface.
+
 ```
 crates/backend-ios/src/
 ├── device.rs    tunnel + session supervision (one rebuild loop)

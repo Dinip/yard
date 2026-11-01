@@ -202,6 +202,20 @@ pre-populate the directory with `Image.dmg`, `BuildManifest.plist` and
 `/Library/Developer/CoreDevice/CandidateDDIs/iOS_DDI.dmg`. See
 [PROVIDER.md](PROVIDER.md#the-developer-disk-image).
 
+## Remote Xcode lab PoC
+
+[The two-machine runbook](../packages/provider/scripts/ios-remote/README.md)
+packages a standalone Linux relay and Mac helper for testing local Xcode against
+a YARD iPhone while browser control stays on USB. It includes the native remote
+first-pairing flow, development TCP/UDP relays and a results template. Python
+3.11+ is required; there are no Python package dependencies. Linux also needs
+Avahi, system D-Bus and libsystemd for phone-side discovery and publication.
+
+Reserve the phone manually and stop the scripts before releasing it. This PoC
+does not enforce reservations and is not part of the provider binary or Compose
+deployment. Its first gates are fresh-Mac pairing using only browser input,
+native Xcode install/debug and simultaneous browser control.
+
 ## Everyday commands
 
 ```bash
