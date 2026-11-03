@@ -37,9 +37,77 @@ behind the same NAT. Apple trust persists after a relay stops.
   These are observed ports, not a guaranteed Apple range. The two hops must use
   the same range. The development relay only needs unicast across the VPN.
 
-No system service, routing, firewall, hosts-file or Apple daemon configuration
-is changed by the scripts. Only foreground listeners and temporary Bonjour
-records are created.
+The pairing/development relays only create foreground listeners and temporary
+Bonjour records. The optional hotspot script below changes runtime network and
+firewall state on Linux. Neither changes Apple daemon configuration.
+
+## Optional: host the phone Wi-Fi on the provider
+
+Use [hotspot.py](hotspot.py) if the provider's Ethernet and the existing device
+Wi-Fi cannot communicate. Run it **on Linux, outside Docker**. It creates a
+hidden, password-protected WPA2 AP on the unused Wi-Fi adapter, with DHCP/DNS and
+IPv4 internet sharing through Ethernet. USB remains connected for YARD control.
+
+Prerequisites: Python 3.11+, a running NetworkManager managing the Wi-Fi adapter,
+an AP-capable driver, `ip`, `dnsmasq`, `iptables` and `ip6tables`. On an existing
+NetworkManager-based Debian/Ubuntu/Raspberry Pi OS host, the packages are
+`python3`, `network-manager`, `iproute2`, `dnsmasq-base` and `iptables`. The script
+does not install packages, start services or change network managers. Do not
+switch a remote server's network manager just for this test. Ethernet must
+already provide internet access, and Wi-Fi must be disconnected and available.
+
+Find the actual interface names with `nmcli device status`, then run:
+
+```sh
+sudo python3 hotspot.py up --wifi wlan0 --uplink eth0 --ssid YARD-Test
+```
+
+The password is prompted twice, without echo or shell-history exposure. Use
+8–63 printable ASCII characters. The AP uses 2.4 GHz for adapter compatibility;
+actual NUC/Pi driver support still needs a hardware test. A hidden SSID does not
+add security; WPA2 and the password protect access. Its PSK is stored root-only
+under `/run/NetworkManager/system-connections/` for the life of the test.
+
+In the YARD browser, open iPhone Settings → Wi-Fi → Other…, enter `YARD-Test`,
+choose WPA2 and enter the password. The provider's AP IP is `10.77.0.1`; inspect
+the phone's Wi-Fi settings for its DHCP address, or run `ip neigh show dev wlan0`
+on Linux. Use these values in the relay commands below:
+
+```sh
+PHONE_INTERFACE=wlan0
+LAB_PHONE_SIDE_IP=10.77.0.1
+PHONE_IP=10.77.0.5  # replace with the phone's actual DHCP address
+```
+
+`LAB_RELAY_IP` remains the provider's Ethernet/VPN IP reachable from the Mac.
+The AP permits phone-side DHCP, DNS, mDNS and TCP 55732 for pairing; the provider
+can initiate Xcode traffic to the phone. It blocks other phone-initiated host
+services, forwarding to private/shared/link-local IPv4 ranges, directly
+connected IPv4 networks and all IPv6 forwarding. IPv6 link-local discovery stays
+available. AP client isolation is requested; use one test phone initially.
+
+If your company uses public IPv4 ranges internally, block them explicitly with
+repeatable `--block-cidr CIDR` options. The script cannot infer all corporate
+routes. Choose another private `/24` with `--address 10.78.0.1/24` if the default
+overlaps an existing route. Internet DNS uses the host's upstream resolver.
+
+Stop the relays first, then remove the AP:
+
+```sh
+sudo python3 hotspot.py down
+```
+
+Startup installs its firewall rules before activating Wi-Fi and rolls back on
+failure. Teardown stops the AP before removing those rules. The profile does
+not autoconnect and lives under `/run`, so it is not restored after reboot. The
+script preserves existing Ethernet profiles and removes only its own connection
+and firewall chains. It does not restore global forwarding sysctls enabled by
+NetworkManager's shared mode. Existing host firewall policy can still block
+traffic; do not disable it globally. Stop this test before Docker/firewall
+reloads, which can invalidate its runtime guards. This is a lab setup, not
+production firewall management or a way to extend the corporate device VLAN.
+
+## Relay addresses and file transfer
 
 The example addresses below are placeholders:
 
@@ -258,7 +326,7 @@ not contact a phone or start native Apple development services:
 
 ```sh
 cd /path/to/ios-remote
-python3 -B -m unittest -v test_bridge test_pairing
+python3 -B -m unittest -v test_bridge test_pairing test_hotspot
 ```
 
 On the **Linux test host**, opt into the Avahi integration check separately. It

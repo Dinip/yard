@@ -207,7 +207,8 @@ pre-populate the directory with `Image.dmg`, `BuildManifest.plist` and
 [The two-machine runbook](../packages/provider/scripts/ios-remote/README.md)
 packages a standalone Linux relay and Mac helper for testing local Xcode against
 a YARD iPhone while browser control stays on USB. It includes the native remote
-first-pairing flow, development TCP/UDP relays and a results template. Python
+first-pairing flow, development TCP/UDP relays, a results template and an optional
+temporary NetworkManager hotspot for Ethernet-connected Linux hosts. Python
 3.11+ is required; there are no Python package dependencies. Linux also needs
 Avahi, system D-Bus and libsystemd for phone-side discovery and publication.
 
