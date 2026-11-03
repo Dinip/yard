@@ -42,7 +42,13 @@ services:
       ENABLE_EMAIL_PASSWORD: ${ENABLE_EMAIL_PASSWORD:-false}
       SESSION_TOKEN_PRIVATE_KEY: ${SESSION_TOKEN_PRIVATE_KEY:-}
     healthcheck:
-      test: ["CMD", "bun", "-e", "await fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1))"]
+      test:
+        [
+          "CMD",
+          "bun",
+          "-e",
+          "await fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1))",
+        ]
       interval: 15s
       timeout: 5s
       retries: 5
