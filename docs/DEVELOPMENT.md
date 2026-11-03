@@ -404,6 +404,8 @@ opens its HTTP listener; the `migrate-auth` CLI is optional.
 
 - **Formatting and linting**: biome. 2-space indent, double quotes, 100 cols,
   trailing commas. `bun run check:fix` before committing.
+  YAML formatting is enabled. Markdown formatting is disabled in `biome.json`
+  to preserve the existing documentation and release changelog.
 - **Imports**: `.ts`/`.tsx` extensions on relative imports (bun resolves them
   natively); `@/` alias inside `packages/web`.
 - **Migrations are generated, never hand-written.** Edit the schema, run

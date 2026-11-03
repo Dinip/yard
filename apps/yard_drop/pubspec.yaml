@@ -1,10 +1,10 @@
 name: yard_drop
-description: 'YARD Drop: the YARD - Device Farm share companion.'
+description: "YARD Drop: the YARD - Device Farm share companion."
 publish_to: none
 version: 0.7.0
 environment:
   sdk: ^3.12.2
-  flutter: '>=3.44.9'
+  flutter: ">=3.44.9"
 dependencies:
   flutter:
     sdk: flutter
