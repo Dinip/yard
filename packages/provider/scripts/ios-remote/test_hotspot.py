@@ -12,11 +12,26 @@ import hotspot
 
 CONFIG = dict(
     uuid="c36356dd-8144-4848-a86f-bbe9fc071626", wifi="wlan0", uplink="eth0",
-    address="10.77.0.1/24", blocked=list(hotspot.BLOCKED) + ["198.18.0.0/16"],
+    address="10.77.0.1/24", blocked=list(hotspot.BLOCKED) + ["198.18.0.0/16"], band="bg",
 )
 
 
 class HotspotTests(unittest.TestCase):
+    def test_selected_band_reaches_networkmanager_profile(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(hotspot, "STATE", Path(directory) / "state"), patch.object(hotspot, "PROFILE", Path(directory) / "profile"):
+                for band, expected in (("2.4ghz", "bg"), ("5ghz", "a")):
+                    with self.subTest(band=band):
+                        args = SimpleNamespace(wifi="wlan0", uplink="eth0", ssid="YARD-Test", address="10.77.0.1/24", block_cidr=[], band=band)
+                        with patch.object(hotspot, "output", side_effect=[
+                            "wired", "wifi", "yes", "30 (disconnected)", '[{"flags": ["UP"]}]', "[]",
+                        ]), patch.object(hotspot, "rule_exists", return_value=False):
+                            config = hotspot.prepare(args)
+                        settings = hotspot.profile(config, args.ssid, "a-test-password").splitlines()
+                        self.assertIn(f"band={expected}", settings)
+                        self.assertIn("hidden=true", settings)
+                        self.assertIn("method=shared", settings)
+
     def test_private_profile_never_stores_plain_passphrase_or_autoconnects(self):
         content = hotspot.profile(CONFIG, "YARD Test", "a-test-password")
         self.assertNotIn("a-test-password", content)
@@ -43,7 +58,7 @@ class HotspotTests(unittest.TestCase):
         self.assertEqual(next(chain[2] for chain in chains if chain[1] == "YARD_WIFI6_FWD"), [["-j", "DROP"]])
 
     def test_overlap_refuses_before_any_firewall_change(self):
-        args = SimpleNamespace(wifi="wlan0", uplink="eth0", ssid="YARD-Test", address="10.77.0.1/24", block_cidr=[])
+        args = SimpleNamespace(wifi="wlan0", uplink="eth0", ssid="YARD-Test", address="10.77.0.1/24", block_cidr=[], band="2.4ghz")
         with tempfile.TemporaryDirectory() as directory:
             with patch.object(hotspot, "STATE", Path(directory) / "state"), patch.object(hotspot, "PROFILE", Path(directory) / "profile"):
                 with patch.object(hotspot, "output", side_effect=[
@@ -55,7 +70,7 @@ class HotspotTests(unittest.TestCase):
                     run.assert_not_called()
 
     def test_active_wifi_is_not_replaced(self):
-        args = SimpleNamespace(wifi="wlan0", uplink="eth0", ssid="YARD-Test", address="10.77.0.1/24", block_cidr=[])
+        args = SimpleNamespace(wifi="wlan0", uplink="eth0", ssid="YARD-Test", address="10.77.0.1/24", block_cidr=[], band="2.4ghz")
         with tempfile.TemporaryDirectory() as directory:
             with patch.object(hotspot, "STATE", Path(directory) / "state"), patch.object(hotspot, "PROFILE", Path(directory) / "profile"):
                 with patch.object(hotspot, "output", side_effect=["wired", "wifi", "yes", "100 (connected)"]), patch.object(hotspot, "run") as run:
@@ -63,7 +78,7 @@ class HotspotTests(unittest.TestCase):
                         hotspot.prepare(args)
                     run.assert_not_called()
 
-    def test_failed_activation_stops_ap_before_removing_guards(self):
+    def test_failed_5ghz_activation_stops_ap_before_removing_guards(self):
         events = []
 
         def command(*args, **kwargs):
@@ -75,11 +90,11 @@ class HotspotTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             state, profile = Path(directory) / "state", Path(directory) / "profile"
             with patch.object(hotspot, "STATE", state), patch.object(hotspot, "PROFILE", profile):
-                with patch.object(hotspot, "prepare", return_value=CONFIG), patch.object(hotspot.getpass, "getpass", return_value="a-test-password"):
+                with patch.object(hotspot, "prepare", return_value=dict(CONFIG, band="a")), patch.object(hotspot.getpass, "getpass", return_value="a-test-password"):
                     with patch.object(hotspot, "install_firewall", side_effect=lambda _: events.append("guards")), patch.object(hotspot, "remove_firewall", side_effect=lambda _: events.append("unguard")):
                         with patch.object(hotspot, "run", side_effect=command), patch.object(hotspot, "output", side_effect=[CONFIG["uuid"], "", CONFIG["uuid"]]):
                             with self.assertRaises(subprocess.CalledProcessError):
-                                hotspot.start(SimpleNamespace(ssid="YARD-Test"))
+                                hotspot.start(SimpleNamespace(ssid="YARD-Test", band="5ghz"))
             self.assertLess(events.index("guards"), next(i for i, event in enumerate(events) if isinstance(event, tuple) and "up" in event))
             self.assertLess(next(i for i, event in enumerate(events) if isinstance(event, tuple) and "down" in event), events.index("unguard"))
             self.assertFalse(state.exists())

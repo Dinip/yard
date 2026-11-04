@@ -117,7 +117,7 @@ autoconnect=false
 mode=ap
 ssid={escaped_ssid}
 hidden=true
-band=bg
+band={config['band']}
 ap-isolation=1
 security=802-11-wireless-security
 
@@ -175,7 +175,10 @@ def prepare(args):
             raise ValueError(f"AP subnet overlaps {network} on {route.get('dev', '?')}; choose another --address.")
         if route.get("scope") == "link" and network.prefixlen > 1:
             blocked.add(str(network))
-    config = dict(uuid=str(uuid.uuid4()), wifi=args.wifi, uplink=args.uplink, address=str(address), blocked=sorted(blocked))
+    config = dict(
+        uuid=str(uuid.uuid4()), wifi=args.wifi, uplink=args.uplink, address=str(address),
+        blocked=sorted(blocked), band={"2.4ghz": "bg", "5ghz": "a"}[args.band],
+    )
     for binary, chain, _, _ in firewall(config):
         if rule_exists(binary, "-w", "5", "-S", chain):
             raise ValueError(f"Firewall chain {chain} already exists; refusing to replace it.")
@@ -223,7 +226,7 @@ def start(args):
         except (OSError, RuntimeError, subprocess.SubprocessError) as error:
             print(f"Cleanup incomplete; guards/state retained where possible. Retry 'down': {error}", file=sys.stderr)
         raise
-    print(f"Hidden WPA2 hotspot {args.ssid!r} is up on {args.wifi}; provider IP: {config['address']}.")
+    print(f"Hidden WPA2 hotspot {args.ssid!r} is up on {args.wifi} ({args.band}); provider IP: {config['address']}.")
     print("Join from iPhone Settings → Wi-Fi → Other… → WPA2; enter the SSID and password.")
     print(f"Find its address with: ip neigh show dev {args.wifi}")
     print("Temporary profile: no autostart; run this script with 'down' before reboot/firewall maintenance.")
@@ -236,6 +239,7 @@ def main():
     up.add_argument("--wifi", required=True, help="Unused NetworkManager Wi-Fi interface, e.g. wlan0")
     up.add_argument("--uplink", required=True, help="Internet-facing Ethernet interface, e.g. eth0")
     up.add_argument("--ssid", default="YARD-Test")
+    up.add_argument("--band", choices=("2.4ghz", "5ghz"), default="2.4ghz", help="AP frequency band; requires adapter/driver AP support (default: 2.4ghz)")
     up.add_argument("--address", default="10.77.0.1/24", help="Provider's private /24 AP address")
     up.add_argument("--block-cidr", action="append", default=[], help="Additional company IPv4 network to block; repeatable")
     actions.add_parser("down", help="Stop this script's hotspot and remove its runtime profile/firewall rules")

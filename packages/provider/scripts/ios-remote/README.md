@@ -63,10 +63,33 @@ sudo python3 hotspot.py up --wifi wlan0 --uplink eth0 --ssid YARD-Test
 ```
 
 The password is prompted twice, without echo or shell-history exposure. Use
-8–63 printable ASCII characters. The AP uses 2.4 GHz for adapter compatibility;
-actual NUC/Pi driver support still needs a hardware test. A hidden SSID does not
-add security; WPA2 and the password protect access. Its PSK is stored root-only
-under `/run/NetworkManager/system-connections/` for the life of the test.
+8–63 printable ASCII characters. The AP defaults to 2.4 GHz for adapter
+compatibility. To test 5 GHz, stop an existing hotspot first and recreate it:
+
+```sh
+sudo python3 hotspot.py down
+sudo python3 hotspot.py up --wifi wlan0 --uplink eth0 --ssid YARD-Test --band 5ghz
+```
+
+`--band 5ghz` selects NetworkManager's `a` frequency band; it does not force the
+802.11ac (Wi-Fi 5) standard or a particular channel width. The negotiated
+standard depends on the adapter, driver and phone. Channel selection is left
+to NetworkManager. The host must have the correct Wi-Fi country configured,
+and its driver must permit AP operation on that band/channel. No regulatory
+restrictions are overridden and there is no automatic fallback to 2.4 GHz.
+An activation failure uses the same rollback as other startup failures.
+
+The [Pi 5 has dual-band 802.11ac hardware](https://www.raspberrypi.com/products/raspberry-pi-5/),
+but actual AP operation needs a hardware test. For an Intel-radio NUC, the
+[Linux iwlwifi documentation](https://wireless.docs.kernel.org/en/latest/en/users/drivers/iwlwifi.html#features)
+lists 2.4 GHz AP support and no 5 GHz AP support for devices driven by iwlmvm.
+Check the NUC's actual adapter/driver before expecting 5 GHz hosting to work.
+The [NetworkManager band documentation](https://www.networkmanager.dev/docs/api/latest/settings-802-11-wireless.html)
+also makes band selection dependent on driver support.
+
+A hidden SSID does not add security; WPA2 and the password protect access. Its
+PSK is stored root-only under `/run/NetworkManager/system-connections/` for the
+life of the test.
 
 In the YARD browser, open iPhone Settings → Wi-Fi → Other…, enter `YARD-Test`,
 choose WPA2 and enter the password. The provider's AP IP is `10.77.0.1`; inspect
