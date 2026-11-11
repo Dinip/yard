@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.1](https://github.com/Dinip/yard/compare/v0.7.0...v0.7.1) (2026-11-11)
+
+
+### Bug Fixes
+
+* **install:** explain incompatible app packages before installing ([#104](https://github.com/Dinip/yard/issues/104)) ([7658a01](https://github.com/Dinip/yard/commit/7658a01321091815773a51166481e1ff7d79c231))
+
 ## [0.7.0](https://github.com/Dinip/yard/compare/v0.6.5...v0.7.0) (2026-10-28)
 
 
