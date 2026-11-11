@@ -40,8 +40,9 @@ jobs:
 
   # release-please updates Cargo.toml but not Cargo.lock: its rust strategy
   # cannot read a virtual workspace whose members inherit `version.workspace`,
-  # so the lockfile's own copy of those versions is left behind.
-  cargo-lock:
+  # so the lockfile's own copy of those versions is left behind. Its YAML
+  # updater also rewrites pubspec.yaml quoting, which Biome must format again.
+  release-files:
     needs: release-please
     if: needs.release-please.outputs.branch != ''
     runs-on: ubuntu-latest
@@ -51,12 +52,17 @@ jobs:
           ref: ${{ needs.release-please.outputs.branch }}
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo update --workspace
-      - name: Commit the lockfile
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - run: bunx --no-install biome format --write apps/yard_drop/pubspec.yaml
+      - name: Commit the release files
         run: |
-          git diff --quiet Cargo.lock && exit 0
+          git diff --quiet Cargo.lock apps/yard_drop/pubspec.yaml && exit 0
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "chore: sync Cargo.lock" Cargo.lock
+          git commit -m "chore: sync release files" Cargo.lock apps/yard_drop/pubspec.yaml
           git push
 
   images:

@@ -366,15 +366,18 @@ release-please bootstraps rather than bumping, and its default first version is
 One version covers everything — the four `package.json` files, the Cargo
 workspace and the Flutter `pubspec.yaml` all move together, since they only ever
 ship as a set. The companion is versioned with the farm rather than on its own
-because it depends on browser and provider behaviour from the same commit. Two mechanical
+because it depends on browser and provider behaviour from the same commit. Three mechanical
 notes on how that is kept true:
 
 - `Cargo.lock` records each workspace member's version, and release-please can't
   update it (its Rust support cannot read a virtual workspace whose members
-  inherit `version.workspace`). The `cargo-lock` job in `release.yml` runs
+  inherit `version.workspace`). The `release-files` job in `release.yml` runs
   `cargo update --workspace` on the release branch and commits the result.
 - `bun.lock` records workspace versions too, but `--frozen-lockfile` does not
   check them, so nothing needs to touch it.
+- `pubspec.yaml` is rewritten by release-please's YAML updater. The same
+  `release-files` job runs Biome on it after each update and commits the
+  formatting alongside `Cargo.lock`.
 
 `release-please-config.json` is the config; `.release-please-manifest.json` is
 release-please's record of the current version, written by the bot from the
