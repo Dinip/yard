@@ -21,9 +21,7 @@ test("matching packages accept either extension case", () => {
   }
 });
 
-test("non-package files are rejected even when the platform is unknown", () => {
-  expect(appInstallError("release.zip")).toBe("Choose an .apk or .ipa file.");
+test("non-package files are rejected on both platforms", () => {
+  expect(appInstallError("release.zip", "ios")).toBe("Choose an .apk or .ipa file.");
   expect(appInstallError("release.apk.zip", "android")).toBe("Choose an .apk or .ipa file.");
-  expect(appInstallError("release.apk")).toBeNull();
-  expect(appInstallError("release.ipa")).toBeNull();
 });

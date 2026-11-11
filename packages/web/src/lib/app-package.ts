@@ -1,4 +1,6 @@
-export function appInstallError(filename: string, platform?: string): string | null {
+import type { Platform } from "@yard/protocol";
+
+export function appInstallError(filename: string, platform: Platform): string | null {
   const lower = filename.toLowerCase();
   if (!lower.endsWith(".apk") && !lower.endsWith(".ipa")) {
     return "Choose an .apk or .ipa file.";
