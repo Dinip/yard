@@ -811,14 +811,33 @@ async fn install_upload(
         .map(sanitize_filename)
         .unwrap_or_else(|| "upload.bin".to_owned());
 
-    if let Some(mode) = mode {
-        let Some(file_platform) = platform_for_filename(&filename) else {
-            return (
-                StatusCode::BAD_REQUEST,
-                "preload accepts only .apk or .ipa files",
-            )
-                .into_response();
+    let Some(file_platform) = platform_for_filename(&filename) else {
+        return (StatusCode::BAD_REQUEST, "Choose an .apk or .ipa file.").into_response();
+    };
+    let Some(info) = device.info().await else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Device is unavailable. Try again when it is ready.",
+        )
+            .into_response();
+    };
+    let platform = match info.platform {
+        yard_protocol::Platform::Android => "android",
+        yard_protocol::Platform::Ios => "ios",
+    };
+    if file_platform != platform {
+        let error = match info.platform {
+            yard_protocol::Platform::Android => {
+                "Android devices require an .apk file. .ipa files are for iOS."
+            }
+            yard_protocol::Platform::Ios => {
+                "iOS devices require an .ipa file. .apk files are for Android."
+            }
         };
+        return (StatusCode::BAD_REQUEST, error).into_response();
+    }
+
+    if let Some(mode) = mode {
         if claims.platform.as_deref() != Some(file_platform) {
             return (
                 StatusCode::BAD_REQUEST,

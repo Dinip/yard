@@ -43,6 +43,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useDeviceSession } from "@/hooks/use-device-session";
+import { appInstallError } from "@/lib/app-package";
 import {
   type Corner,
   controlsAxis,
@@ -204,6 +205,11 @@ export function DeviceConsole({
   };
 
   const upload = async (file: File) => {
+    const error = appInstallError(file.name, platform);
+    if (error) {
+      toast.error(error);
+      return;
+    }
     setInstall({ name: file.name, fraction: 0 });
     try {
       await installApp(deviceId, file, (fraction) =>
@@ -657,7 +663,13 @@ export function DeviceConsole({
           {dragging && (
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-md border-2 border-primary border-dashed bg-background/80 text-sm">
               <span className="flex items-center gap-2">
-                <Upload className="size-4" /> Drop an APK or IPA to install
+                <Upload className="size-4" /> Drop{" "}
+                {platform === "android"
+                  ? "an APK"
+                  : platform === "ios"
+                    ? "an IPA"
+                    : "an APK or IPA"}{" "}
+                to install
               </span>
             </div>
           )}
@@ -684,7 +696,7 @@ export function DeviceConsole({
       <input
         ref={installInput}
         type="file"
-        accept=".apk,.ipa"
+        accept={platform === "android" ? ".apk" : platform === "ios" ? ".ipa" : ".apk,.ipa"}
         className="hidden"
         onChange={(event) => {
           const file = event.target.files?.[0];

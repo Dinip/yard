@@ -216,6 +216,10 @@ File listing and downloads go directly to the provider.
 `DeviceConsole` is shared verbatim by `/devices/:id` and the popout, so there is
 one control surface, not two that drift.
 
+Install accepts `.apk` for Android and `.ipa` for iOS. The picker and drop hint
+show the device's format; both picker selections and dropped files are checked
+before uploading, with a short message explaining a platform mismatch.
+
 ### Controls: one grouped list, two renderings
 
 The actions are built once as three sections — **Device** (Back, Home, Recents,

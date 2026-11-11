@@ -142,6 +142,10 @@ would drift the first time the web app moved. Before registration the list is
 empty and browser requests are refused, so it fails closed. Credentials are
 never allowed: the token is in the query string, never a cookie.
 
+Session installs and preloads check the filename's `.apk`/`.ipa` suffix against
+the device's platform before staging or installing, returning a short HTTP 400
+message for incompatible or unsupported file types.
+
 Uploads stream to the scratch dir as they arrive, so a 200 MB APK never sits in
 memory, and a `Drop` guard deletes the staged file however the install turns
 out. A session install remains transient. A preload first copies the package to

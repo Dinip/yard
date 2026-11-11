@@ -578,34 +578,94 @@ async fn the_file_routes_refuse_the_same_tokens_everything_else_does() {
 #[tokio::test]
 async fn upload_installs_then_deletes_the_staged_file() {
     let h = start().await;
-    h.authorize().await;
 
-    let payload = vec![7u8; 512 * 1024];
-    let res = reqwest::Client::new()
-        .post(format!(
-            "{}/s/{DEVICE_ID}/install?token={}",
-            h.base,
-            h.token()
-        ))
-        .header("x-yard-filename", "app-release.apk")
-        .body(payload)
-        .send()
-        .await
-        .unwrap();
+    for (device_id, filename) in [
+        (DEVICE_ID, "app-release.ipa"),
+        (DEVICE_ID, "app-release.IPA"),
+        (OTHER_DEVICE, "app-release.apk"),
+        (OTHER_DEVICE, "app-release.APK"),
+    ] {
+        h.sessions
+            .authorize(
+                device_id,
+                Authorization {
+                    reservation_id: RESERVATION.into(),
+                    user_id: "user-1".into(),
+                    adb_keys: Vec::new(),
+                },
+            )
+            .await;
+        let token = h.signer.token(&h.issuer, device_id, RESERVATION, 60);
+        let payload = vec![7u8; 512 * 1024];
+        let res = reqwest::Client::new()
+            .post(format!("{}/s/{device_id}/install?token={token}", h.base))
+            .header("x-yard-filename", filename)
+            .body(payload)
+            .send()
+            .await
+            .unwrap();
 
-    assert_eq!(res.status(), 200);
-    let body: serde_json::Value = res.json().await.unwrap();
-    assert_eq!(body["ok"], true);
-    assert_eq!(body["size"], 512 * 1024);
-    assert_eq!(body["filename"], "app-release.apk");
+        assert_eq!(res.status(), 200);
+        let body: serde_json::Value = res.json().await.unwrap();
+        assert_eq!(body["ok"], true);
+        assert_eq!(body["size"], 512 * 1024);
+        assert_eq!(body["filename"], filename);
 
-    // Nothing is stored server-side; a leaked staged file on a tmpfs scratch
-    // dir is how a provider host runs out of space.
-    assert!(
-        h.scratch_files().is_empty(),
-        "staged upload was left behind: {:?}",
-        h.scratch_files()
-    );
+        // Nothing is stored server-side; a leaked staged file on a tmpfs scratch
+        // dir is how a provider host runs out of space.
+        assert!(
+            h.scratch_files().is_empty(),
+            "staged upload was left behind: {:?}",
+            h.scratch_files()
+        );
+    }
+}
+
+#[tokio::test]
+async fn upload_rejects_incompatible_packages_before_writing_or_installing() {
+    let h = start().await;
+    std::fs::remove_dir(&h.scratch).unwrap();
+    for (device_id, filename, error) in [
+        (
+            OTHER_DEVICE,
+            "release.ipa",
+            "Android devices require an .apk file. .ipa files are for iOS.",
+        ),
+        (
+            DEVICE_ID,
+            "release.APK",
+            "iOS devices require an .ipa file. .apk files are for Android.",
+        ),
+        (OTHER_DEVICE, "release.zip", "Choose an .apk or .ipa file."),
+        (DEVICE_ID, "release.ipa.zip", "Choose an .apk or .ipa file."),
+    ] {
+        h.sessions
+            .authorize(
+                device_id,
+                Authorization {
+                    reservation_id: RESERVATION.into(),
+                    user_id: "user-1".into(),
+                    adb_keys: Vec::new(),
+                },
+            )
+            .await;
+        let token = h.signer.token(&h.issuer, device_id, RESERVATION, 60);
+        let res = reqwest::Client::new()
+            .post(format!("{}/s/{device_id}/install?token={token}", h.base))
+            .header("x-yard-filename", filename)
+            .body(vec![3u8; 1024])
+            .send()
+            .await
+            .unwrap();
+
+        assert_eq!(res.status(), 400, "{filename}");
+        assert_eq!(res.text().await.unwrap(), error);
+        assert!(!h.scratch.exists());
+        assert_eq!(
+            h.supervisor.device(device_id).unwrap().install_counts(),
+            (0, 0)
+        );
+    }
 }
 
 #[tokio::test]
@@ -820,7 +880,7 @@ async fn a_hostile_upload_filename_cannot_escape_the_scratch_directory() {
             h.base,
             h.token()
         ))
-        .header("x-yard-filename", "../../../../tmp/pwned.apk")
+        .header("x-yard-filename", "../../../../tmp/pwned.ipa")
         .body(vec![0u8; 1024])
         .send()
         .await
@@ -828,7 +888,7 @@ async fn a_hostile_upload_filename_cannot_escape_the_scratch_directory() {
 
     assert_eq!(res.status(), 200);
     let body: serde_json::Value = res.json().await.unwrap();
-    assert_eq!(body["filename"], "pwned.apk");
+    assert_eq!(body["filename"], "pwned.ipa");
     assert!(h.scratch_files().is_empty());
 }
 
