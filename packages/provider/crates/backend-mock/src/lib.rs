@@ -313,7 +313,7 @@ async fn synthesize(publisher: VideoPublisher, platform: Platform) {
             _ = publisher.keyframe_requested() => true,
         };
 
-        let is_key = forced_key || counter % GOP == 0;
+        let is_key = forced_key || counter.is_multiple_of(GOP);
         // 4-byte length prefix then filler, matching hvcC/avcC sample format so
         // anything that walks the NALU structure sees something well-formed.
         let payload_len = if is_key { 512usize } else { 96 };

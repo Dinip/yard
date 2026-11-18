@@ -4,7 +4,7 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
 use rsa::pkcs1v15::Pkcs1v15Sign;
 use rsa::pkcs8::EncodePublicKey;
-use rsa::{BigUint, RsaPublicKey};
+use rsa::{BoxedUint, PublicKey as RsaPublicKey};
 use sha1::Sha1;
 use sha2::{Digest, Sha256};
 
@@ -81,7 +81,9 @@ impl PublicKey {
                 .unwrap(),
         );
 
-        let inner = RsaPublicKey::new(BigUint::from_bytes_be(&modulus), BigUint::from(exponent))
+        let modulus =
+            BoxedUint::from_be_slice(&modulus, 2048).map_err(|_| KeyError::NotAnRsaKey)?;
+        let inner = RsaPublicKey::new(modulus, BoxedUint::from(exponent))
             .map_err(|_| KeyError::NotAnRsaKey)?;
 
         Ok(Self {
@@ -129,7 +131,7 @@ impl PublicKey {
     /// prefix, so verification uses the prefixed scheme even though nothing was
     /// actually hashed.
     pub fn verify(&self, token: &[u8], signature: &[u8]) -> bool {
-        // RFC 8017 section 9.2's SHA-1 prefix, without rsa's older digest traits.
+        // ADB signs the challenge as a digest; hashing it again would reject real clients.
         let padding = Pkcs1v15Sign {
             hash_len: Some(Sha1::output_size()),
             prefix: Box::from(&b"\x30\x21\x30\x09\x06\x05\x2b\x0e\x03\x02\x1a\x05\x00\x04\x14"[..]),

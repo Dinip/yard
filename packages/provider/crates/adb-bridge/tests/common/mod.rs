@@ -12,7 +12,7 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
 use rsa::pkcs1v15::Pkcs1v15Sign;
 use rsa::traits::PublicKeyParts as _;
-use rsa::{RsaPrivateKey, RsaPublicKey};
+use rsa::{PrivateKey as RsaPrivateKey, PublicKey as RsaPublicKey};
 use sha1::{digest::const_oid::AssociatedOid as _, Digest as _, Sha1};
 use tokio::io::{AsyncRead, AsyncWrite};
 
@@ -32,9 +32,7 @@ static KEY: LazyLock<(PublicKey, RsaPrivateKey)> = LazyLock::new(generate);
 static OTHER: LazyLock<(PublicKey, RsaPrivateKey)> = LazyLock::new(generate);
 
 fn generate() -> (PublicKey, RsaPrivateKey) {
-    // `rsa`'s own re-export: the workspace `rand` is a major version ahead, and
-    // the two `rand_core` traits do not unify.
-    let mut rng = rsa::rand_core::OsRng;
+    let mut rng = rand::rng();
     let private = RsaPrivateKey::new(&mut rng, 2048).expect("keygen succeeds");
     let public = PublicKey::parse(&android_blob(&private.to_public_key(), "dev@example.test"))
         .expect("our own blob parses");
@@ -57,13 +55,13 @@ fn android_blob(key: &RsaPublicKey, comment: &str) -> String {
     // Left-padded to the full width first: a modulus with a leading zero byte
     // is shorter big-endian, and reversing it unpadded would shift every byte.
     let mut modulus = [0u8; MODULUS_SIZE];
-    let be = key.n().to_bytes_be();
+    let be = key.n_bytes();
     modulus[MODULUS_SIZE - be.len()..].copy_from_slice(&be);
     modulus.reverse();
     blob[8..8 + MODULUS_SIZE].copy_from_slice(&modulus);
 
     let mut exponent = [0u8; 4];
-    let be = key.e().to_bytes_be();
+    let be = key.e_bytes();
     exponent[4 - be.len()..].copy_from_slice(&be);
     let exponent = u32::from_be_bytes(exponent);
     blob[8 + MODULUS_SIZE * 2..8 + MODULUS_SIZE * 2 + 4].copy_from_slice(&exponent.to_le_bytes());
