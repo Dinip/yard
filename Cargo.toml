@@ -5,7 +5,7 @@ members = ["packages/provider/crates/*"]
 [workspace.package]
 version = "0.7.1"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.88"
 license = "MIT"
 
 [workspace.dependencies]
@@ -64,11 +64,9 @@ serde_json = "1"
 # serde_yaml is deprecated upstream; _ng is the maintained fork.
 serde_yaml_ng = "0.10"
 
-jsonwebtoken = { version = "11", default-features = false, features = ["rust_crypto"] }
+jsonwebtoken = { version = "12", default-features = false, features = ["rust_crypto"] }
 # ADB authentication: verify a client's PKCS#1 v1.5 signature over our challenge.
-# The 0.9 line on purpose — 0.10 is still a release candidate, and this is the
-# code that decides who gets a shell on a phone.
-rsa = "0.9"
+rsa = { version = "0.10", features = ["pkcs1v15"] }
 # Only for the SHA-1 DigestInfo prefix ADB's signatures carry. Not a hash we
 # choose; it is the one `adb` has always signed with.
 sha1 = { version = "0.11", features = ["oid"] }
