@@ -14,7 +14,7 @@ name: yard-dev
 
 services:
   postgres:
-    image: postgres:19-alpine
+    image: postgres:18-alpine
     restart: unless-stopped
     environment:
       POSTGRES_USER: yard
