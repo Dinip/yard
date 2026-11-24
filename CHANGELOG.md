@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.2](https://github.com/Dinip/yard/compare/v0.7.1...v0.7.2) (2026-11-24)
+
+
+### Bug Fixes
+
+* **provider:** upgrade RSA and JWT without breaking ADB ([#108](https://github.com/Dinip/yard/issues/108)) ([8bdb790](https://github.com/Dinip/yard/commit/8bdb79012e564b6a66a0439b098bdfede1bd0ed4))
+
 ## [0.7.1](https://github.com/Dinip/yard/compare/v0.7.0...v0.7.1) (2026-11-11)
 
 
